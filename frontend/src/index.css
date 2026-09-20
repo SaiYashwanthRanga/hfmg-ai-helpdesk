@@ -1,10 +1,73 @@
+@import "tailwindcss";
+@import "./styles/tokens.css";
+
+/* Maps raw tokens to Tailwind utilities: bg-card, text-foreground, etc. */
+@theme {
+  --font-sans: "Inter", -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  --color-background: var(--background);
+  --color-sidebar: var(--sidebar);
+  --color-card: var(--card);
+  --color-card-hover: var(--card-hover);
+  --color-border: var(--border);
+
+  --color-foreground: var(--foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-disabled-foreground: var(--disabled-foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-active: var(--primary-active);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-hover: var(--secondary-hover);
+  --color-secondary-foreground: var(--secondary-foreground);
+
+  --color-success: var(--success);
+  --color-success-hover: var(--success-hover);
+  --color-success-foreground: var(--success-foreground);
+
+  --color-warning: var(--warning);
+  --color-warning-hover: var(--warning-hover);
+  --color-warning-foreground: var(--warning-foreground);
+
+  --color-danger: var(--danger);
+  --color-danger-hover: var(--danger-hover);
+  --color-danger-foreground: var(--danger-foreground);
+
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+
+  --color-ai-accent: var(--ai-accent);
+  --color-ai-accent-hover: var(--ai-accent-hover);
+  --color-ai-subtle: var(--ai-subtle);
+  --color-ai-accent-foreground: var(--ai-accent-foreground);
+
+  --color-table-header: var(--table-header);
+  --color-table-row: var(--table-row);
+  --color-table-row-hover: var(--table-row-hover);
+  --color-table-border: var(--table-border);
+
+  --color-overlay: var(--overlay);
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 9999px;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 24%);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 32%);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 40%);
+}
+
 :root {
-  --text: #1f2937;
-  --bg: #ffffff;
-  --border: #e5e7eb;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
 }
 
 * {
@@ -13,8 +76,34 @@
 
 body {
   margin: 0;
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
 }
 
+/* Visible focus ring on every interactive element (DESIGN_SYSTEM.md §20.4) */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/*
+ * Legacy shim — TicketListPage/TicketDetailPage/NewTicketPage predate the
+ * design system and still rely on the plain-CSS element styling they were
+ * built with. Removed once Phase 3 (Tickets) rebuilds those pages on the
+ * DESIGN_SYSTEM.md primitives; kept here so Tailwind's preflight reset
+ * doesn't leave them unstyled in the meantime.
+ */
 h1 {
   font-size: 28px;
   margin: 0 0 16px;
@@ -27,7 +116,7 @@ h2 {
 
 table th,
 table td {
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid #e5e7eb;
 }
 
 input,
@@ -35,7 +124,7 @@ select,
 textarea {
   font: inherit;
   padding: 6px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid #e5e7eb;
   border-radius: 4px;
   width: 100%;
 }

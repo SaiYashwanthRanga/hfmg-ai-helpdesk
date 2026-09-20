@@ -1,9 +1,8 @@
 import logging
-import smtplib
-from email.message import EmailMessage
 
 from app.core.config import get_settings
 from app.db.models import Ticket
+from app.notifications.factory import get_email_provider
 
 logger = logging.getLogger("hfmg.notifications.email")
 
@@ -33,15 +32,31 @@ def _build_body(ticket: Ticket, event: str) -> str:
     return "\n".join(lines)
 
 
-def send_ticket_notification(ticket: Ticket, event: str) -> None:
-    """Send (or log) a notification email for a ticket lifecycle event.
+async def send_ticket_notification(ticket: Ticket, event: str) -> None:
+    """Send a notification email for a ticket lifecycle event, via SendGrid.
 
-    Called from a FastAPI BackgroundTask — must not raise, since an
-    unhandled exception in a background task is only logged by the
-    ASGI server and would otherwise be silently swallowed.
+    Called from a FastAPI BackgroundTask -- must not raise, since an
+    unhandled exception in a background task is only logged by the ASGI
+    server and would otherwise be silently swallowed.
+
+    Every notification goes from EMAIL_FROM to HELPDESK_EMAIL; this is not
+    configurable per-call, by design (the notification target is fixed
+    organizational policy, not a per-ticket choice).
+
+    Never logs the ticket description, AI summary, or email body -- only the
+    ticket number and event, which are not PHI-adjacent on their own.
     """
     if not settings.enable_email_notifications:
         logger.info("Email notifications disabled; skipping %s for %s", event, ticket.ticket_number)
+        return
+
+    provider = get_email_provider()
+    if not provider.is_configured:
+        logger.warning(
+            "Email provider not configured; skipping %s notification for %s",
+            event,
+            ticket.ticket_number,
+        )
         return
 
     subject_template = _EVENT_SUBJECTS.get(event, "Ticket {ticket_number} update")
@@ -50,28 +65,16 @@ def send_ticket_notification(ticket: Ticket, event: str) -> None:
     )
     body = _build_body(ticket, event)
 
-    if not settings.smtp_host:
-        logger.info(
-            "SMTP not configured (log-only mode). Would send to %s\nSubject: %s\n%s",
-            settings.helpdesk_notification_email,
-            subject,
-            body,
-        )
-        return
+    sent = await provider.send(
+        to=settings.helpdesk_email,
+        from_email=settings.email_from,
+        subject=subject,
+        body=body,
+    )
 
-    message = EmailMessage()
-    message["From"] = settings.smtp_from_email
-    message["To"] = settings.helpdesk_notification_email
-    message["Subject"] = subject
-    message.set_content(body)
-
-    try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as server:
-            if settings.smtp_use_tls:
-                server.starttls()
-            if settings.smtp_username:
-                server.login(settings.smtp_username, settings.smtp_password)
-            server.send_message(message)
-        logger.info("Sent %s notification for %s to %s", event, ticket.ticket_number, message["To"])
-    except (smtplib.SMTPException, OSError):
-        logger.exception("Failed to send %s notification for %s", event, ticket.ticket_number)
+    if sent:
+        logger.info("Sent %s notification for %s", event, ticket.ticket_number)
+    else:
+        # No exception detail or body here by design -- the provider already
+        # logged the failure class (status code / error type) without content.
+        logger.warning("Failed to send %s notification for %s", event, ticket.ticket_number)

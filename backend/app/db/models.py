@@ -2,8 +2,8 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
-from sqlalchemy.dialects.postgresql import CITEXT, UUID
+from sqlalchemy import DateTime, ForeignKey, SmallInteger, String, Text, func
+from sqlalchemy.dialects.postgresql import CITEXT, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import Enum as SQLEnum
 
@@ -32,6 +32,33 @@ class AISummaryStatus(str, enum.Enum):
     PENDING = "PENDING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+
+
+class TicketSource(str, enum.Enum):
+    WEB = "WEB"
+    PHONE = "PHONE"
+    EMAIL = "EMAIL"
+    WALK_IN = "WALK_IN"
+
+
+class VoiceCallState(str, enum.Enum):
+    GREETING = "GREETING"
+    COLLECT_DESCRIPTION = "COLLECT_DESCRIPTION"
+    COLLECT_NAME = "COLLECT_NAME"
+    COLLECT_PHONE = "COLLECT_PHONE"
+    COLLECT_EMAIL = "COLLECT_EMAIL"
+    CONFIRM_EMAIL = "CONFIRM_EMAIL"
+    CONFIRM_CATEGORY = "CONFIRM_CATEGORY"
+    ANYTHING_ELSE = "ANYTHING_ELSE"
+    ESCALATED = "ESCALATED"
+    COMPLETED = "COMPLETED"
+    ABANDONED = "ABANDONED"
+
+
+class EscalationReason(str, enum.Enum):
+    CALLER_REQUESTED = "CALLER_REQUESTED"
+    REPEATED_MISUNDERSTANDING = "REPEATED_MISUNDERSTANDING"
+    SYSTEM_ERROR = "SYSTEM_ERROR"
 
 
 # Valid forward transitions for a ticket's status. Used by TicketService to
@@ -94,6 +121,9 @@ class Ticket(Base):
     status: Mapped[TicketStatus] = mapped_column(
         SQLEnum(TicketStatus, name="ticket_status_enum"), nullable=False, default=TicketStatus.NEW
     )
+    source: Mapped[TicketSource] = mapped_column(
+        SQLEnum(TicketSource, name="ticket_source_enum"), nullable=False, default=TicketSource.WEB
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at: Mapped[datetime] = mapped_column(
@@ -101,3 +131,44 @@ class Ticket(Base):
     )
 
     category: Mapped["Category"] = relationship(back_populates="tickets")
+
+
+class VoiceCallSession(Base):
+    """Per-call conversation state for the Twilio voice agent.
+
+    Lives in Postgres rather than memory because each webhook turn is an
+    independent request that may land on any API replica.
+    """
+
+    __tablename__ = "voice_call_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    twilio_call_sid: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    from_number: Mapped[str] = mapped_column(String(32), nullable=False)
+    to_number: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    state: Mapped[VoiceCallState] = mapped_column(
+        SQLEnum(VoiceCallState, name="voice_call_state_enum"),
+        nullable=False,
+        default=VoiceCallState.GREETING,
+    )
+    collected: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    turns: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+
+    misunderstanding_count: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    email_attempt_count: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+
+    escalated: Mapped[bool] = mapped_column(nullable=False, default=False)
+    escalation_reason: Mapped[EscalationReason | None] = mapped_column(
+        SQLEnum(EscalationReason, name="escalation_reason_enum"), nullable=True
+    )
+
+    ticket_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tickets.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

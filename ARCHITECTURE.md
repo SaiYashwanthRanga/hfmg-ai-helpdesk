@@ -1,7 +1,7 @@
 # HFMG AI Help Desk — Architecture
 
 **System:** AI-powered IT Help Desk for Horizon Family Medical Group (HFMG)
-**Status:** Design (pre-implementation)
+**Status:** Target production design — **partially implemented**, not pre-implementation. The MVP stack this document's §7/§11 describe as "future" (auth, Redis/Celery, Docker/containers) is still not built and remains accurately described as target-only. Everything else in this document — the FastAPI/PostgreSQL/React core, the ticket pipeline, the Twilio voice integration, and a substantial analytics/insights API surface beyond what this document originally scoped — is real and running. See `FINAL_PROJECT_STATUS.md` for the current, verified breakdown and `IMPLEMENTATION_PLAN.md`/`BACKEND_GAP_ANALYSIS.md` for what shipped in what order.
 **Audience:** Engineering team building and operating the system
 
 ---
@@ -45,7 +45,7 @@ Because HFMG is a healthcare organization, this system is treated as **HIPAA-adj
                         │              │              │
                         ▼              ▼              ▼
              ┌────────────────┐ ┌─────────────┐ ┌──────────────────┐
-             │  PostgreSQL     │ │ Redis +     │ │ Anthropic API     │
+             │  PostgreSQL     │ │ Redis +     │ │ OpenAI API        │
              │  (primary data) │ │ Worker      │ │ (AI summaries)     │
              │                 │ │ (Celery/RQ) │ └──────────────────┘
              └────────────────┘ │             │ ┌──────────────────┐
@@ -69,7 +69,7 @@ Because HFMG is a healthcare organization, this system is treated as **HIPAA-adj
 | FastAPI backend | REST API, business logic, auth, validation, orchestration of async work. |
 | PostgreSQL | System of record for tickets, users, audit log. |
 | Redis + worker (Celery or RQ) | Async job execution: AI summarization, email delivery, future call-transcript processing. Decouples slow/unreliable external calls from the request path. |
-| Anthropic API (Claude) | Generates a structured summary of each ticket's description for agent triage. |
+| OpenAI API | Generates a structured summary of each ticket's description for agent triage. |
 | Email provider (Amazon SES or SendGrid, via SMTP/API) | Delivers notifications to `helpdesk@hfmg.net` and optionally to the caller. |
 | Twilio (future) | Inbound voice/IVR; call recording + transcription feeds ticket creation via a webhook into the same ticket pipeline. |
 
@@ -111,7 +111,7 @@ app/
   main.py         # app factory, middleware, router registration
 ```
 
-Rationale: `api/` stays thin (HTTP concerns only); `domain/` holds logic that is unit-testable without spinning up FastAPI or a database; `ai/` and `notifications/` are isolated so their providers can be swapped (e.g., SES → SendGrid, Anthropic → another model) without touching ticket logic.
+Rationale: `api/` stays thin (HTTP concerns only); `domain/` holds logic that is unit-testable without spinning up FastAPI or a database; `ai/` and `notifications/` are isolated so their providers can be swapped (e.g., SES → SendGrid, OpenAI → another provider) without touching ticket logic.
 
 ### 5.2 Request Flow — Ticket Creation (synchronous path)
 
@@ -126,7 +126,7 @@ Rationale: `api/` stays thin (HTTP concerns only); `domain/` holds logic that is
 
 1. Worker picks up `generate_ai_summary(ticket_id)`.
 2. Worker loads the ticket, builds a prompt from category/priority/description (template in `ai/summarizer.py`).
-3. Worker calls the Anthropic API with a timeout and retry policy (exponential backoff, max 3 attempts).
+3. Worker calls the LLM provider with a timeout and retry policy (exponential backoff, max 3 attempts).
 4. On success: worker updates `tickets.ai_summary`, `ai_summary_generated_at`; on repeated failure: ticket keeps `ai_summary = NULL`, an entry is logged and surfaced on an internal "AI summary failed" dashboard filter so no ticket silently loses triage support.
 5. Worker never blocks ticket visibility — agents can view/act on a ticket before its summary is ready; the frontend polls or the ticket detail view shows a "Generating summary…" state.
 
@@ -171,7 +171,7 @@ src/
 
 ### 7.1 Environments
 
-`dev` → `staging` → `production`, each with isolated database, isolated secrets, and separate Anthropic/Twilio/email credentials where the provider supports it (never share production PHI-adjacent data into lower environments; use synthetic seed data in dev/staging).
+`dev` → `staging` → `production`, each with isolated database, isolated secrets, and separate OpenAI/Twilio/email credentials where the provider supports it (never share production PHI-adjacent data into lower environments; use synthetic seed data in dev/staging).
 
 ### 7.2 Topology (production)
 
@@ -200,12 +200,12 @@ Internet ── TLS ───► │  Load Balancer / Reverse   │
 
 - API and worker containers run in private subnets; only the load balancer is internet-facing.
 - Database and Redis are not publicly reachable; access only from the API/worker security group.
-- All external calls (Anthropic, email provider, Twilio) go outbound through a NAT gateway; inbound Twilio webhooks terminate at the load balancer like any other API route, with signature validation at the application layer.
+- All external calls (OpenAI, email provider, Twilio) go outbound through a NAT gateway; inbound Twilio webhooks terminate at the load balancer like any other API route, with signature validation at the application layer.
 - Container images built in CI, pushed to a private registry, deployed via rolling update (zero-downtime).
 
 ### 7.3 Configuration & Secrets
 
-- All secrets (DB credentials, Anthropic API key, email provider API key/SMTP credentials, Twilio auth token, JWT signing key) come from a managed secrets store (AWS Secrets Manager / GCP Secret Manager / Vault) — never committed, never in plain environment files in the repo.
+- All secrets (DB credentials, OpenAI API key, email provider API key/SMTP credentials, Twilio auth token, JWT signing key) come from a managed secrets store (AWS Secrets Manager / GCP Secret Manager / Vault) — never committed, never in plain environment files in the repo.
 - Per-environment config via 12-factor environment variables, loaded through a typed settings module (`pydantic-settings`).
 
 ## 8. Security & Compliance
@@ -214,7 +214,7 @@ Internet ── TLS ───► │  Load Balancer / Reverse   │
 
 Treat `caller_name`, `phone_number`, `email`, and free-text `description`/`ai_summary` fields as sensitive/PHI-adjacent. This drives:
 - Encryption at rest for the database (managed disk encryption) and in transit (TLS everywhere, including DB connections).
-- BAAs (Business Associate Agreements) required with: the AI provider (Anthropic, via their enterprise/BAA-eligible offering), the email provider, and Twilio, before any production PHI-adjacent traffic flows through them.
+- BAAs (Business Associate Agreements) required with: the AI provider (OpenAI, under a BAA on an eligible plan), the email provider, and Twilio, before any production PHI-adjacent traffic flows through them.
 - No PHI-adjacent data in application logs; structured logging must redact/exclude ticket free-text fields (log ticket ID/status transitions, not descriptions).
 
 ### 8.2 AuthN/AuthZ
@@ -253,4 +253,4 @@ Treat `caller_name`, `phone_number`, `email`, and free-text `description`/`ai_su
 | Identity provider | OIDC SSO with HFMG's existing directory if one exists | Avoids a second credential store for clinical/IT staff |
 | Job queue | Redis + Celery | RQ is a lighter alternative if the team wants less operational surface |
 | Hosting | AWS (RDS + ECS/Fargate + ElastiCache + SES) | Matches HIPAA-eligible managed service availability; GCP is an equally valid alternative |
-| AI provider contract | Anthropic API under a BAA | Required before processing real caller data |
+| AI provider contract | OpenAI API under a BAA | Required before processing real caller data |

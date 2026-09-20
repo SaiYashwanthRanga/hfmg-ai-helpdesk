@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -13,6 +13,7 @@ from app.db.models import (
     Category,
     Priority,
     Ticket,
+    TicketSource,
     TicketStatus,
 )
 from app.schemas.ticket import TicketCreate
@@ -77,12 +78,36 @@ async def list_tickets(
     page_size: int,
     ticket_status: TicketStatus | None = None,
     category_id: uuid.UUID | None = None,
+    priority: Priority | None = None,
+    source: TicketSource | None = None,
+    q: str | None = None,
 ) -> tuple[list[Ticket], int]:
     filters = []
     if ticket_status is not None:
         filters.append(Ticket.status == ticket_status)
     if category_id is not None:
         filters.append(Ticket.category_id == category_id)
+    if priority is not None:
+        filters.append(Ticket.priority == priority)
+    if source is not None:
+        filters.append(Ticket.source == source)
+    if q:
+        # Plain ILIKE rather than the full-text (`to_tsvector`/GIN) search
+        # API_SPEC.md documents: `ix_tickets_fts` is not actually present in
+        # this database (confirmed against both the dev and test schemas --
+        # see BACKEND_GAP_ANALYSIS.md Tier 0 notes). ILIKE is a correctness-
+        # equivalent stand-in for it at the "low thousands of tickets/year"
+        # volume DATABASE_DESIGN.md §6 sizes this system for; swap to
+        # `to_tsvector` matching once that index is actually migrated in.
+        pattern = f"%{q}%"
+        filters.append(
+            or_(
+                Ticket.caller_name.ilike(pattern),
+                Ticket.ticket_number.ilike(pattern),
+                Ticket.description.ilike(pattern),
+                Ticket.ai_summary.ilike(pattern),
+            )
+        )
 
     base_stmt = select(Ticket).options(selectinload(Ticket.category))
     count_stmt = select(func.count()).select_from(Ticket)
@@ -106,6 +131,25 @@ async def update_status(db: AsyncSession, ticket_id: uuid.UUID, new_status: Tick
             detail=f"Cannot transition ticket from {ticket.status.value} to {new_status.value}",
         )
     ticket.status = new_status
+    await db.commit()
+    return await get_ticket(db, ticket_id)
+
+
+async def mark_summary_pending(db: AsyncSession, ticket_id: uuid.UUID) -> Ticket:
+    """Reset a ticket's AI summary to PENDING ahead of regeneration.
+
+    Mirrors create_ticket's initial-state logic: if AI summaries are
+    disabled deployment-wide, there is nothing a regenerate call could ever
+    complete into, so this rejects rather than leaving the ticket stuck in
+    PENDING forever.
+    """
+    ticket = await get_ticket(db, ticket_id)
+    if not settings.enable_ai_summary:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="AI summaries are disabled for this deployment",
+        )
+    ticket.ai_summary_status = AISummaryStatus.PENDING
     await db.commit()
     return await get_ticket(db, ticket_id)
 

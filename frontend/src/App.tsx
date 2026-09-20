@@ -1,22 +1,42 @@
-import { Link, Route, Routes } from "react-router-dom";
+import { Route, Routes } from "react-router-dom";
+import { AppShell } from "./app/AppShell";
+import { PageContainer } from "./components/layout/PageContainer";
+import { AIInsightsPage } from "./pages/AIInsightsPage";
+import { AnalyticsPage } from "./pages/AnalyticsPage";
+import { CallsPage } from "./pages/CallsPage";
+import { DashboardPage } from "./pages/DashboardPage";
+import { LiveCallMonitor } from "./pages/LiveCallMonitor";
 import { NewTicketPage } from "./pages/NewTicketPage";
-import { TicketDetailPage } from "./pages/TicketDetailPage";
-import { TicketListPage } from "./pages/TicketListPage";
+import { SettingsPage } from "./pages/SettingsPage";
+import { TicketDetailRedirect } from "./pages/TicketDetailRedirect";
+import { TicketsPage } from "./pages/TicketsPage";
+import { DevComponentsPage } from "./routes/DevComponentsPage";
 
+// Route order matches the six-item nav in DESIGN.md §4, plus the /calls/live
+// sub-route and the internal-only component playground.
 function App() {
   return (
-    <div style={{ maxWidth: 1000, margin: "0 auto", padding: "24px 16px", fontFamily: "system-ui, sans-serif" }}>
-      <header style={{ marginBottom: 24 }}>
-        <Link to="/" style={{ textDecoration: "none", color: "inherit" }}>
-          <strong>HFMG IT Help Desk</strong>
-        </Link>
-      </header>
-      <Routes>
-        <Route path="/" element={<TicketListPage />} />
-        <Route path="/tickets/new" element={<NewTicketPage />} />
-        <Route path="/tickets/:ticketId" element={<TicketDetailPage />} />
-      </Routes>
-    </div>
+    <AppShell>
+      <PageContainer>
+        <Routes>
+          <Route path="/" element={<DashboardPage />} />
+
+          <Route path="/tickets" element={<TicketsPage />} />
+          <Route path="/tickets/new" element={<NewTicketPage />} />
+          <Route path="/tickets/:ticketId" element={<TicketDetailRedirect />} />
+
+          <Route path="/calls" element={<CallsPage />} />
+          <Route path="/calls/live/:callId" element={<LiveCallMonitor />} />
+
+          <Route path="/analytics" element={<AnalyticsPage />} />
+          <Route path="/ai-insights" element={<AIInsightsPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+
+          {/* Internal-only, not linked from navigation — see DevComponentsPage. */}
+          <Route path="/dev/components" element={<DevComponentsPage />} />
+        </Routes>
+      </PageContainer>
+    </AppShell>
   );
 }
 

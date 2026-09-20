@@ -1,0 +1,86 @@
+/*
+ * Design tokens — values copied verbatim from DESIGN_SYSTEM.md §2.
+ * Dark mode is the default theme (DESIGN.md §2.4); [data-theme="light"]
+ * overrides the neutral tokens only, per DESIGN_SYSTEM.md §2.6 — status/AI
+ * colors keep their dark-mode hex values in light mode because they were
+ * chosen to already clear AA contrast on both a very light and very dark
+ * surface.
+ */
+
+:root {
+  /* Elevation ladder (DESIGN_SYSTEM.md §2.3) */
+  --background: #0b1120;
+  --sidebar: #111827;
+  --card: #1f2937;
+  --card-hover: #263145;
+  --border: #27324a;
+
+  /* Text */
+  --foreground: #f8fafc;
+  --muted-foreground: #94a3b8;
+  --disabled-foreground: #475569;
+
+  /* Brand / semantic (DESIGN_SYSTEM.md §2.1) */
+  --primary: #3b82f6;
+  --primary-hover: #2563eb;
+  --primary-active: #1d4ed8;
+  --primary-foreground: #f8fafc;
+
+  --secondary: #64748b;
+  --secondary-hover: #475569;
+  --secondary-foreground: #f8fafc;
+
+  --success: #22c55e;
+  --success-hover: #16a34a;
+  --success-foreground: #052e16;
+
+  --warning: #f59e0b;
+  --warning-hover: #d97706;
+  --warning-foreground: #451a03;
+
+  --danger: #ef4444;
+  --danger-hover: #dc2626;
+  --danger-foreground: #f8fafc;
+
+  --info: #38bdf8;
+  --info-foreground: #082f49;
+
+  /* AI accent (DESIGN_SYSTEM.md §2.2) — reserved for AI-produced content only */
+  --ai-accent: #8b5cf6;
+  --ai-accent-hover: #7c3aed;
+  --ai-subtle: rgb(139 92 246 / 12%);
+  --ai-accent-foreground: #f8fafc;
+
+  /* Tables (DESIGN_SYSTEM.md §2.4) */
+  --table-header: #111827;
+  --table-row: #1f2937;
+  --table-row-hover: #263145;
+  --table-border: #27324a;
+
+  /* Overlays (DESIGN_SYSTEM.md §7) */
+  --overlay: rgb(2 6 23 / 72%);
+}
+
+[data-theme="light"] {
+  --background: #f8fafc;
+  --sidebar: #f1f5f9;
+  --card: #ffffff;
+  --card-hover: #f1f5f9;
+  --border: #e2e8f0;
+
+  --foreground: #0f172a;
+  --muted-foreground: #64748b;
+  --disabled-foreground: #94a3b8;
+
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-active: #1e40af;
+  --primary-foreground: #f8fafc;
+
+  --secondary-foreground: #0f172a;
+
+  --table-header: #f1f5f9;
+  --table-row: #ffffff;
+  --table-row-hover: #f1f5f9;
+  --table-border: #e2e8f0;
+}

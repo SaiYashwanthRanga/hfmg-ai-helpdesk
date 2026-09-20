@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from app.db.models import AISummaryStatus, Priority, TicketStatus
+from app.db.models import AISummaryStatus, Priority, TicketSource, TicketStatus
 
 
 class CategoryRead(BaseModel):
@@ -38,6 +38,7 @@ class TicketListItem(BaseModel):
     priority: Priority
     status: TicketStatus
     ai_summary_status: AISummaryStatus
+    source: TicketSource
     created_at: datetime
 
 
@@ -56,6 +57,7 @@ class TicketRead(BaseModel):
     ai_summary_status: AISummaryStatus
     ai_summary_generated_at: datetime | None
     status: TicketStatus
+    source: TicketSource
     created_at: datetime
     updated_at: datetime
 
@@ -66,3 +68,9 @@ class TicketPage(BaseModel):
     page_size: int
     total: int
     total_pages: int
+
+
+class TicketSummaryStatusResponse(BaseModel):
+    """Response shape for POST /tickets/{id}/regenerate-summary (API_SPEC.md §3)."""
+
+    ai_summary_status: AISummaryStatus

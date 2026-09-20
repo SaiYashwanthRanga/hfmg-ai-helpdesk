@@ -37,7 +37,16 @@ async def _truncate_tables():
     """
     yield
     async with engine.begin() as conn:
-        await conn.exec_driver_sql("TRUNCATE TABLE tickets, categories RESTART IDENTITY CASCADE")
+        await conn.exec_driver_sql(
+            "TRUNCATE TABLE voice_call_sessions, tickets, categories RESTART IDENTITY CASCADE"
+        )
+
+
+@pytest.fixture
+async def db_session():
+    """A session for tests that drive the service/orchestrator layer directly."""
+    async with async_session_factory() as session:
+        yield session
 
 
 @pytest.fixture

@@ -28,14 +28,14 @@
                                                      │
  notification_log ───────────────────────────────────┘
 
- voice_calls (future) ───────────────────────────────┘  (1 call → 0..1 ticket)
+ voice_call_sessions ────────────────────────────────┘  (1 call → 0..1 ticket)
 ```
 
 - `tickets.category` references `categories` (lookup table, admin-managed).
 - `tickets.assigned_agent_id` references `users` (nullable — unassigned tickets allowed).
 - `tickets.requester_user_id` references `users` (nullable — a caller may not have an internal account, e.g., voice intake).
 - `ticket_comments`, `ticket_attachments`, `notification_log`, `audit_log` all reference `tickets` (cascade-restricted, not cascade-deleted).
-- `voice_calls` (Phase 2+) optionally links to a created `ticket`.
+- `voice_call_sessions` (Phase 2) optionally links to the `ticket` a call produced.
 
 ## 3. Tables
 
@@ -56,7 +56,7 @@ The core entity. Maps directly to the required ticket fields, extended with fiel
 | `ai_summary` | `TEXT` | NULL | **AI Summary**. Populated asynchronously after creation. |
 | `ai_summary_status` | `ai_summary_status_enum` | NOT NULL, default `PENDING` | `PENDING`, `COMPLETED`, `FAILED`. Drives the "Generating summary…" UI state. |
 | `ai_summary_generated_at` | `TIMESTAMPTZ` | NULL | When the AI summary completed. |
-| `ai_model` | `TEXT` | NULL | Model identifier used (e.g., `claude-sonnet-5`), for auditability/reproducibility. |
+| `ai_model` | `TEXT` | NULL | Model identifier used (e.g., `gpt-5-nano`), for auditability/reproducibility. Not implemented in the MVP schema. |
 | `status` | `ticket_status_enum` | NOT NULL, default `NEW` | **Status**. `NEW`, `OPEN`, `IN_PROGRESS`, `ON_HOLD`, `RESOLVED`, `CLOSED`, `CANCELLED`. |
 | `source` | `ticket_source_enum` | NOT NULL, default `WEB` | `WEB`, `PHONE`, `EMAIL`, `WALK_IN`. Supports future Twilio intake without schema change. |
 | `requester_user_id` | `UUID` | FK → `users.id`, NULL | Set if the caller is an authenticated staff member submitting via the portal. |
@@ -81,16 +81,18 @@ CREATE TYPE ai_summary_status_enum AS ENUM ('PENDING', 'COMPLETED', 'FAILED');
 
 **Indexes**
 
+This block is the target design. **Verified against the running database (`\d tickets`) as of Tier 5 documentation alignment (see `BACKEND_GAP_ANALYSIS.md`), only `ix_tickets_ticket_number` and `ix_tickets_created_at` actually exist.** `ix_tickets_status`, `ix_tickets_priority`, `ix_tickets_category_id`, `ix_tickets_assigned_agent_id`, `ix_tickets_email`, and `ix_tickets_fts` were never migrated in, despite this document previously implying `ix_tickets_fts` specifically was "already exists in the schema, unused" — it does not exist. `GET /api/v1/tickets`'s `status`/`priority`/`category_id`/`source`/`q` filters (`API_SPEC.md` §3) all run as full table scans today; acceptable at this system's documented volume (§6 below), worth revisiting only if `tickets` grows enough for it to matter.
+
 ```sql
-CREATE UNIQUE INDEX ux_tickets_ticket_number ON tickets (ticket_number);
-CREATE INDEX ix_tickets_status ON tickets (status) WHERE deleted_at IS NULL;
-CREATE INDEX ix_tickets_priority ON tickets (priority) WHERE deleted_at IS NULL;
-CREATE INDEX ix_tickets_category_id ON tickets (category_id);
-CREATE INDEX ix_tickets_assigned_agent_id ON tickets (assigned_agent_id);
-CREATE INDEX ix_tickets_created_at ON tickets (created_at DESC);
-CREATE INDEX ix_tickets_email ON tickets (email);
+CREATE UNIQUE INDEX ux_tickets_ticket_number ON tickets (ticket_number);          -- ✅ exists
+CREATE INDEX ix_tickets_status ON tickets (status) WHERE deleted_at IS NULL;      -- ⬜ not migrated
+CREATE INDEX ix_tickets_priority ON tickets (priority) WHERE deleted_at IS NULL;  -- ⬜ not migrated
+CREATE INDEX ix_tickets_category_id ON tickets (category_id);                    -- ⬜ not migrated
+CREATE INDEX ix_tickets_assigned_agent_id ON tickets (assigned_agent_id);         -- ⬜ not migrated (column doesn't exist yet either)
+CREATE INDEX ix_tickets_created_at ON tickets (created_at DESC);                  -- ✅ exists
+CREATE INDEX ix_tickets_email ON tickets (email);                                 -- ⬜ not migrated
 -- Full text search over description + ai_summary for agent search
-CREATE INDEX ix_tickets_fts ON tickets USING GIN (
+CREATE INDEX ix_tickets_fts ON tickets USING GIN (                               -- ⬜ not migrated -- q search uses ILIKE instead, see API_SPEC.md §3
   to_tsvector('english', coalesce(description, '') || ' ' || coalesce(ai_summary, ''))
 );
 ```
@@ -224,21 +226,30 @@ CREATE INDEX ix_audit_log_entity ON audit_log (entity_type, entity_id, created_a
 
 No `UPDATE`/`DELETE` grants on this table for the application role — insert-only, enforced at the database role level.
 
-### 3.8 `voice_calls` (Phase 2+, schema reserved now)
+### 3.8 `voice_call_sessions` (Phase 2 — implemented)
 
-Links an inbound Twilio call to the ticket it produced. Table is designed now so `tickets.source = 'PHONE'` has a consistent home for call metadata later without a breaking migration.
+Per-call conversation state for the Twilio voice agent, plus the link to the ticket the call produced. This **replaces** the `voice_calls` sketch in earlier drafts, which assumed a record-then-transcribe design; the implemented agent is a multi-turn conversation, so it needs live state rather than a post-call recording reference.
 
 | Column | Type | Constraints |
 |---|---|---|
 | `id` | `UUID` | PK |
-| `twilio_call_sid` | `TEXT` | UNIQUE, NOT NULL |
-| `ticket_id` | `UUID` | FK → `tickets.id`, NULL (null until ticket created) |
-| `from_number` | `TEXT` | NOT NULL |
-| `recording_url` | `TEXT` | NULL |
-| `transcript` | `TEXT` | NULL |
-| `call_duration_seconds` | `INTEGER` | NULL |
-| `received_at` | `TIMESTAMPTZ` | NOT NULL |
-| `created_at` | `TIMESTAMPTZ` | NOT NULL, default `now()` |
+| `twilio_call_sid` | `TEXT` | UNIQUE, NOT NULL — natural idempotency key for webhook retries |
+| `from_number` | `TEXT` | NOT NULL — caller ID; may be `anonymous`/blocked |
+| `to_number` | `TEXT` | NOT NULL |
+| `state` | `voice_call_state_enum` | NOT NULL — position in the state machine (`CALL_FLOW.md` §2) |
+| `collected` | `JSONB` | NOT NULL, default `'{}'` — slots gathered so far |
+| `turns` | `JSONB` | NOT NULL, default `'[]'` — ordered transcript, also the call's audit trail |
+| `misunderstanding_count` | `SMALLINT` | NOT NULL, default `0` — drives the 3-strikes escalation |
+| `email_attempt_count` | `SMALLINT` | NOT NULL, default `0` — email is optional and capped separately |
+| `escalated` | `BOOLEAN` | NOT NULL, default `false` |
+| `escalation_reason` | `escalation_reason_enum` | NULL — `CALLER_REQUESTED`, `REPEATED_MISUNDERSTANDING`, `SYSTEM_ERROR` |
+| `ticket_id` | `UUID` | FK → `tickets.id` ON DELETE SET NULL, NULL — also the create-ticket idempotency guard |
+| `ended_at` | `TIMESTAMPTZ` | NULL — set by the status callback |
+| `created_at` / `updated_at` | `TIMESTAMPTZ` | |
+
+State lives in Postgres rather than process memory because each webhook turn is an independent request that may land on any API replica, and the app may restart mid-call.
+
+No call recordings are stored — recording stays off pending compliance sign-off (`TWILIO_ARCHITECTURE.md` §9). The `turns` transcript is PHI-adjacent and carries the same handling rules as `tickets.description`.
 
 ## 4. Constraints & Data Integrity Rules
 

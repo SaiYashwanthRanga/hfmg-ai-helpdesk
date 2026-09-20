@@ -40,12 +40,12 @@ Everything in `DATABASE_DESIGN.md` and `API_SPEC.md` remains the long-term contr
 - `TicketService` holds the create/list/status-transition logic, kept framework-agnostic so it doesn't need to change when auth/queueing are added in Phase 3.
 
 ### 1.3 Email notifications
-- `notifications/email.py` sends via SMTP (`smtplib`, standard library — no provider SDK dependency yet) to `helpdesk@hfmg.net` on ticket creation and status change.
+- **Superseded:** originally sent via SMTP (`smtplib`, standard library). Migrated to Twilio SendGrid's API (`app/notifications/`, async `httpx`, provider abstraction) — see `SENDGRID_SETUP.md`. `notifications/email.py` still owns the subject/body building and fires on ticket creation and status change; only the transport changed.
 - Runs via FastAPI `BackgroundTasks`, not a queue — acceptable at MVP volume; the send call has its own timeout so a slow SMTP server can't hang the worker thread indefinitely.
 - If SMTP isn't configured (`SMTP_HOST` unset), the sender logs the would-be email instead of failing — lets the app run end-to-end on a laptop with no mail server.
 
 ### 1.4 AI summary (optional)
-- `ai/summarizer.py` calls the Anthropic API only if `ENABLE_AI_SUMMARY=true` **and** `ANTHROPIC_API_KEY` is set; otherwise it's a no-op and `ai_summary` simply stays `NULL`.
+- `ai/summarizer.py` calls the LLM provider only if `ENABLE_AI_SUMMARY=true` **and** `OPENAI_API_KEY` is set; otherwise it's a no-op and `ai_summary` simply stays `NULL`.
 - Runs via `BackgroundTasks` after ticket creation. Failure never affects ticket creation or listing — `ai_summary_status` tracks `PENDING`/`COMPLETED`/`FAILED`/`DISABLED`.
 
 ### 1.5 Frontend (React + Vite dashboard)
@@ -64,16 +64,24 @@ Everything in `DATABASE_DESIGN.md` and `API_SPEC.md` remains the long-term contr
 
 ## Phase 2 — Twilio Voice Integration
 
+**Detailed design:** [TWILIO_ARCHITECTURE.md](TWILIO_ARCHITECTURE.md) (infrastructure), [CALL_FLOW.md](CALL_FLOW.md) (conversation state machine), [VOICE_AGENT_DESIGN.md](VOICE_AGENT_DESIGN.md) (prompts, NLU, classification). Those three supersede the sketch below where they differ — notably, the design uses a multi-turn `<Gather input="speech">` state machine rather than the single record-then-transcribe flow originally sketched here and in `API_SPEC.md` §8.
+
 **Goal:** callers can report issues by phone; calls become tickets automatically, reusing the Phase 1 ticket pipeline.
 
-- Provision Twilio phone number; configure IVR flow (Twilio Studio or programmable voice) to greet caller, collect name/callback number/brief description, and record.
-- Implement `POST /webhooks/twilio/voice` (TwiML response) and `POST /webhooks/twilio/call-completed` per `API_SPEC.md` §8, with Twilio request-signature validation (this becomes the first endpoint in the system with any inbound request authentication, ahead of general auth landing in Phase 3).
-- Add the `voice_calls` table (`DATABASE_DESIGN.md` §3.8) and a `process_voice_ticket(call_sid)` job: fetch recording, transcribe, map transcript into the same `TicketCreate` shape used by the web form, call `TicketService.create_ticket()` with `source="PHONE"`.
-- At MVP-era volume this can still run via `BackgroundTasks`; revisit if call volume or transcription latency makes that impractical before Phase 3's queue lands.
-- Graceful fallback on transcription failure: create the ticket with the recording referenced and description flagged `"[Voice ticket — needs manual review]"`.
-- Compliance check specific to voice: call-recording consent requirements (state-specific two-party consent may apply) — confirm with HFMG legal before enabling recording in production.
+**Built:**
+- `voice_call_sessions` table (`DATABASE_DESIGN.md` §3.8) + `tickets.source` column, via one Alembic migration.
+- Four signature-validated webhooks (`API_SPEC.md` §8) — the first endpoints in the system with any inbound request authentication, ahead of general auth in Phase 3.
+- A conversation state machine (`app/voice/orchestrator.py`) collecting problem → name → email, with the callback number taken silently from caller ID and asked for only when unavailable.
+- LLM NLU via strict structured outputs: extraction, six-category classification, priority inference, escalation-intent detection — all validated against server-side allowlists.
+- Escalation on caller request or three cumulative failures, producing a HIGH-priority callback ticket with the transcript attached.
+- Abandoned-call salvage via the status callback.
+- 18 automated tests covering the state machine and webhooks, with the NLU mocked so they need neither a Twilio account nor an API key.
 
-**Exit criteria:** a test call produces a correctly tagged (`source="PHONE"`) ticket, summarized and notified the same way as a web-submitted ticket.
+**Deliberately not built:** call recording (consent requirements — `TWILIO_ARCHITECTURE.md` §9), live `<Dial>` transfer (callback-only, as approved), Spanish-language support.
+
+Runs on `BackgroundTasks` like the rest of the MVP; revisit if call volume makes that impractical before Phase 3's queue lands.
+
+**Exit criteria:** a test call produces a correctly tagged (`source="PHONE"`) ticket, summarized and notified the same way as a web-submitted ticket. ✅ Verified end-to-end against a running server.
 
 ---
 
@@ -85,7 +93,7 @@ Everything in `DATABASE_DESIGN.md` and `API_SPEC.md` remains the long-term contr
 - **Async infrastructure**: introduce Redis + Celery/RQ, move AI summary and email off `BackgroundTasks` and onto a real worker queue with retries, backoff, and idempotency (`notification_log` table added here).
 - **Containerization & deployment**: Dockerize backend/frontend/worker, `docker-compose` for local dev parity, then the production topology in `ARCHITECTURE.md` §7 (managed Postgres, managed Redis, container orchestration, load balancer, CDN).
 - **Remaining schema**: `ticket_comments`, `ticket_attachments` (with object storage), `audit_log`, full `notification_log`.
-- **Security & compliance**: BAAs with Anthropic and the email provider, log redaction of PHI-adjacent fields, rate limiting, WAF rules, encryption-at-rest configuration, retention policy enforcement.
+- **Security & compliance**: BAAs with OpenAI and the email provider, log redaction of PHI-adjacent fields, rate limiting, WAF rules, encryption-at-rest configuration, retention policy enforcement.
 - **Observability**: structured logging shipped centrally, metrics/dashboards, alerting, Sentry.
 - **Frontend polish**: agent dashboard queues, SLA/due-date indicators, full-text search UI, accessibility pass.
 
