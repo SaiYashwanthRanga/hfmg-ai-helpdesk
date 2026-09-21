@@ -25,7 +25,7 @@ These aren't three ways of phrasing the same idea — they measure different thi
 
 **Where it's blocked:** `GET /ai-insights` (`trending_issues` field — `repeated_problems`/`high_risk_alerts`/`recommendations` are separately blocked, see below).
 
-**The problem:** `WIREFRAMES.md` §11 states outright: *"'Trending Issues' and 'Most Common Problems' sound identical without a stated distinction (time-windowed spike vs. all-time frequency, presumably...)"* — even the document proposing these features flags them as underspecified, and hedges its own guess with "presumably." A guess is not a decision.
+**The problem:** `docs/archive/WIREFRAMES.md` §11 states outright: *"'Trending Issues' and 'Most Common Problems' sound identical without a stated distinction (time-windowed spike vs. all-time frequency, presumably...)"* — even the document proposing these features flags them as underspecified, and hedges its own guess with "presumably." A guess is not a decision.
 
 **Decision needed:**
 - Confirm "Most Common Problems" = ranked category frequency (this would just be `category_breakdown`, already built and returning real data under that name — if this is the intended meaning, "Most Common Problems" may not need to be a separate concept at all).
@@ -51,7 +51,7 @@ These aren't three ways of phrasing the same idea — they measure different thi
 
 **Where it's blocked:** `GET /ai-insights` (`high_risk_alerts` field).
 
-**The problem:** `WIREFRAMES.md` §8's example — *"3 escalated calls in the last hour — above normal rate"* — requires knowing what "normal" is. There is no historical baseline computed or stored anywhere, and picking an arbitrary threshold (e.g. "more than 2 escalations per hour is high risk") would be presenting a fabricated judgment as a system-derived fact.
+**The problem:** `docs/archive/WIREFRAMES.md` §8's example — *"3 escalated calls in the last hour — above normal rate"* — requires knowing what "normal" is. There is no historical baseline computed or stored anywhere, and picking an arbitrary threshold (e.g. "more than 2 escalations per hour is high risk") would be presenting a fabricated judgment as a system-derived fact.
 
 **Decision needed:** what baseline should "normal" be measured against (e.g. a trailing 30-day average escalation rate for the same hour-of-day/day-of-week)? What margin above that baseline counts as "high risk" — and who is accountable for tuning that threshold as real traffic patterns emerge?
 
@@ -63,11 +63,11 @@ These aren't three ways of phrasing the same idea — they measure different thi
 
 **Where it's blocked:** `GET /ai-insights` (`recommendations` field).
 
-**The problem:** `WIREFRAMES.md` §11 names this feature without specifying "recommendations to whom, about what" — is it a recommendation to IT leadership ("staff up the eClinicalWorks support queue"), to an individual agent ("this ticket looks like three others closed last week — here's how they were resolved"), or something else? Without an audience and a recommendation *type*, there is no defensible output shape to build a schema around.
+**The problem:** `docs/archive/WIREFRAMES.md` §11 names this feature without specifying "recommendations to whom, about what" — is it a recommendation to IT leadership ("staff up the eClinicalWorks support queue"), to an individual agent ("this ticket looks like three others closed last week — here's how they were resolved"), or something else? Without an audience and a recommendation *type*, there is no defensible output shape to build a schema around.
 
 **Decision needed:** define the audience, the trigger condition (when does a recommendation get generated), and at least one concrete example recommendation end-to-end, before this becomes an engineering task.
 
-**Unblocks:** "AI Recommendations," the least-specified feature in the entire product per `WIREFRAMES.md` §11's own assessment — expect this to be the last of the five decided, and treat that as correct sequencing, not neglect.
+**Unblocks:** "AI Recommendations," the least-specified feature in the entire product per `docs/archive/WIREFRAMES.md` §11's own assessment — expect this to be the last of the five decided, and treat that as correct sequencing, not neglect.
 
 ---
 
@@ -80,4 +80,4 @@ These shipped with a reasonable default rather than being left blocked, because 
 | `calls_today` / `escalations` (`/analytics/kpis`) | Day-scoped (today only, UTC) | Should "Escalations" instead mean all-time, or currently-active escalations? |
 | `escalation-rate` (`/analytics/escalation-rate`) | `escalated / terminal calls` (excludes in-progress calls) | Should the denominator instead be *all* calls including in-progress ones? |
 
-See `DOCS_GAP_REPORT.md`'s "Disclosed assumptions" section for the full reasoning.
+See `docs/archive/DOCS_GAP_REPORT.md`'s "Disclosed assumptions" section for the full reasoning.

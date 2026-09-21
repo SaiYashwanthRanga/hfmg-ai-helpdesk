@@ -50,22 +50,22 @@ Primary theme is **dark**. Light mode is optional and secondary — designed as 
 
 ## 3. Current Implementation Status
 
-**Updated during the final pre-production review pass** (see `FINAL_PROJECT_STATUS.md`, `DOCUMENTATION_AUDIT.md`). This table previously described a pre-implementation state — Frontend Phases 1–8 and Backend Tiers 0–5 have since shipped and are verified against running code, not just re-asserted from the original plan. Historical framing (the original "vision vs. reality" table as of the design phase) is preserved in git history if needed; this version describes the system as it actually runs today.
+**Updated during the final pre-production review pass** (see `FINAL_PROJECT_STATUS.md`, `docs/archive/DOCUMENTATION_AUDIT.md`). This table previously described a pre-implementation state — Frontend Phases 1–8 and Backend Tiers 0–5 have since shipped and are verified against running code, not just re-asserted from the original plan. Historical framing (the original "vision vs. reality" table as of the design phase) is preserved in git history if needed; this version describes the system as it actually runs today.
 
 | Area | Status | Notes |
 |---|---|---|
 | **Navigation shell / sidebar** | ✅ Built | Six-route sidebar (Frontend Phase 2), responsive: expanded on desktop, icon-rail on tablet, full-screen overlay on mobile |
 | **Dashboard** | ✅ Built | Real data throughout (Frontend Phase 4): System Health, 5 KPIs, Recent Tickets, Recent Calls, Recent Activity, AI Insights preview |
-| **Tickets — list/search/filter** | ✅ Built | Status, Category, Priority, Source, and free-text search all filter `GET /api/v1/tickets` for real (Backend Tier 0; Priority/Source/Search enabled on the frontend during the final review pass — see `FRONTEND_GAP_REPORT.md`) |
+| **Tickets — list/search/filter** | ✅ Built | Status, Category, Priority, Source, and free-text search all filter `GET /api/v1/tickets` for real (Backend Tier 0; Priority/Source/Search enabled on the frontend during the final review pass — see `docs/archive/FRONTEND_GAP_REPORT.md`) |
 | **Ticket Drawer** | 🔶 Partial | Slide-over, not a page (Frontend Phase 3). Transcript is still embedded in `description` for phone tickets rather than a separate field — see §8, unchanged and still an open decision (`REMAINING_PRODUCT_DECISIONS.md` doesn't cover it; it's a schema decision, not a business one) |
 | **Calls page** | ✅ Built | Full Voice Operations Center (Frontend Phase 5) against real `GET /voice-calls`/`{id}`/`summary` endpoints (Backend Tier 2). `LiveCallMonitor` (`/calls/live/:id`) remains an unbuilt stretch item, by design |
 | **Analytics page** | ✅ Built | Six real aggregation endpoints (Backend Tier 3) rendered as Recharts visualizations (Frontend Phase 6). "AI Resolution Rate" is correctly absent — no chart was built for a metric with no approved definition |
 | **AI Insights page** | 🔶 Partial, by design | `GET /ai-insights` (Backend Tier 4) returns real Category Breakdown data; Trending Issues, Repeated Problems, High Risk Alerts, and Recommendations are explicit blocked fields, not fabricated content (Frontend Phase 7). See `REMAINING_PRODUCT_DECISIONS.md` |
-| **Settings page** | 🔶 Built, read-only (correctly blocked from writing) | `GET /settings/status` (Backend Tier 1) + read-only UI (Frontend Phase 8), masked secrets, zero write-capable controls anywhere — verified by direct code grep in the final security review (`SECURITY_REVIEW.md`). The write path remains correctly blocked on Phase 3 auth, exactly as this document originally specified |
+| **Settings page** | 🔶 Built, read-only (correctly blocked from writing) | `GET /settings/status` (Backend Tier 1) + read-only UI (Frontend Phase 8), masked secrets, zero write-capable controls anywhere — verified by direct code grep in the final security review (`docs/reviews/SECURITY_REVIEW.md`). The write path remains correctly blocked on Phase 3 auth, exactly as this document originally specified |
 | **System Status widget** | ✅ Built | `GET /health/dependencies` (Backend Tier 1) reports OpenAI/Twilio/Database/Email, each cached 30s server-side; rendered in both the Header's `StatusBar` and Dashboard's `SystemHealthPanel` |
-| **Design system (colors, type, shadcn-style tokens, motion)** | ✅ Built | Tailwind v4 + CSS-variable tokens matching `DESIGN_SYSTEM.md` exactly, Lucide icons, Framer Motion for drawers/modals/toasts, Recharts for all charts |
+| **Design system (colors, type, shadcn-style tokens, motion)** | ✅ Built | Tailwind v4 + CSS-variable tokens matching `docs/archive/DESIGN_SYSTEM.md` exactly, Lucide icons, Framer Motion for drawers/modals/toasts, Recharts for all charts |
 | **Dark mode** | ✅ Built | Dark is the default theme (`ThemeProvider`), light mode implemented as the documented secondary pass |
-| **Auth (referenced throughout Settings/RBAC)** | ⬜ Vision | Still correctly deferred to Phase 3 (`IMPLEMENTATION_PLAN.md`) — nothing in this engagement built auth, and Settings' write-path block depends on that remaining true |
+| **Auth (referenced throughout Settings/RBAC)** | ⬜ Vision | Still correctly deferred to Phase 3 (`docs/archive/IMPLEMENTATION_PLAN.md`) — nothing in this engagement built auth, and Settings' write-path block depends on that remaining true |
 
 **What changed since this table was last accurate:** every row above that now reads ✅/🔶 was previously ⬜. Nothing in §4 onward describes anything left to build from scratch — remaining work is either a product decision (`REMAINING_PRODUCT_DECISIONS.md`) or Phase 3 backend auth, not frontend or analytics engineering.
 
@@ -197,7 +197,7 @@ This is the least-specified page in the original brief, deliberately left that w
 
 **OpenAI Configuration, Twilio Configuration, Email Configuration, System Configuration.**
 
-**This page cannot ship a write path yet, and that's not a design opinion — it's a direct consequence of a decision already made and documented.** `IMPLEMENTATION_PLAN.md`'s MVP Scope Decision and `DEPLOYMENT_GUIDE.md` §1 both state plainly: there is no authentication anywhere in this system today. A Settings page that can view or edit `OPENAI_API_KEY`, `TWILIO_AUTH_TOKEN`, or `SENDGRID_API_KEY` — the three secrets that authenticate this system to the outside world — with no login in front of it is not a rough edge to smooth over later; it is a live vulnerability the moment it exists, on a system explicitly documented as network-ACL-protected only (`DEPLOYMENT_GUIDE.md` §6).
+**This page cannot ship a write path yet, and that's not a design opinion — it's a direct consequence of a decision already made and documented.** `docs/archive/IMPLEMENTATION_PLAN.md`'s MVP Scope Decision and `DEPLOYMENT_GUIDE.md` §1 both state plainly: there is no authentication anywhere in this system today. A Settings page that can view or edit `OPENAI_API_KEY`, `TWILIO_AUTH_TOKEN`, or `SENDGRID_API_KEY` — the three secrets that authenticate this system to the outside world — with no login in front of it is not a rough edge to smooth over later; it is a live vulnerability the moment it exists, on a system explicitly documented as network-ACL-protected only (`DEPLOYMENT_GUIDE.md` §6).
 
 **What can ship now:** a **read-only** version showing configuration *status* — which provider is configured, masked key (`sk-...a1b2`), model name, last-verified timestamp — with zero write capability. This satisfies the "System Configuration" visibility goal without the vulnerability.
 
@@ -259,7 +259,7 @@ Used as reference points for density, type confidence, and restraint — not as 
 
 ## 18. Rollout Sequencing (Non-Binding)
 
-This is a design document, not `IMPLEMENTATION_PLAN.md` — but a vision this large is unhelpful without at least a proposed order, so implementation isn't left to guess where to start. Proposed, not decided:
+This is a design document, not `docs/archive/IMPLEMENTATION_PLAN.md` — but a vision this large is unhelpful without at least a proposed order, so implementation isn't left to guess where to start. Proposed, not decided:
 
 1. **Design system foundation**: Tailwind + shadcn/ui + theme tokens (§14) + Inter + the shell layout (§5), applied to the *existing* three pages first — proves the system works before any new page is built on top of it.
 2. **Tickets page + Ticket Drawer** (§7–8): highest-value, closest to what exists, and resolves the transcript-field decision (§8) that other work depends on.
@@ -274,7 +274,7 @@ This is a design document, not `IMPLEMENTATION_PLAN.md` — but a vision this la
 
 Live Call Monitoring · Call Playback · AI Copilot · Knowledge Base · Real-Time Notifications · Role-Based Access Control · Multi-Tenant Support · Mobile Application
 
-Two of these have documented prerequisites elsewhere in this repo, noted here so nobody scopes them as smaller than they are: **Call Playback** requires reopening the call-recording-off decision in `TWILIO_ARCHITECTURE.md` §9 (consent, compliance sign-off, greeting changes) — it is a compliance decision wearing a feature-request costume. **Role-Based Access Control** is not a future enhancement adjacent to this product; it is `IMPLEMENTATION_PLAN.md`'s Phase 3, and several sections of *this* document (§12 Settings, arguably §9/§10's data sensitivity) are blocked on it rather than merely complemented by it.
+Two of these have documented prerequisites elsewhere in this repo, noted here so nobody scopes them as smaller than they are: **Call Playback** requires reopening the call-recording-off decision in `TWILIO_ARCHITECTURE.md` §9 (consent, compliance sign-off, greeting changes) — it is a compliance decision wearing a feature-request costume. **Role-Based Access Control** is not a future enhancement adjacent to this product; it is `docs/archive/IMPLEMENTATION_PLAN.md`'s Phase 3, and several sections of *this* document (§12 Settings, arguably §9/§10's data sensitivity) are blocked on it rather than merely complemented by it.
 
 ## 20. Open Decisions
 

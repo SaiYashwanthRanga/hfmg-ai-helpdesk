@@ -1,6 +1,6 @@
 # HFMG AI Help Desk — Backend (MVP)
 
-FastAPI backend. No Docker, no Redis, no auth — see `IMPLEMENTATION_PLAN.md` in the repo root for what's deferred and why.
+FastAPI backend. No Docker, no Redis, no auth — see `docs/archive/IMPLEMENTATION_PLAN.md` in the repo root for what's deferred and why.
 
 ## Prerequisites
 
@@ -49,7 +49,7 @@ DATABASE_URL="postgresql+asyncpg://hfmg:hfmg_dev_local@localhost:5432/hfmg_helpd
 
 - **Email**: sent via Twilio SendGrid's API (not SMTP) — see `SENDGRID_SETUP.md`. If `SENDGRID_API_KEY` is left empty in `.env`, sends are skipped (logged, without content) rather than failing, so the app runs end-to-end without a SendGrid account. Set `SENDGRID_API_KEY`, `EMAIL_FROM`, and `HELPDESK_EMAIL` to see real delivery.
 - **AI summaries**: off by default (`ENABLE_AI_SUMMARY=false`). Set it to `true` and provide `OPENAI_API_KEY` to turn them on; tickets work identically either way — `ai_summary_status` is `DISABLED` when the feature is off.
-- **No auth**: every endpoint is open. Do not expose this beyond a trusted internal network before Phase 3 (see `IMPLEMENTATION_PLAN.md`). The Twilio webhooks are the exception — they authenticate via request signature.
+- **No auth**: every endpoint is open. Do not expose this beyond a trusted internal network before Phase 3 (see `docs/archive/IMPLEMENTATION_PLAN.md`). The Twilio webhooks are the exception — they authenticate via request signature.
 
 ## Twilio voice agent (Phase 2)
 

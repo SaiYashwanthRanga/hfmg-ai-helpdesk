@@ -10,7 +10,7 @@
 
 Callers dial an HFMG IT Help Desk phone number. An AI voice agent answers, collects the information needed for a ticket, classifies the issue, creates the ticket through the **existing** Phase 1 ticket pipeline, and reads the ticket number back before ending the call. Callers who ask for a person — or whom the agent fails to understand three times — are escalated to a human callback request.
 
-Phase 2 adds **no new infrastructure**: no Redis, no queue, no containers. It stays within the Phase 1 constraints (local/managed Postgres + FastAPI + `BackgroundTasks`), consistent with the MVP scope decision in `IMPLEMENTATION_PLAN.md`.
+Phase 2 adds **no new infrastructure**: no Redis, no queue, no containers. It stays within the Phase 1 constraints (local/managed Postgres + FastAPI + `BackgroundTasks`), consistent with the MVP scope decision in `docs/archive/IMPLEMENTATION_PLAN.md`.
 
 ## 2. Approach Decision
 
@@ -133,7 +133,7 @@ One new table, replacing the placeholder `voice_calls` sketched in `DATABASE_DES
 | `ended_at` | `TIMESTAMPTZ` NULL | Set by the status callback |
 | `created_at` / `updated_at` | `TIMESTAMPTZ` | |
 
-**Correction (Tier 5 documentation alignment, verified against `backend/app/db/models.py`):** the implemented `VoiceCallState` enum has **11** values, not the 13 below — `CREATING_TICKET` and `READ_BACK` were never added as persisted states. Ticket creation and the read-back prompt happen inline within the transition out of `CONFIRM_CATEGORY` (or wherever collection completes) directly into `ANYTHING_ELSE`/`ESCALATED`/`COMPLETED`, not as their own stored state. The diagram and table below are still accurate as a *narrative* of what happens in what order — just not as a literal list of `voice_call_state_enum` values. See `DOCS_GAP_REPORT.md`.
+**Correction (Tier 5 documentation alignment, verified against `backend/app/db/models.py`):** the implemented `VoiceCallState` enum has **11** values, not the 13 below — `CREATING_TICKET` and `READ_BACK` were never added as persisted states. Ticket creation and the read-back prompt happen inline within the transition out of `CONFIRM_CATEGORY` (or wherever collection completes) directly into `ANYTHING_ELSE`/`ESCALATED`/`COMPLETED`, not as their own stored state. The diagram and table below are still accurate as a *narrative* of what happens in what order — just not as a literal list of `voice_call_state_enum` values. See `docs/archive/DOCS_GAP_REPORT.md`.
 
 ```sql
 CREATE TYPE voice_call_state_enum AS ENUM (

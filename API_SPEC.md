@@ -9,7 +9,7 @@ This document is the source-of-truth contract; the live OpenAPI schema generated
 
 ## 0. Implementation Status
 
-This document describes the full target contract (including Phase 3 features like auth, assignment, and comments that are explicitly deferred per `IMPLEMENTATION_PLAN.md`'s MVP Scope Decision). The table below is the honest map from "documented here" to "actually running today" — verified directly against `backend/app/**` source, not assumed. See `BACKEND_GAP_ANALYSIS.md` for the full analysis this table summarizes.
+This document describes the full target contract (including Phase 3 features like auth, assignment, and comments that are explicitly deferred per `docs/archive/IMPLEMENTATION_PLAN.md`'s MVP Scope Decision). The table below is the honest map from "documented here" to "actually running today" — verified directly against `backend/app/**` source, not assumed. See `docs/archive/BACKEND_GAP_ANALYSIS.md` for the full analysis this table summarizes.
 
 | Section | Status | Notes |
 |---|---|---|
@@ -30,7 +30,7 @@ This document describes the full target contract (including Phase 3 features lik
 | §13 Voice Calls (read) | ✅ Built | New — list/detail/summary over `voice_call_sessions` |
 | §14 AI Insights | 🔶 Built (partial) | New — only Category Breakdown returns data; every other section is an explicit blocked field, not fabricated content |
 
-**Full-text search correction:** `ix_tickets_fts` (the GIN index this document's `q` param implies) does **not exist** in either the dev or test database — confirmed via `\d tickets`, not assumed from `DATABASE_DESIGN.md`. `q` is implemented with `ILIKE` across `caller_name`/`ticket_number`/`description`/`ai_summary` instead, which is correctness-equivalent at this system's documented volume. See `DOCS_GAP_REPORT.md`.
+**Full-text search correction:** `ix_tickets_fts` (the GIN index this document's `q` param implies) does **not exist** in either the dev or test database — confirmed via `\d tickets`, not assumed from `DATABASE_DESIGN.md`. `q` is implemented with `ILIKE` across `caller_name`/`ticket_number`/`description`/`ai_summary` instead, which is correctness-equivalent at this system's documented volume. See `docs/archive/DOCS_GAP_REPORT.md`.
 
 ---
 
@@ -364,7 +364,7 @@ Response `200`:
 }
 ```
 
-`status` is one of `operational` / `degraded` / `down` / `unknown` (`degraded` is reserved in the schema but never emitted today — no latency-based signal is measured yet, see `REMAINING_PRODUCT_DECISIONS.md`). Each dependency's check is cached in-process for 30 seconds so this endpoint never triggers a live OpenAI/Twilio/SendGrid call on every dashboard poll. OpenAI and Email checks are real reachability probes (a cheap authenticated `GET`, no email sent, no summary generated); Twilio's check is configuration-only (`TWILIO_AUTH_TOKEN` set or not) because a real call would need `TWILIO_ACCOUNT_SID`, which isn't a configured setting anywhere in this codebase — see `DOCS_GAP_REPORT.md`.
+`status` is one of `operational` / `degraded` / `down` / `unknown` (`degraded` is reserved in the schema but never emitted today — no latency-based signal is measured yet, see `REMAINING_PRODUCT_DECISIONS.md`). Each dependency's check is cached in-process for 30 seconds so this endpoint never triggers a live OpenAI/Twilio/SendGrid call on every dashboard poll. OpenAI and Email checks are real reachability probes (a cheap authenticated `GET`, no email sent, no summary generated); Twilio's check is configuration-only (`TWILIO_AUTH_TOKEN` set or not) because a real call would need `TWILIO_ACCOUNT_SID`, which isn't a configured setting anywhere in this codebase — see `docs/archive/DOCS_GAP_REPORT.md`.
 
 ---
 
@@ -395,7 +395,7 @@ All eight endpoints are **✅ implemented, new** — none existed before this ch
 | Endpoint | Response shape |
 |---|---|
 | `GET /analytics/kpis` | `{open_tickets, tickets_today, calls_today, escalations, ai_resolution_rate}`, each `{status: "ready"\|"blocked", value, blocked_reason}` |
-| `GET /analytics/recent-activity` | `{items: [{type: "ticket_created", occurred_at, ticket_id, ticket_number, caller_name, category, priority, status}]}` — `?limit=` (1–50, default 10). Ticket-derived events only; call events aren't merged in yet (see `WORK_LOG.md`) |
+| `GET /analytics/recent-activity` | `{items: [{type: "ticket_created", occurred_at, ticket_id, ticket_number, caller_name, category, priority, status}]}` — `?limit=` (1–50, default 10). Ticket-derived events only; call events aren't merged in yet (see `docs/archive/WORK_LOG.md`) |
 | `GET /analytics/tickets-by-category` | `{items: [{category, count}]}`, ordered by count desc |
 | `GET /analytics/tickets-by-priority` | `{items: [{priority, count}]}`, zero-filled for all 4 priorities |
 | `GET /analytics/tickets-by-source` | `{items: [{source, count}]}`, zero-filled for all 4 sources |
@@ -405,7 +405,7 @@ All eight endpoints are **✅ implemented, new** — none existed before this ch
 
 **`ai_resolution_rate` is deliberately a blocked field** (`{"status": "blocked", "value": null, "blocked_reason": "..."}`), not a number — `DESIGN.md` §20 lists three non-equivalent candidate definitions and none has been chosen. See `REMAINING_PRODUCT_DECISIONS.md`.
 
-**`calls_today`/`escalations`** use a disclosed, reasonable-default definition (day-scoped, matching their KPI-row siblings) that wasn't fully pinned down in `WIREFRAMES.md`/`DESIGN.md` — flagged in `REMAINING_PRODUCT_DECISIONS.md` for confirmation, not silently assumed.
+**`calls_today`/`escalations`** use a disclosed, reasonable-default definition (day-scoped, matching their KPI-row siblings) that wasn't fully pinned down in `docs/archive/WIREFRAMES.md`/`DESIGN.md` — flagged in `REMAINING_PRODUCT_DECISIONS.md` for confirmation, not silently assumed.
 
 **Escalation rate's definition** (also disclosed, not confirmed by product): `escalated_calls / calls that reached a terminal state (COMPLETED, ESCALATED, ABANDONED)` in the window. In-progress calls are excluded since they haven't reached an outcome yet.
 
@@ -413,7 +413,7 @@ All eight endpoints are **✅ implemented, new** — none existed before this ch
 
 ## 13. Voice Calls (read)
 
-**✅ Implemented, new.** Read-only access to `voice_call_sessions` (`DATABASE_DESIGN.md` §3.8) for the Voice Operations Center (`WIREFRAMES.md` §5). No write endpoints — all conversation-state writes remain internal to the Twilio webhooks in §8.
+**✅ Implemented, new.** Read-only access to `voice_call_sessions` (`DATABASE_DESIGN.md` §3.8) for the Voice Operations Center (`docs/archive/WIREFRAMES.md` §5). No write endpoints — all conversation-state writes remain internal to the Twilio webhooks in §8.
 
 ### `GET /api/v1/voice-calls`
 Paginated list, same envelope shape as `GET /tickets`. Query params: `page`, `page_size`, `state` (one of the 11 `voice_call_state_enum` values — see the correction in `CALL_FLOW.md`), `escalated` (bool). Each item denormalizes `caller_name`/`category`/`priority` out of the `collected` JSONB so clients don't need to parse it just to render a table column.
@@ -442,7 +442,7 @@ Response `200`:
 }
 ```
 
-Only `category_breakdown` returns real data — it reuses `/analytics/tickets-by-category`'s query, since "ticket count per category" has one obvious, uncontested definition. Every other section `WIREFRAMES.md` §11 names is a deliberate blocked field, not fabricated content: `trending_issues` (WIREFRAMES.md itself says "Trending Issues" and "Most Common Problems" "sound identical without a stated distinction"), `repeated_problems` (no caller-identity concept exists in the schema), `high_risk_alerts` (no defined "normal rate" baseline), `recommendations` (no defined output shape). See `REMAINING_PRODUCT_DECISIONS.md`.
+Only `category_breakdown` returns real data — it reuses `/analytics/tickets-by-category`'s query, since "ticket count per category" has one obvious, uncontested definition. Every other section `docs/archive/WIREFRAMES.md` §11 names is a deliberate blocked field, not fabricated content: `trending_issues` (docs/archive/WIREFRAMES.md itself says "Trending Issues" and "Most Common Problems" "sound identical without a stated distinction"), `repeated_problems` (no caller-identity concept exists in the schema), `high_risk_alerts` (no defined "normal rate" baseline), `recommendations` (no defined output shape). See `REMAINING_PRODUCT_DECISIONS.md`.
 
 ---
 

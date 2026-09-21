@@ -1,7 +1,7 @@
 # HFMG AI Help Desk — Architecture
 
 **System:** AI-powered IT Help Desk for Horizon Family Medical Group (HFMG)
-**Status:** Target production design — **partially implemented**, not pre-implementation. The MVP stack this document's §7/§11 describe as "future" (auth, Redis/Celery, Docker/containers) is still not built and remains accurately described as target-only. Everything else in this document — the FastAPI/PostgreSQL/React core, the ticket pipeline, the Twilio voice integration, and a substantial analytics/insights API surface beyond what this document originally scoped — is real and running. See `FINAL_PROJECT_STATUS.md` for the current, verified breakdown and `IMPLEMENTATION_PLAN.md`/`BACKEND_GAP_ANALYSIS.md` for what shipped in what order.
+**Status:** Target production design — **partially implemented**, not pre-implementation. The MVP stack this document's §7/§11 describe as "future" (auth, Redis/Celery, Docker/containers) is still not built and remains accurately described as target-only. Everything else in this document — the FastAPI/PostgreSQL/React core, the ticket pipeline, the Twilio voice integration, and a substantial analytics/insights API surface beyond what this document originally scoped — is real and running. See `FINAL_PROJECT_STATUS.md` for the current, verified breakdown and `docs/archive/IMPLEMENTATION_PLAN.md`/`docs/archive/BACKEND_GAP_ANALYSIS.md` for what shipped in what order.
 **Audience:** Engineering team building and operating the system
 
 ---

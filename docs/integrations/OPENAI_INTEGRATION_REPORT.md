@@ -1,5 +1,7 @@
 # HFMG AI Help Desk — OpenAI Integration Verification Report
 
+> **Point-in-time report (2026-09-21).** Written before the reasoning-effort fix that made gpt-5-family calls default to `minimal` effort. For the failure it missed and the fix, see [../reviews/AI_FAILURE_ANALYSIS.md](../reviews/AI_FAILURE_ANALYSIS.md). Configuration and endpoint findings below were verified at the time and may have shifted since.
+
 **Performed:** 2026-09-21, after a real `OPENAI_API_KEY` was provided for local development.
 **Method:** Every finding below is verified against running code — the local backend (`http://localhost:8000`), the project's pytest suite, and live `curl` requests — not asserted from documentation. Commands and outputs are included so results are reproducible.
 **Scope:** Configuration loading, the `/health/dependencies` and `/settings/status` endpoints, AI ticket summarization end-to-end, the regenerate-summary endpoint, error handling, fallback behavior, and secret-exposure checks across logs/responses/frontend.

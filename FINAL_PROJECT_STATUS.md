@@ -1,7 +1,7 @@
 # HFMG AI Help Desk — Final Project Status
 
 **Prepared:** Final pre-production review pass, covering Backend Tiers 0–5 and Frontend Phases 1–8 plus a dedicated review/audit pass across both.
-**Verification standard applied throughout:** running application behavior, source code, database schema, and tests — in that priority order, over any document's own claims about itself. Every figure in this document is reproducible via the commands referenced in `SECURITY_REVIEW.md`, `DOCUMENTATION_AUDIT.md`, `WORK_LOG.md`, and `FRONTEND_WORK_LOG.md`.
+**Verification standard applied throughout:** running application behavior, source code, database schema, and tests — in that priority order, over any document's own claims about itself. Every figure in this document is reproducible via the commands referenced in `docs/reviews/SECURITY_REVIEW.md`, `docs/archive/DOCUMENTATION_AUDIT.md`, `docs/archive/WORK_LOG.md`, and `docs/archive/FRONTEND_WORK_LOG.md`.
 
 ---
 
@@ -14,7 +14,7 @@
 - Analytics: 8 endpoints — KPIs, recent activity, tickets by category/priority/source, calls by day, escalation rate, AI summary usage
 - Voice Calls: read access to call sessions — list, detail (full transcript), summary counts
 - AI Insights: real category-breakdown data; four other sections as honest, disclosed blocked states
-- Documentation corrected against 13 verified discrepancies between docs and running code (5 in Tier 5, 8 in this final pass — see `DOCUMENTATION_AUDIT.md`, `DOCS_GAP_REPORT.md`)
+- Documentation corrected against 13 verified discrepancies between docs and running code (5 in Tier 5, 8 in this final pass — see `docs/archive/DOCUMENTATION_AUDIT.md`, `docs/archive/DOCS_GAP_REPORT.md`)
 
 ### Frontend (Phases 1–8)
 - App shell, six-item responsive navigation, full dark-mode-first design system (Tailwind v4, ~20 reusable primitives)
@@ -69,15 +69,15 @@ Full detail in `TECHNICAL_DEBT.md`. Summary: missing DB indexes and the never-bu
 
 ## 5. Security Assessment
 
-Full detail in `SECURITY_REVIEW.md`. **No critical or high-severity finding.** Specifically verified in this pass, not just asserted: secrets never appear in git, logs, or API responses (confirmed by direct grep and a live API call); the Settings page has zero write-capable code anywhere in its component tree (confirmed by grep on both frontend and backend); CORS is origin-restricted; error responses never leak stack traces; all new numeric query parameters are bounds-checked. The one standing risk — no authentication — is pre-existing, deliberate, documented, and unchanged by this engagement; this review confirmed nothing built in Tiers 0–4 or Frontend Phases 4–8 quietly widened it.
+Full detail in `docs/reviews/SECURITY_REVIEW.md`. **No critical or high-severity finding.** Specifically verified in this pass, not just asserted: secrets never appear in git, logs, or API responses (confirmed by direct grep and a live API call); the Settings page has zero write-capable code anywhere in its component tree (confirmed by grep on both frontend and backend); CORS is origin-restricted; error responses never leak stack traces; all new numeric query parameters are bounds-checked. The one standing risk — no authentication — is pre-existing, deliberate, documented, and unchanged by this engagement; this review confirmed nothing built in Tiers 0–4 or Frontend Phases 4–8 quietly widened it.
 
 ---
 
 ## 6. Documentation Status
 
-**Audited in full** (`DOCUMENTATION_AUDIT.md`): every markdown file in the repository was checked against running code, not assumed accurate. 13 discrepancies found and corrected across two review passes (Backend Tier 5: 5 findings; this final pass: 8 findings, including two operationally significant "this endpoint doesn't exist" claims in `OPERATIONS_RUNBOOK.md`/`DEPLOYMENT_GUIDE.md` that were no longer true). Two large documents (`WIREFRAMES.md`, `COMPONENTS.md`) received a pointer-note correction rather than a full per-tag rewrite, a deliberate choice to avoid introducing new errors under time pressure — documented and justified in `DOCUMENTATION_AUDIT.md`.
+**Audited in full** (`docs/archive/DOCUMENTATION_AUDIT.md`): every markdown file in the repository was checked against running code, not assumed accurate. 13 discrepancies found and corrected across two review passes (Backend Tier 5: 5 findings; this final pass: 8 findings, including two operationally significant "this endpoint doesn't exist" claims in `OPERATIONS_RUNBOOK.md`/`DEPLOYMENT_GUIDE.md` that were no longer true). Two large documents (`docs/archive/WIREFRAMES.md`, `docs/archive/COMPONENTS.md`) received a pointer-note correction rather than a full per-tag rewrite, a deliberate choice to avoid introducing new errors under time pressure — documented and justified in `docs/archive/DOCUMENTATION_AUDIT.md`.
 
-**Documentation now describes the current system**, with historical planning documents (`IMPLEMENTATION_PLAN.md`, `FRONTEND_IMPLEMENTATION_PLAN.md`, `BACKEND_GAP_ANALYSIS.md`) explicitly labeled as historical where their per-phase detail predates implementation, while their headline status is kept current.
+**Documentation now describes the current system**, with historical planning documents (`docs/archive/IMPLEMENTATION_PLAN.md`, `docs/archive/FRONTEND_IMPLEMENTATION_PLAN.md`, `docs/archive/BACKEND_GAP_ANALYSIS.md`) explicitly labeled as historical where their per-phase detail predates implementation, while their headline status is kept current.
 
 ---
 
@@ -96,6 +96,6 @@ Functionally, the application is complete and correct against everything it clai
 2. **Confirm the two disclosed Analytics assumptions** (day-scoping, escalation-rate denominator) with whoever owns operational reporting — low effort, closes a small trust gap.
 3. **Scope Phase 3 backend work** (auth, Redis/Celery, Docker) as its own initiative — everything in `RELEASE_CHECKLIST.md`'s Critical/High section either depends on it or is a stopgap until it lands.
 4. **Decide whether to invest in a caller-identity concept** (`REMAINING_PRODUCT_DECISIONS.md` #3) — this one decision unblocks both AI Insights' Repeated Problems and a general duplicate-ticket-detection feature that has value independent of AI Insights.
-5. **Revisit `WIREFRAMES.md`/`COMPONENTS.md`'s inline status tags** as a dedicated small cleanup task, now that a pointer-note stopgap is in place (`DOCUMENTATION_AUDIT.md`) — not urgent, but worth closing out properly rather than leaving the pointer permanently.
+5. **Revisit `docs/archive/WIREFRAMES.md`/`docs/archive/COMPONENTS.md`'s inline status tags** as a dedicated small cleanup task, now that a pointer-note stopgap is in place (`docs/archive/DOCUMENTATION_AUDIT.md`) — not urgent, but worth closing out properly rather than leaving the pointer permanently.
 
 Nothing above blocks the other items — all five can proceed independently and in any order.

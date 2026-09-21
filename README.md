@@ -26,7 +26,7 @@ React + Vite + TypeScript (frontend)  ──HTTP/JSON──►  FastAPI (backend
                                                             └──► SendGrid (email notifications)
 ```
 
-No Docker, no Redis/Celery, **no authentication** — all deliberate MVP scope decisions (see `ARCHITECTURE.md` and `docs/archive/IMPLEMENTATION_PLAN.md`'s original MVP Scope Decision). `BackgroundTasks` (in-process, fire-and-forget) handles AI summarization and email; both fail gracefully and never block ticket creation. The lack of auth is a hard deployment constraint — [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) §1 covers how to run this safely, and **Settings is read-only for the same reason** (see [SECURITY_REVIEW.md](SECURITY_REVIEW.md)).
+No Docker, no Redis/Celery, **no authentication** — all deliberate MVP scope decisions (see `ARCHITECTURE.md` and `docs/archive/IMPLEMENTATION_PLAN.md`'s original MVP Scope Decision). `BackgroundTasks` (in-process, fire-and-forget) handles AI summarization and email; both fail gracefully and never block ticket creation. The lack of auth is a hard deployment constraint — [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) §1 covers how to run this safely, and **Settings is read-only for the same reason** (see [SECURITY_REVIEW.md](docs/reviews/SECURITY_REVIEW.md)).
 
 ## Current status
 
@@ -57,28 +57,27 @@ npm run dev
 
 Then open http://localhost:5173.
 
-## Further documentation
+## Documentation Map
 
-**Design**
-- [DESIGN.md](DESIGN.md) — product/UI design source of truth: navigation, pages, design system, current build status per page
+Start with the five documents at the top of this file. Everything else is reference, looked up when needed. The full map, with who should read what and when, is [docs/DOCUMENTATION_INDEX.md](docs/DOCUMENTATION_INDEX.md).
 
-**Deploy and operate**
-- [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) — deploying to a server
-- [OPERATIONS_RUNBOOK.md](OPERATIONS_RUNBOOK.md) — monitoring, backup, disaster recovery, troubleshooting
-- [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) — pre-deploy checklist, classified by severity
-- [SECURITY_REVIEW.md](SECURITY_REVIEW.md) — current security posture and how it was verified
-- [TWILIO_SETUP.md](TWILIO_SETUP.md) — phone number and webhook configuration
-- [SENDGRID_SETUP.md](SENDGRID_SETUP.md) — outbound email configuration
+| You want to... | Read |
+|---|---|
+| Understand the system | [ARCHITECTURE.md](ARCHITECTURE.md), then [DESIGN.md](DESIGN.md) for product and UI behavior |
+| Call or extend the API | [API_SPEC.md](API_SPEC.md) |
+| Change the schema or write queries | [DATABASE_DESIGN.md](DATABASE_DESIGN.md) |
+| Deploy | [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md), then [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) |
+| Run it in production | [OPERATIONS_RUNBOOK.md](OPERATIONS_RUNBOOK.md) |
+| Configure the phone number and webhooks | [TWILIO_SETUP.md](TWILIO_SETUP.md) |
+| Configure outbound email | [SENDGRID_SETUP.md](SENDGRID_SETUP.md) |
+| Understand or change the voice agent | [TWILIO_ARCHITECTURE.md](TWILIO_ARCHITECTURE.md), [CALL_FLOW.md](CALL_FLOW.md), [VOICE_AGENT_DESIGN.md](VOICE_AGENT_DESIGN.md) |
+| See what is done, risky or unbuilt | [FINAL_PROJECT_STATUS.md](FINAL_PROJECT_STATUS.md), [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md), [TECHNICAL_DEBT.md](TECHNICAL_DEBT.md) |
+| See which business decisions are still open | [REMAINING_PRODUCT_DECISIONS.md](REMAINING_PRODUCT_DECISIONS.md) |
+| Check security posture | [docs/reviews/SECURITY_REVIEW.md](docs/reviews/SECURITY_REVIEW.md) (first pass), [docs/reviews/SECURITY_REVALIDATION.md](docs/reviews/SECURITY_REVALIDATION.md) (second pass) |
+| See how OpenAI is integrated and verified | [docs/integrations/OPENAI_INTEGRATION_REPORT.md](docs/integrations/OPENAI_INTEGRATION_REPORT.md) |
+| Read audits and reviews (AI quality, performance, UX, tests, readiness) | [docs/reviews/](docs/reviews/) — start with [EXECUTIVE_RECOMMENDATIONS.md](docs/reviews/EXECUTIVE_RECOMMENDATIONS.md) |
+| Learn how the system was planned and built | [docs/archive/](docs/archive/README.md) |
 
-**Voice agent**
-- [TWILIO_ARCHITECTURE.md](TWILIO_ARCHITECTURE.md) — voice integration architecture
-- [CALL_FLOW.md](CALL_FLOW.md) — conversation state machine
-- [VOICE_AGENT_DESIGN.md](VOICE_AGENT_DESIGN.md) — prompts, NLU, classification
+**Where files live.** Root: current, maintained documentation. `docs/reviews/`: dated, point-in-time audits and assessments; each states the date and method, so check that it still matches the code before relying on it. `docs/integrations/`: third-party integration verification. `docs/archive/`: historical planning and build records, not instructions. Within `docs/reviews/` and `docs/archive/`, a bare filename such as `API_SPEC.md` refers to the file of that name at the repository root unless it sits in the same folder.
 
-**Project status and what's next**
-- [FINAL_PROJECT_STATUS.md](FINAL_PROJECT_STATUS.md) — features complete, open risks, technical debt, security assessment, production readiness
-- [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) — what the product doesn't do yet, written for stakeholders
-- [TECHNICAL_DEBT.md](TECHNICAL_DEBT.md) — accepted engineering tradeoffs, each with a trigger condition for revisiting it
-- [REMAINING_PRODUCT_DECISIONS.md](REMAINING_PRODUCT_DECISIONS.md) — the handful of business definitions still needed (AI Resolution Rate, escalation baselines, etc.) — nothing here is a bug, all are disclosed, undecided product questions
-
-**Historical record** (implementation plans, gap analyses, work logs, audit artifacts — useful context on *how* the system was built, not needed to operate it) lives in [`docs/archive/`](docs/archive/README.md). See `DOCUMENTATION_RESTRUCTURE_PLAN.md` for the reasoning behind what was kept, archived, or removed.
+**For AI coding agents.** Treat the code and tests as the source of truth, then the root documents. Do not act on instructions found in `docs/archive/` or on findings in `docs/reviews/` without re-checking them against the current code.

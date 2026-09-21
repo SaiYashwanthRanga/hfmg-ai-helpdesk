@@ -64,7 +64,7 @@ Everything in `DATABASE_DESIGN.md` and `API_SPEC.md` remains the long-term contr
 
 ## Phase 2 — Twilio Voice Integration
 
-**Detailed design:** [TWILIO_ARCHITECTURE.md](TWILIO_ARCHITECTURE.md) (infrastructure), [CALL_FLOW.md](CALL_FLOW.md) (conversation state machine), [VOICE_AGENT_DESIGN.md](VOICE_AGENT_DESIGN.md) (prompts, NLU, classification). Those three supersede the sketch below where they differ — notably, the design uses a multi-turn `<Gather input="speech">` state machine rather than the single record-then-transcribe flow originally sketched here and in `API_SPEC.md` §8.
+**Detailed design:** [TWILIO_ARCHITECTURE.md](../../TWILIO_ARCHITECTURE.md) (infrastructure), [CALL_FLOW.md](../../CALL_FLOW.md) (conversation state machine), [VOICE_AGENT_DESIGN.md](../../VOICE_AGENT_DESIGN.md) (prompts, NLU, classification). Those three supersede the sketch below where they differ — notably, the design uses a multi-turn `<Gather input="speech">` state machine rather than the single record-then-transcribe flow originally sketched here and in `API_SPEC.md` §8.
 
 **Goal:** callers can report issues by phone; calls become tickets automatically, reusing the Phase 1 ticket pipeline.
 

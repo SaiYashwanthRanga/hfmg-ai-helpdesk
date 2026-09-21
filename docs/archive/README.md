@@ -2,7 +2,7 @@
 
 These documents describe **how the HFMG AI Help Desk was planned and built**, not how to operate it today. They're preserved for context and traceability, not deleted, because they explain the reasoning behind decisions still visible in the current codebase — but nothing here should be treated as current instruction. For that, see the root [`README.md`](../../README.md) and the docs it points to.
 
-See [`DOCUMENTATION_RESTRUCTURE_PLAN.md`](../../DOCUMENTATION_RESTRUCTURE_PLAN.md) at the repo root for the full reasoning behind what was kept, archived, or deleted.
+See [`DOCUMENTATION_RESTRUCTURE_PLAN.md`](DOCUMENTATION_RESTRUCTURE_PLAN.md) (this folder) for the reasoning behind the first restructure pass, and [`../DOCUMENTATION_INDEX.md`](../DOCUMENTATION_INDEX.md) for the current documentation map.
 
 ## Implementation plans (superseded — the work described is done)
 - `IMPLEMENTATION_PLAN.md` — the original backend Phase 1–3 sequencing plan
@@ -13,6 +13,7 @@ See [`DOCUMENTATION_RESTRUCTURE_PLAN.md`](../../DOCUMENTATION_RESTRUCTURE_PLAN.m
 - `DOCS_GAP_REPORT.md` — documentation-vs-code discrepancies found during backend work
 - `FRONTEND_GAP_REPORT.md` — same, frontend side
 - `DOCUMENTATION_AUDIT.md` — the final full-repository documentation audit
+- `DOCUMENTATION_RESTRUCTURE_PLAN.md` — the plan for the first documentation cleanup (30 root files down to 18); superseded by [`../reviews/DOCUMENTATION_AUDIT_V2.md`](../reviews/DOCUMENTATION_AUDIT_V2.md)
 
 ## Work logs (chronological build history)
 - `WORK_LOG.md` — backend, tier by tier

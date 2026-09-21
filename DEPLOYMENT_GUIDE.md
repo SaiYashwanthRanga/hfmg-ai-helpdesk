@@ -8,7 +8,7 @@
 
 ## 1. Read This First — The System Has No Authentication
 
-Phase 1 deliberately deferred auth (`IMPLEMENTATION_PLAN.md`, MVP Scope Decision). **Every ticket endpoint is open to anyone who can reach it.** There is no login, no API key, no role check.
+Phase 1 deliberately deferred auth (`docs/archive/IMPLEMENTATION_PLAN.md`, MVP Scope Decision). **Every ticket endpoint is open to anyone who can reach it.** There is no login, no API key, no role check.
 
 That creates a specific tension for deployment, because the Twilio webhooks *must* be reachable from the public internet while everything else must not be:
 
@@ -388,7 +388,7 @@ Check what a downgrade actually drops before running it. The Phase 2 downgrade r
 
 ## 11. Known Gaps at This Phase
 
-Honest list of things a production operator will notice are missing. All are Phase 3 items (`IMPLEMENTATION_PLAN.md`), not oversights:
+Honest list of things a production operator will notice are missing. All are Phase 3 items (`docs/archive/IMPLEMENTATION_PLAN.md`), not oversights:
 
 | Gap | Impact | Workaround |
 |---|---|---|
