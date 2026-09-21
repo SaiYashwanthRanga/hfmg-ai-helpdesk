@@ -1,4 +1,5 @@
 import type {
+  AISummaryStatus,
   Category,
   Priority,
   Ticket,
@@ -87,6 +88,11 @@ export const api = {
     request<Ticket>(`/tickets/${id}/status`, {
       method: "POST",
       body: JSON.stringify({ status: newStatus }),
+    }),
+
+  regenerateSummary: (id: string) =>
+    request<{ ai_summary_status: AISummaryStatus }>(`/tickets/${id}/regenerate-summary`, {
+      method: "POST",
     }),
 };
 

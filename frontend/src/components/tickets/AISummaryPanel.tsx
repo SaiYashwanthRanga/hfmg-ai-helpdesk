@@ -13,17 +13,19 @@ const STATUS_COPY: Record<AISummaryStatus, string> = {
 export interface AISummaryPanelProps {
   summary: string | null;
   status: AISummaryStatus;
+  onRegenerate: () => void;
+  isRegenerating: boolean;
 }
 
 /**
  * AI Summary drawer section (WIREFRAMES.md §4, DESIGN_SYSTEM.md §18).
- * `POST /api/v1/tickets/{id}/regenerate-summary` is documented in
- * API_SPEC.md §3 but does not exist on the running backend
- * (backend/app/api/v1/tickets.py has no such route) — the Regenerate
- * button ships disabled with an explanatory tooltip rather than calling an
- * endpoint that would 404 (FRONTEND_IMPLEMENTATION_PLAN.md Phase 3 blocker).
+ * Calls `POST /api/v1/tickets/{id}/regenerate-summary`, which does exist on
+ * the backend (backend/app/api/v1/tickets.py) — verified live during the
+ * 2026-09-21 OpenAI integration pass; see OPENAI_INTEGRATION_REPORT.md.
  */
-export function AISummaryPanel({ summary, status }: AISummaryPanelProps) {
+export function AISummaryPanel({ summary, status, onRegenerate, isRegenerating }: AISummaryPanelProps) {
+  const disabled = status === "DISABLED" || status === "PENDING" || isRegenerating;
+
   return (
     <section className="border-b border-l-4 border-border border-l-ai-accent bg-ai-subtle/40 px-6 py-4">
       <div className="mb-2 flex items-center justify-between gap-2">
@@ -33,8 +35,10 @@ export function AISummaryPanel({ summary, status }: AISummaryPanelProps) {
         </h3>
         <Button
           variant="ghost"
-          disabled
-          title="Regenerating a summary isn't available yet — the backend endpoint for it hasn't been built."
+          disabled={disabled}
+          loading={isRegenerating}
+          onClick={onRegenerate}
+          title={status === "DISABLED" ? "AI summaries are turned off for this deployment." : undefined}
         >
           <RefreshCw className="size-3.5" aria-hidden="true" />
           Regenerate

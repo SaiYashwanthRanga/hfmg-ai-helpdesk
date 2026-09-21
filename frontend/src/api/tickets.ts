@@ -57,3 +57,18 @@ export function useUpdateTicketStatusMutation(ticketId: string) {
     },
   });
 }
+
+export function useRegenerateSummaryMutation(ticketId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => api.regenerateSummary(ticketId),
+    onSuccess: ({ ai_summary_status }) => {
+      // Sets status to PENDING immediately so useTicketQuery's refetchInterval
+      // starts polling, without waiting for a manual refresh.
+      queryClient.setQueryData(["tickets", "detail", ticketId], (current: Ticket | undefined) =>
+        current ? { ...current, ai_summary_status, ai_summary: null } : current,
+      );
+    },
+  });
+}

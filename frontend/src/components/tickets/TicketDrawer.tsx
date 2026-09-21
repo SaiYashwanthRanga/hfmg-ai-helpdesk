@@ -1,4 +1,4 @@
-import { useTicketQuery } from "../../api/tickets";
+import { useRegenerateSummaryMutation, useTicketQuery } from "../../api/tickets";
 import { ApiError } from "../../api/client";
 import { Drawer } from "../ui/Drawer";
 import { ErrorState } from "../ui/ErrorState";
@@ -24,6 +24,7 @@ export interface TicketDrawerProps {
  */
 export function TicketDrawer({ ticketId, onClose }: TicketDrawerProps) {
   const { data: ticket, isLoading, isError, error, refetch } = useTicketQuery(ticketId);
+  const regenerateSummary = useRegenerateSummaryMutation(ticketId ?? "");
 
   return (
     <Drawer open={ticketId !== null} onClose={onClose} title={ticket?.ticket_number ?? "Ticket"}>
@@ -64,7 +65,12 @@ export function TicketDrawer({ ticketId, onClose }: TicketDrawerProps) {
             <p className="text-sm whitespace-pre-wrap text-foreground">{ticket.description}</p>
           </section>
 
-          <AISummaryPanel summary={ticket.ai_summary} status={ticket.ai_summary_status} />
+          <AISummaryPanel
+            summary={ticket.ai_summary}
+            status={ticket.ai_summary_status}
+            onRegenerate={() => regenerateSummary.mutate()}
+            isRegenerating={regenerateSummary.isPending}
+          />
 
           <TicketTimeline />
 
