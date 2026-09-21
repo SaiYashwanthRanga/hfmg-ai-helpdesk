@@ -26,6 +26,37 @@ settings = get_settings()
 RETRYABLE = (APIConnectionError, APITimeoutError, RateLimitError, InternalServerError)
 
 
+def _default_reasoning_effort(model: str) -> str:
+    """Cap hidden reasoning for the original gpt-5 family (gpt-5, -mini, -nano).
+
+    These models default to "medium" effort, and reasoning tokens count against
+    max_output_tokens. Observed live with gpt-5-nano: a 2-3 sentence summary
+    spent 1984 of 2000 output tokens on reasoning, returned status=incomplete
+    with empty text, and took 16-20s. "minimal" returns in ~3s. Later families
+    (gpt-5.1+) use different effort values, and non-reasoning models reject the
+    parameter, so neither gets a default.
+    """
+    name = model.lower()
+    if name.startswith("gpt-5") and not name.startswith("gpt-5."):
+        return "minimal"
+    return ""
+
+
+def _describe(exc: BaseException) -> str:
+    """Class name plus the real message, HTTP status and request id when present."""
+    parts = [type(exc).__name__]
+    status = getattr(exc, "status_code", None)
+    if status is not None:
+        parts.append(f"status={status}")
+    request_id = getattr(exc, "request_id", None)
+    if request_id:
+        parts.append(f"request_id={request_id}")
+    message = str(exc).strip()
+    if message:
+        parts.append(message[:500])
+    return " | ".join(parts)
+
+
 class OpenAIProvider:
     name = "openai"
 
@@ -59,8 +90,9 @@ class OpenAIProvider:
         kwargs: dict[str, Any] = {}
         if settings.openai_temperature is not None:
             kwargs["temperature"] = settings.openai_temperature
-        if settings.openai_reasoning_effort:
-            kwargs["reasoning"] = {"effort": settings.openai_reasoning_effort}
+        effort = settings.openai_reasoning_effort or _default_reasoning_effort(settings.openai_model)
+        if effort:
+            kwargs["reasoning"] = {"effort": effort}
         return kwargs
 
     async def _call(
@@ -91,12 +123,22 @@ class OpenAIProvider:
                     ),
                     timeout=timeout,
                 )
-                return response.output_text
+                text = response.output_text
+                if not text:
+                    logger.warning(
+                        "OpenAI returned no output text: status=%s incomplete_details=%s usage=%s",
+                        getattr(response, "status", None),
+                        getattr(response, "incomplete_details", None),
+                        getattr(response, "usage", None),
+                    )
+                return text
 
             except RETRYABLE as exc:
                 if attempt >= attempts:
                     logger.warning(
-                        "OpenAI call failed after %s attempt(s): %s", attempt, type(exc).__name__
+                        "OpenAI call failed after %s attempt(s): %s",
+                        attempt,
+                        _describe(exc),
                     )
                     return None
                 # Exponential backoff with jitter, to avoid synchronised retries
@@ -106,7 +148,7 @@ class OpenAIProvider:
                     "OpenAI call attempt %s/%s failed (%s); retrying in %.2fs",
                     attempt,
                     attempts,
-                    type(exc).__name__,
+                    _describe(exc),
                     delay,
                 )
                 await asyncio.sleep(delay)
@@ -115,9 +157,11 @@ class OpenAIProvider:
                 logger.warning("OpenAI call exceeded %.1fs budget", timeout)
                 return None
 
-            except Exception:
+            except Exception as exc:
                 # Non-retryable (bad request, auth, schema rejection).
-                logger.exception("OpenAI call failed with a non-retryable error")
+                logger.exception(
+                    "OpenAI call failed with a non-retryable error: %s", _describe(exc)
+                )
                 return None
 
         return None

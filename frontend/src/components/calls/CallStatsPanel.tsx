@@ -1,10 +1,24 @@
 import { useVoiceCallSummaryQuery } from "../../api/voiceCalls";
 import { Card } from "../ui/Card";
+import { ErrorState } from "../ui/ErrorState";
 import { LoadingState } from "../ui/LoadingState";
 
 /** Active/Completed/Escalated counts (WIREFRAMES.md §5) — GET /voice-calls/summary, real. */
 export function CallStatsPanel() {
-  const { data, isLoading } = useVoiceCallSummaryQuery();
+  const { data, isLoading, isError, refetch } = useVoiceCallSummaryQuery();
+
+  if (isError) {
+    return (
+      <Card padding="sm">
+        <ErrorState
+          severity="degraded"
+          title="Couldn't load call stats"
+          description="Try again shortly."
+          retry={() => refetch()}
+        />
+      </Card>
+    );
+  }
 
   if (isLoading || !data) {
     return (

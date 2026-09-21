@@ -199,8 +199,10 @@ async def test_regenerate_summary_sets_pending_when_enabled(client, category_id,
     assert response.status_code == 202
     assert response.json() == {"ai_summary_status": "PENDING"}
 
+    # The background task runs with no API key and must resolve the ticket to
+    # FAILED rather than leaving it PENDING forever.
     get_response = await client.get(f"/api/v1/tickets/{ticket_id}")
-    assert get_response.json()["ai_summary_status"] == "PENDING"
+    assert get_response.json()["ai_summary_status"] == "FAILED"
 
 
 async def test_regenerate_summary_requires_existing_ticket(client):

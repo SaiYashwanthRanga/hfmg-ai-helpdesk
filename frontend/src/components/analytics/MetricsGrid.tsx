@@ -1,5 +1,6 @@
 import { useCallsByDayQuery, useTicketsByCategoryQuery } from "../../api/analytics";
 import { Card } from "../ui/Card";
+import { ErrorState } from "../ui/ErrorState";
 import { LoadingState } from "../ui/LoadingState";
 
 /**
@@ -13,6 +14,22 @@ export function MetricsGrid({ days }: { days: number }) {
 
   const totalTickets = categoryQuery.data?.items.reduce((sum, item) => sum + item.count, 0);
   const totalCalls = callsQuery.data?.items.reduce((sum, item) => sum + item.count, 0);
+
+  if (categoryQuery.isError || callsQuery.isError) {
+    return (
+      <Card padding="sm">
+        <ErrorState
+          severity="degraded"
+          title="Couldn't load summary totals"
+          description="Try again shortly."
+          retry={() => {
+            void categoryQuery.refetch();
+            void callsQuery.refetch();
+          }}
+        />
+      </Card>
+    );
+  }
 
   if (categoryQuery.isLoading || callsQuery.isLoading) {
     return (

@@ -9,7 +9,7 @@ import { StatusIndicator } from "../ui/StatusIndicator";
  * so the two never drift or double-fetch.
  */
 export function SystemHealthPanel() {
-  const { data } = useQuery({
+  const { data, isError } = useQuery({
     queryKey: ["health", "dependencies"],
     queryFn: fetchDependencyHealth,
     refetchInterval: 30_000,
@@ -18,6 +18,11 @@ export function SystemHealthPanel() {
   return (
     <Card>
       <h2 className="mb-3 text-sm font-semibold text-foreground">System Health</h2>
+      {isError ? (
+        <p role="alert" className="mb-3 text-xs text-warning">
+          Couldn't reach the health check. Statuses below may be out of date.
+        </p>
+      ) : null}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatusIndicator status={data?.openai.status ?? "unknown"} label="OpenAI" lastChecked={data?.openai.lastChecked} />
         <StatusIndicator status={data?.twilio.status ?? "unknown"} label="Twilio" lastChecked={data?.twilio.lastChecked} />

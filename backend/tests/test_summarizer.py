@@ -91,6 +91,28 @@ async def test_unconfigured_provider_makes_no_call(db_session, monkeypatch):
     await summarizer.generate_summary_for_ticket(ticket.id)
 
     assert provider.calls == []
+    # Must not be left PENDING forever with nothing able to resolve it.
+    await db_session.refresh(ticket)
+    assert ticket.ai_summary_status == AISummaryStatus.FAILED
+
+
+async def test_unexpected_exception_marks_failed_and_is_logged(db_session, monkeypatch, caplog):
+    """A crash inside generation (DB, provider bug) must not strand the ticket at PENDING."""
+
+    class ExplodingProvider(FakeProvider):
+        async def structured(self, **kwargs):
+            raise RuntimeError("boom-from-provider")
+
+    monkeypatch.setattr(settings, "enable_ai_summary", True)
+    monkeypatch.setattr(summarizer, "get_provider", lambda: ExplodingProvider(None))
+
+    ticket = await _make_ticket(db_session)
+    with caplog.at_level("ERROR", logger="hfmg.ai.summarizer"):
+        await summarizer.generate_summary_for_ticket(ticket.id)
+
+    await db_session.refresh(ticket)
+    assert ticket.ai_summary_status == AISummaryStatus.FAILED
+    assert "boom-from-provider" in caplog.text  # real exception is captured, not swallowed
 
 
 async def test_provider_failure_marks_summary_failed(db_session, monkeypatch):

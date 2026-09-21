@@ -105,12 +105,38 @@ async def test_temperature_is_not_sent_by_default(monkeypatch):
     """gpt-5 models reject `temperature`; sending it would 400 every call."""
     monkeypatch.setattr(settings, "openai_temperature", None)
     monkeypatch.setattr(settings, "openai_reasoning_effort", "")
+    monkeypatch.setattr(settings, "openai_model", "gpt-4o-mini")
     provider, client = make_provider(monkeypatch, ['{"value": "x"}'])
 
     await provider.structured(system="s", user="u", schema_name="t", schema=SCHEMA)
 
     assert "temperature" not in client.responses.calls[0]
     assert "reasoning" not in client.responses.calls[0]
+
+
+@pytest.mark.parametrize(
+    "model,expected",
+    [
+        ("gpt-5-nano", "minimal"),
+        ("gpt-5-mini", "minimal"),
+        ("gpt-5", "minimal"),
+        ("gpt-5.1", ""),
+        ("gpt-4o-mini", ""),
+    ],
+)
+async def test_reasoning_effort_defaults_for_gpt5_family(monkeypatch, model, expected):
+    """Unbounded reasoning ate the whole output budget and returned empty text."""
+    monkeypatch.setattr(settings, "openai_reasoning_effort", "")
+    monkeypatch.setattr(settings, "openai_model", model)
+    provider, client = make_provider(monkeypatch, ['{"value": "x"}'])
+
+    await provider.structured(system="s", user="u", schema_name="t", schema=SCHEMA)
+
+    call = client.responses.calls[0]
+    if expected:
+        assert call["reasoning"] == {"effort": expected}
+    else:
+        assert "reasoning" not in call
 
 
 async def test_optional_params_are_sent_when_configured(monkeypatch):
