@@ -109,7 +109,7 @@ Start with [reviews/EXECUTIVE_RECOMMENDATIONS.md](reviews/EXECUTIVE_RECOMMENDATI
 | Testing and validation | [TEST_COVERAGE_REVIEW](reviews/TEST_COVERAGE_REVIEW.md), [SYSTEM_VALIDATION_REPORT](reviews/SYSTEM_VALIDATION_REPORT.md) |
 | Frontend | [UX_REVIEW](reviews/UX_REVIEW.md), [UI_POLISH_REPORT](reviews/UI_POLISH_REPORT.md) |
 | Voice | [TWILIO_READINESS_CHECK](reviews/TWILIO_READINESS_CHECK.md), [TWILIO_READINESS_REPORT](reviews/TWILIO_READINESS_REPORT.md) |
-| Email | [EMAIL_TEST_REPORT](reviews/EMAIL_TEST_REPORT.md) (first real send through the HFMG internal mail API) |
+| Email | [EMAIL_RELEASE_SUMMARY](reviews/EMAIL_RELEASE_SUMMARY.md) (branch, commit, tests), [EMAIL_TEST_REPORT](reviews/EMAIL_TEST_REPORT.md) (real sends and the Email-tile fix) |
 | Documentation | [DOCUMENTATION_AUDIT_V2](reviews/DOCUMENTATION_AUDIT_V2.md) (why every file lives where it does) |
 
 ## 9. Historical Archive
