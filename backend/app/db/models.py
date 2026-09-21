@@ -103,7 +103,7 @@ class Ticket(Base):
     email: Mapped[str | None] = mapped_column(CITEXT, nullable=True)
 
     category_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("categories.id", ondelete="RESTRICT"), nullable=False
+        UUID(as_uuid=True), ForeignKey("categories.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     priority: Mapped[Priority] = mapped_column(
         SQLEnum(Priority, name="priority_enum"), nullable=False, default=Priority.MEDIUM

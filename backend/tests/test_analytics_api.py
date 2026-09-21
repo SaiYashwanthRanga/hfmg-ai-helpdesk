@@ -188,3 +188,37 @@ async def test_ai_summary_usage_percentages_sum_to_100(client, category_id):
     disabled = next(i for i in items if i["status"] == "DISABLED")
     assert disabled["count"] == 2
     assert disabled["percentage"] == 100.0
+
+
+async def test_ai_summary_usage_with_no_tickets_returns_zero_without_error(client):
+    """Empty-window edge case: total=0 must not raise a ZeroDivisionError and
+    every status is still zero-filled."""
+    response = await client.get("/api/v1/analytics/ai-summary-usage")
+    assert response.status_code == 200
+    items = response.json()["items"]
+
+    assert len(items) == 4  # every AISummaryStatus value present
+    for item in items:
+        assert item["count"] == 0
+        assert item["percentage"] == 0.0
+
+
+async def test_escalation_rate_with_no_calls_returns_zero_without_error(client):
+    """total_terminal_calls=0 must not raise a ZeroDivisionError."""
+    response = await client.get("/api/v1/analytics/escalation-rate")
+    assert response.status_code == 200
+    assert response.json() == {
+        "total_terminal_calls": 0,
+        "escalated_calls": 0,
+        "rate_percent": 0.0,
+    }
+
+
+async def test_analytics_days_param_rejects_out_of_range_values(client):
+    """days is Query(30, ge=1, le=365) on every windowed analytics endpoint;
+    spot-check the boundary on one of them."""
+    too_small = await client.get("/api/v1/analytics/tickets-by-category", params={"days": 0})
+    assert too_small.status_code == 422
+
+    too_large = await client.get("/api/v1/analytics/tickets-by-category", params={"days": 366})
+    assert too_large.status_code == 422

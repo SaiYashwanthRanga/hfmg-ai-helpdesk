@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.db.models import AISummaryStatus, Priority, TicketSource, TicketStatus
 
@@ -22,6 +22,22 @@ class TicketCreate(BaseModel):
     category_id: uuid.UUID
     priority: Priority | None = None
     description: str = Field(min_length=1, max_length=10_000)
+
+    @field_validator("caller_name", "phone_number", "description", mode="after")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        """Reject whitespace-only values.
+
+        `min_length=1` alone lets a string of pure whitespace (e.g. a single
+        space) through, which would create a ticket with an effectively
+        empty caller name or description. Stripped for storage too, so
+        leading/trailing whitespace from a form or voice transcript doesn't
+        linger in the record.
+        """
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be blank")
+        return stripped
 
 
 class TicketStatusUpdate(BaseModel):

@@ -50,31 +50,42 @@ async def send_ticket_notification(ticket: Ticket, event: str) -> None:
         logger.info("Email notifications disabled; skipping %s for %s", event, ticket.ticket_number)
         return
 
-    provider = get_email_provider()
-    if not provider.is_configured:
-        logger.warning(
-            "Email provider not configured; skipping %s notification for %s",
-            event,
-            ticket.ticket_number,
+    try:
+        provider = get_email_provider()
+        if not provider.is_configured:
+            logger.warning(
+                "Email provider not configured; skipping %s notification for %s",
+                event,
+                ticket.ticket_number,
+            )
+            return
+
+        subject_template = _EVENT_SUBJECTS.get(event, "Ticket {ticket_number} update")
+        subject = subject_template.format(
+            ticket_number=ticket.ticket_number, category=ticket.category.name, status=ticket.status.value
         )
-        return
+        body = _build_body(ticket, event)
 
-    subject_template = _EVENT_SUBJECTS.get(event, "Ticket {ticket_number} update")
-    subject = subject_template.format(
-        ticket_number=ticket.ticket_number, category=ticket.category.name, status=ticket.status.value
-    )
-    body = _build_body(ticket, event)
+        sent = await provider.send(
+            to=settings.helpdesk_email,
+            from_email=settings.email_from,
+            subject=subject,
+            body=body,
+        )
 
-    sent = await provider.send(
-        to=settings.helpdesk_email,
-        from_email=settings.email_from,
-        subject=subject,
-        body=body,
-    )
-
-    if sent:
-        logger.info("Sent %s notification for %s", event, ticket.ticket_number)
-    else:
-        # No exception detail or body here by design -- the provider already
-        # logged the failure class (status code / error type) without content.
-        logger.warning("Failed to send %s notification for %s", event, ticket.ticket_number)
+        if sent:
+            logger.info("Sent %s notification for %s", event, ticket.ticket_number)
+        else:
+            # No exception detail or body here by design -- the provider already
+            # logged the failure class (status code / error type) without content.
+            logger.warning("Failed to send %s notification for %s", event, ticket.ticket_number)
+    except Exception:
+        # This runs as a FastAPI BackgroundTask: an exception here would
+        # otherwise propagate past the (already-sent) response with no
+        # app-level log line, and a raised exception is never allowed to
+        # surface as a failed ticket-creation request. Never include the
+        # ticket description/summary/body -- only identifiers, matching the
+        # rest of this module's no-content-in-logs discipline.
+        logger.exception(
+            "Unexpected error sending %s notification for %s", event, ticket.ticket_number
+        )

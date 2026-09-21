@@ -208,3 +208,180 @@ async def test_regenerate_summary_requires_existing_ticket(client):
 
     response = await client.post(f"/api/v1/tickets/{uuid.uuid4()}/regenerate-summary")
     assert response.status_code == 404
+
+
+async def test_regenerate_summary_completes_successfully(client, category_id, monkeypatch):
+    """End-to-end: regenerate-summary -> background task -> OpenAI call succeeds
+    -> the ticket's ai_summary/ai_summary_status reflect COMPLETED."""
+    from app.ai import summarizer
+    from app.core.config import get_settings
+
+    create_response = await client.post(
+        "/api/v1/tickets",
+        json={
+            "caller_name": "Caller",
+            "phone_number": "+15550001111",
+            "category_id": str(category_id),
+            "description": "issue",
+        },
+    )
+    ticket_id = create_response.json()["id"]
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "enable_ai_summary", True)
+
+    class ConfiguredProvider:
+        is_configured = True
+
+        async def structured(self, **kwargs):
+            return {"summary": "Wifi outage affecting the back office."}
+
+    monkeypatch.setattr(summarizer, "get_provider", lambda: ConfiguredProvider())
+
+    response = await client.post(f"/api/v1/tickets/{ticket_id}/regenerate-summary")
+    assert response.status_code == 202
+
+    get_response = await client.get(f"/api/v1/tickets/{ticket_id}")
+    body = get_response.json()
+    assert body["ai_summary_status"] == "COMPLETED"
+    assert body["ai_summary"] == "Wifi outage affecting the back office."
+
+
+async def test_regenerate_summary_marks_failed_when_openai_call_fails(client, category_id, monkeypatch):
+    """The OpenAI call itself failing (provider configured but returns no
+    usable data) must leave the ticket in FAILED, not stuck in PENDING."""
+    from app.ai import summarizer
+    from app.core.config import get_settings
+
+    create_response = await client.post(
+        "/api/v1/tickets",
+        json={
+            "caller_name": "Caller",
+            "phone_number": "+15550001111",
+            "category_id": str(category_id),
+            "description": "issue",
+        },
+    )
+    ticket_id = create_response.json()["id"]
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "enable_ai_summary", True)
+
+    class FailingProvider:
+        is_configured = True
+
+        async def structured(self, **kwargs):
+            return None  # simulates a failed/timed-out OpenAI call
+
+    monkeypatch.setattr(summarizer, "get_provider", lambda: FailingProvider())
+
+    response = await client.post(f"/api/v1/tickets/{ticket_id}/regenerate-summary")
+    assert response.status_code == 202
+
+    get_response = await client.get(f"/api/v1/tickets/{ticket_id}")
+    body = get_response.json()
+    assert body["ai_summary_status"] == "FAILED"
+    assert body["ai_summary"] is None
+
+
+async def test_create_ticket_rejects_unknown_category(client):
+    import uuid
+
+    response = await client.post(
+        "/api/v1/tickets",
+        json={
+            "caller_name": "Caller",
+            "phone_number": "+15550001111",
+            "category_id": str(uuid.uuid4()),
+            "description": "issue",
+        },
+    )
+    assert response.status_code == 400
+
+
+async def test_create_ticket_rejects_inactive_category(client, db_session):
+    from app.db.models import Category, Priority
+
+    category = Category(name="Deprecated System", default_priority=Priority.LOW, is_active=False)
+    db_session.add(category)
+    await db_session.commit()
+    await db_session.refresh(category)
+
+    response = await client.post(
+        "/api/v1/tickets",
+        json={
+            "caller_name": "Caller",
+            "phone_number": "+15550001111",
+            "category_id": str(category.id),
+            "description": "issue",
+        },
+    )
+    assert response.status_code == 400
+
+
+async def test_get_ticket_404_for_unknown_id(client):
+    import uuid
+
+    response = await client.get(f"/api/v1/tickets/{uuid.uuid4()}")
+    assert response.status_code == 404
+
+
+async def test_update_status_404_for_unknown_ticket(client):
+    import uuid
+
+    response = await client.post(f"/api/v1/tickets/{uuid.uuid4()}/status", json={"status": "OPEN"})
+    assert response.status_code == 404
+
+
+async def test_status_transition_rejected_from_terminal_closed_state(client, category_id):
+    """CLOSED has no valid outbound transitions (VALID_STATUS_TRANSITIONS) --
+    a closed ticket must never be reopened via this endpoint."""
+    create_response = await client.post(
+        "/api/v1/tickets",
+        json={
+            "caller_name": "Caller",
+            "phone_number": "+15550001111",
+            "category_id": str(category_id),
+            "description": "issue",
+        },
+    )
+    ticket_id = create_response.json()["id"]
+
+    await client.post(f"/api/v1/tickets/{ticket_id}/status", json={"status": "OPEN"})
+    await client.post(f"/api/v1/tickets/{ticket_id}/status", json={"status": "RESOLVED"})
+    closed = await client.post(f"/api/v1/tickets/{ticket_id}/status", json={"status": "CLOSED"})
+    assert closed.status_code == 200
+    assert closed.json()["status"] == "CLOSED"
+
+    blocked = await client.post(f"/api/v1/tickets/{ticket_id}/status", json={"status": "OPEN"})
+    assert blocked.status_code == 422
+
+
+async def test_status_transition_to_same_status_is_a_noop(client, category_id):
+    """update_status allows new_status == current status even though it's not
+    in VALID_STATUS_TRANSITIONS[current] -- an idempotent no-op, not a 422."""
+    create_response = await client.post(
+        "/api/v1/tickets",
+        json={
+            "caller_name": "Caller",
+            "phone_number": "+15550001111",
+            "category_id": str(category_id),
+            "description": "issue",
+        },
+    )
+    ticket_id = create_response.json()["id"]
+
+    response = await client.post(f"/api/v1/tickets/{ticket_id}/status", json={"status": "NEW"})
+    assert response.status_code == 200
+    assert response.json()["status"] == "NEW"
+
+
+async def test_list_tickets_rejects_invalid_pagination(client):
+    zero_page = await client.get("/api/v1/tickets", params={"page": 0})
+    assert zero_page.status_code == 422
+
+    oversized_page = await client.get("/api/v1/tickets", params={"page_size": 101})
+    assert oversized_page.status_code == 422
+
+    zero_page_size = await client.get("/api/v1/tickets", params={"page_size": 0})
+    assert zero_page_size.status_code == 422

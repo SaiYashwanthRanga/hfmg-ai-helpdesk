@@ -26,6 +26,26 @@ async def _create_schema():
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_ai_summary_defaults(monkeypatch):
+    """Force ENABLE_AI_SUMMARY off and clear the OpenAI key for every test by
+    default, regardless of what this machine's local backend/.env has set.
+
+    Without this, a developer .env with ENABLE_AI_SUMMARY=true and a real
+    OPENAI_API_KEY (as backend/.env documents for local dev) makes
+    `create_ticket`'s background task place real, ~10-20s calls to
+    api.openai.com during the test suite -- burning real API credits, making
+    the suite dramatically slower, and breaking tests that assert the
+    documented default (AISummaryStatus.DISABLED). Tests that exercise the
+    AI-summary path explicitly re-enable it via their own monkeypatch calls
+    and always mock the provider (see test_summarizer.py, test_tickets_api.py's
+    regenerate-summary tests) -- they are unaffected by this default.
+    """
+    monkeypatch.setattr(settings, "enable_ai_summary", False)
+    monkeypatch.setattr(settings, "openai_api_key", "")
+    yield
+
+
+@pytest.fixture(autouse=True)
 async def _truncate_tables():
     """Empty every table between tests.
 
