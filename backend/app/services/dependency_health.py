@@ -21,6 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.services import hfmg_mail_service
 
 settings = get_settings()
 
@@ -97,6 +98,10 @@ async def check_twilio() -> DependencyCheck:
 
 
 async def check_email() -> DependencyCheck:
+    if (settings.email_provider or "").lower() == "hfmg_internal":
+        reachable = await hfmg_mail_service.check_health(timeout=_CHECK_TIMEOUT_SECONDS)
+        return DependencyCheck(status="operational" if reachable else "down", checked_at=_now())
+
     if settings.email_provider != "sendgrid" or not settings.sendgrid_api_key:
         return DependencyCheck(status="down", checked_at=_now())
 

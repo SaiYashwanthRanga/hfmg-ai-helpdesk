@@ -60,7 +60,8 @@ The complete map of this repository's documentation. Paths are relative to this 
 | [../DEPLOYMENT_GUIDE.md](../DEPLOYMENT_GUIDE.md) | Deploying to a server; the no-auth network constraint |
 | [../RELEASE_CHECKLIST.md](../RELEASE_CHECKLIST.md) | Pre-deploy checklist, classified by severity |
 | [../OPERATIONS_RUNBOOK.md](../OPERATIONS_RUNBOOK.md) | Monitoring, backup and recovery, troubleshooting |
-| [../SENDGRID_SETUP.md](../SENDGRID_SETUP.md) | Outbound email configuration |
+| [../EMAIL_INTEGRATION.md](../EMAIL_INTEGRATION.md) | How notification email works, and switching between SendGrid and the HFMG internal mail API |
+| [../SENDGRID_SETUP.md](../SENDGRID_SETUP.md) | SendGrid account and key configuration |
 | [../TWILIO_SETUP.md](../TWILIO_SETUP.md) | Phone number and webhook configuration |
 | [integrations/OPENAI_INTEGRATION_REPORT.md](integrations/OPENAI_INTEGRATION_REPORT.md) | How OpenAI configuration and summarization were verified (point-in-time; see the note at its top) |
 
@@ -108,6 +109,7 @@ Start with [reviews/EXECUTIVE_RECOMMENDATIONS.md](reviews/EXECUTIVE_RECOMMENDATI
 | Testing and validation | [TEST_COVERAGE_REVIEW](reviews/TEST_COVERAGE_REVIEW.md), [SYSTEM_VALIDATION_REPORT](reviews/SYSTEM_VALIDATION_REPORT.md) |
 | Frontend | [UX_REVIEW](reviews/UX_REVIEW.md), [UI_POLISH_REPORT](reviews/UI_POLISH_REPORT.md) |
 | Voice | [TWILIO_READINESS_CHECK](reviews/TWILIO_READINESS_CHECK.md), [TWILIO_READINESS_REPORT](reviews/TWILIO_READINESS_REPORT.md) |
+| Email | [EMAIL_TEST_REPORT](reviews/EMAIL_TEST_REPORT.md) (first real send through the HFMG internal mail API) |
 | Documentation | [DOCUMENTATION_AUDIT_V2](reviews/DOCUMENTATION_AUDIT_V2.md) (why every file lives where it does) |
 
 ## 9. Historical Archive

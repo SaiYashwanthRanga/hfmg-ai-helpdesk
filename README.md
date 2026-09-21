@@ -69,7 +69,7 @@ Start with the five documents at the top of this file. Everything else is refere
 | Deploy | [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md), then [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) |
 | Run it in production | [OPERATIONS_RUNBOOK.md](OPERATIONS_RUNBOOK.md) |
 | Configure the phone number and webhooks | [TWILIO_SETUP.md](TWILIO_SETUP.md) |
-| Configure outbound email | [SENDGRID_SETUP.md](SENDGRID_SETUP.md) |
+| Configure outbound email (SendGrid or the HFMG internal mail API) | [EMAIL_INTEGRATION.md](EMAIL_INTEGRATION.md), [SENDGRID_SETUP.md](SENDGRID_SETUP.md) |
 | Understand or change the voice agent | [TWILIO_ARCHITECTURE.md](TWILIO_ARCHITECTURE.md), [CALL_FLOW.md](CALL_FLOW.md), [VOICE_AGENT_DESIGN.md](VOICE_AGENT_DESIGN.md) |
 | See what is done, risky or unbuilt | [FINAL_PROJECT_STATUS.md](FINAL_PROJECT_STATUS.md), [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md), [TECHNICAL_DEBT.md](TECHNICAL_DEBT.md) |
 | See which business decisions are still open | [REMAINING_PRODUCT_DECISIONS.md](REMAINING_PRODUCT_DECISIONS.md) |

@@ -46,6 +46,25 @@ def _hermetic_ai_summary_defaults(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_email_defaults(monkeypatch):
+    """Default every test to the SendGrid provider with the internal mail API
+    unconfigured, whatever this machine's backend/.env says.
+
+    Otherwise a developer .env with EMAIL_PROVIDER=hfmg_internal and ORG_BASE
+    set would make ticket-creation tests send real emails through the
+    organization's mail API. Tests for the internal provider opt in explicitly.
+    """
+    from app.notifications.factory import get_email_provider
+
+    monkeypatch.setattr(settings, "email_provider", "sendgrid")
+    monkeypatch.setattr(settings, "org_base", "")
+    monkeypatch.setattr(settings, "default_from_email", "")
+    get_email_provider.cache_clear()
+    yield
+    get_email_provider.cache_clear()
+
+
+@pytest.fixture(autouse=True)
 async def _truncate_tables():
     """Empty every table between tests.
 

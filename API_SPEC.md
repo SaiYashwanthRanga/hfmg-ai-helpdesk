@@ -299,6 +299,31 @@ Returns the `notification_log` entries for a ticket (delivery status to `helpdes
 
 **Auth:** `AGENT`/`ADMIN`.
 
+### 6.1 Notification architecture (✅ implemented)
+
+Ticket notification emails go through a provider abstraction, so the transport can be swapped by configuration alone. Full detail, configuration, and operations: [EMAIL_INTEGRATION.md](EMAIL_INTEGRATION.md).
+
+```
+ticket created / status changed
+        │  (FastAPI BackgroundTask, never blocks or fails the request)
+        ▼
+app/notifications/email.py  send_ticket_notification()   ← builds subject + plain-text body
+        │
+        ▼
+get_email_provider()  ── EMAIL_PROVIDER ──►  IEmailProvider
+                                              ├─ "sendgrid"      SendGridProvider          → SendGrid v3 API
+                                              └─ "hfmg_internal" HfmgInternalMailProvider  → app/services/hfmg_mail_service.py
+                                                                                              → HFMG internal mail API (ORG_BASE)
+```
+
+- **`IEmailProvider`** (`app/notifications/base.py`): `name`, `is_configured`, and `async send(to, from_email, subject, body, timeout, max_retries) -> bool`. `send` never raises; it returns `False` on any failure and logs the failure class without the recipient, subject or body. `EmailProvider` remains as an alias of the same protocol.
+- **Selection:** `EMAIL_PROVIDER=sendgrid` (default) or `hfmg_internal`. An unknown value logs an error and falls back to SendGrid. Both providers coexist; nothing was removed.
+- **Sender and recipient:** every notification goes to `HELPDESK_EMAIL`. With `hfmg_internal` the sender is `DEFAULT_FROM_EMAIL` when set, otherwise `EMAIL_FROM`.
+- **Health:** `GET /health/dependencies` and `GET /settings/status` report the active provider under `email`. For `hfmg_internal` the probe is an unauthenticated `GET {ORG_BASE}/`; any HTTP answer below 500 counts as `operational`, and a connection failure or 5xx as `down`. Nothing is sent. `masked_key` is `null` (there is no secret to mask) and the internal URL is never exposed.
+- **Failure behavior:** an unreachable mail API never fails or delays ticket creation. The provider retries connection-level failures only, then logs an error and returns `False`; read timeouts and HTTP errors are not retried, to avoid sending duplicate emails.
+
+The API contract for tickets is unchanged by this: no request or response schema was modified.
+
 ---
 
 ## 7. Audit Log
@@ -364,7 +389,7 @@ Response `200`:
 }
 ```
 
-`status` is one of `operational` / `degraded` / `down` / `unknown` (`degraded` is reserved in the schema but never emitted today — no latency-based signal is measured yet, see `REMAINING_PRODUCT_DECISIONS.md`). Each dependency's check is cached in-process for 30 seconds so this endpoint never triggers a live OpenAI/Twilio/SendGrid call on every dashboard poll. OpenAI and Email checks are real reachability probes (a cheap authenticated `GET`, no email sent, no summary generated); Twilio's check is configuration-only (`TWILIO_AUTH_TOKEN` set or not) because a real call would need `TWILIO_ACCOUNT_SID`, which isn't a configured setting anywhere in this codebase — see `docs/archive/DOCS_GAP_REPORT.md`.
+`status` is one of `operational` / `degraded` / `down` / `unknown` (`degraded` is reserved in the schema but never emitted today — no latency-based signal is measured yet, see `REMAINING_PRODUCT_DECISIONS.md`). Each dependency's check is cached in-process for 30 seconds so this endpoint never triggers a live OpenAI/Twilio/SendGrid call on every dashboard poll. OpenAI and Email checks are real reachability probes (a cheap authenticated `GET`, no email sent, no summary generated); With `EMAIL_PROVIDER=hfmg_internal` the Email check is an unauthenticated reachability `GET` of the internal mail API (see §6.1). Twilio's check is configuration-only (`TWILIO_AUTH_TOKEN` set or not) because a real call would need `TWILIO_ACCOUNT_SID`, which isn't a configured setting anywhere in this codebase — see `docs/archive/DOCS_GAP_REPORT.md`.
 
 ---
 
@@ -384,7 +409,7 @@ Response `200`:
 }
 ```
 
-Every secret is masked (first 3 + last 4 characters, e.g. `sk-...a1b2`) or `null` if unconfigured — the raw value never leaves `app/core/config.py`. Reuses the same cached checks as `/health/dependencies`, so `status`/`last_verified` never drift between the two endpoints.
+Every secret is masked (first 3 + last 4 characters, e.g. `sk-...a1b2`) or `null` if unconfigured — the raw value never leaves `app/core/config.py`. With `EMAIL_PROVIDER=hfmg_internal`, `email.masked_key` is always `null` and `email.detail` reads `HFMG internal mail API, from <sender> to <helpdesk address>`. Reuses the same cached checks as `/health/dependencies`, so `status`/`last_verified` never drift between the two endpoints.
 
 ---
 

@@ -8,7 +8,8 @@ import logging
 from functools import lru_cache
 
 from app.core.config import get_settings
-from app.notifications.base import EmailProvider
+from app.notifications.base import IEmailProvider
+from app.notifications.hfmg_provider import HfmgInternalMailProvider
 from app.notifications.sendgrid_provider import SendGridProvider
 
 logger = logging.getLogger("hfmg.notifications.factory")
@@ -17,11 +18,12 @@ settings = get_settings()
 
 _PROVIDERS = {
     "sendgrid": SendGridProvider,
+    "hfmg_internal": HfmgInternalMailProvider,
 }
 
 
 @lru_cache
-def get_email_provider() -> EmailProvider:
+def get_email_provider() -> IEmailProvider:
     name = (settings.email_provider or "sendgrid").lower()
     provider_cls = _PROVIDERS.get(name)
     if provider_cls is None:

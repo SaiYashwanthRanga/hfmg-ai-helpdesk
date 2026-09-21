@@ -9,7 +9,7 @@ from typing import Protocol, runtime_checkable
 
 
 @runtime_checkable
-class EmailProvider(Protocol):
+class IEmailProvider(Protocol):
     """What the rest of the application needs from an email provider."""
 
     name: str
@@ -36,3 +36,7 @@ class EmailProvider(Protocol):
         otherwise be silently swallowed.
         """
         ...
+
+
+# Original name, kept so existing imports keep working.
+EmailProvider = IEmailProvider

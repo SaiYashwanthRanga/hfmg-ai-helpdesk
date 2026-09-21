@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     sendgrid_api_key: str = ""
     sendgrid_timeout_seconds: float = 10.0
     sendgrid_max_retries: int = 2
+
+    # --- HFMG internal mail API (EMAIL_PROVIDER=hfmg_internal) ---
+    # ORG_BASE is the API's base URL, e.g. http://172.22.6.188:177.
+    # DEFAULT_FROM_EMAIL is the mailbox it sends as; when set it takes
+    # precedence over EMAIL_FROM for this provider.
+    org_base: str = ""
+    default_from_email: str = ""
+    hfmg_mail_timeout_seconds: float = 10.0
+    hfmg_mail_max_retries: int = 2
     # Fixed sender/recipient by design: every ticket notification goes from
     # EMAIL_FROM to HELPDESK_EMAIL, not a per-call choice.
     email_from: str = "reminder@hfmg.net"
