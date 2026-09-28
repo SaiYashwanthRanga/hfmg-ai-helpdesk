@@ -24,7 +24,7 @@ export function Sidebar() {
       */}
       <nav
         aria-label="Primary"
-        className="hidden shrink-0 flex-col gap-1 overflow-y-auto border-r border-border bg-sidebar p-3 md:flex md:w-16 xl:w-60"
+        className="hidden shrink-0 flex-col gap-1 overflow-y-auto border-r border-stone-200/80 bg-white p-3 md:flex md:w-16 xl:w-60"
       >
         {NAV_ITEMS.map((item) => (
           <NavItem key={item.to} item={item} collapsed />
@@ -45,7 +45,7 @@ function MobileSidebar() {
       {mobileOpen ? (
         <div className="fixed inset-0 z-50 md:hidden">
           <motion.div
-            className="absolute inset-0 bg-overlay"
+            className="absolute inset-0 bg-stone-900/40 backdrop-blur-xs"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -63,8 +63,9 @@ function MobileSidebar() {
             animate={{ x: 0 }}
             exit={{ x: "-100%" }}
             transition={{ duration: 0.24, ease: "easeOut" }}
-            className="absolute inset-y-0 left-0 flex w-72 max-w-[85%] flex-col gap-1 bg-sidebar p-3"
+            className="absolute inset-y-0 left-0 flex w-72 max-w-[85%] flex-col gap-1 bg-white border-r border-stone-200/80 p-3 shadow-xl"
           >
+
             <div className="mb-2 flex items-center justify-end">
               <Button variant="icon" aria-label="Close navigation" onClick={closeMobile}>
                 <X className="size-4" aria-hidden="true" />

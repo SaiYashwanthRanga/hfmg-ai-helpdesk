@@ -31,9 +31,11 @@ export function NavItem({ item, collapsed = false, onNavigate }: NavItemProps) {
       title={collapsed ? item.label : undefined}
       className={({ isActive }) =>
         cn(
-          "group relative flex h-10 items-center gap-3 rounded-sm text-sm font-medium transition-colors",
+          "group relative flex h-10 items-center gap-3 rounded-lg text-sm font-medium transition-all duration-150 outline-none focus-visible:ring-2 focus-visible:ring-emerald-800 focus-visible:ring-offset-1",
           collapsed ? "justify-center px-0 xl:justify-start xl:px-3" : "px-3",
-          isActive ? "text-primary" : "text-muted-foreground hover:bg-card-hover hover:text-foreground",
+          isActive
+            ? "bg-stone-100 text-stone-900 font-semibold"
+            : "text-stone-500 hover:bg-stone-50 hover:text-stone-900",
         )
       }
     >
@@ -42,14 +44,22 @@ export function NavItem({ item, collapsed = false, onNavigate }: NavItemProps) {
           <span
             aria-hidden="true"
             className={cn(
-              "absolute top-1/2 left-0 h-5 w-0.5 -translate-y-1/2 rounded-full bg-primary transition-opacity",
-              isActive ? "opacity-100" : "opacity-0",
+              "absolute top-1/2 left-0 h-5 w-1 -translate-y-1/2 rounded-r-full bg-emerald-800 transition-all duration-150",
+              isActive ? "opacity-100 scale-y-100" : "opacity-0 scale-y-50",
             )}
           />
-          <Icon className="size-5 shrink-0" aria-hidden="true" />
-          <span className={collapsed ? "sr-only xl:not-sr-only" : ""}>{item.label}</span>
+          <Icon
+            className={cn(
+              "size-5 shrink-0 transition-transform duration-150 group-hover:scale-105",
+              isActive ? "text-emerald-800" : "text-stone-400 group-hover:text-stone-600",
+            )}
+            aria-hidden="true"
+          />
+          <span className={collapsed ? "sr-only xl:not-sr-only tracking-normal" : "tracking-normal"}>{item.label}</span>
         </>
       )}
+
+
     </NavLink>
   );
 }

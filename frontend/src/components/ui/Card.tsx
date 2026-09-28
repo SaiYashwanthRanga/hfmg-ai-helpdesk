@@ -2,22 +2,36 @@ import type { HTMLAttributes } from "react";
 import { cn } from "../../lib/cn";
 
 export interface CardProps extends HTMLAttributes<HTMLDivElement> {
-  padding?: "sm" | "md";
+  padding?: "none" | "sm" | "md" | "lg";
   clickable?: boolean;
 }
 
-/** Base surface primitive underlying every card variant (DESIGN_SYSTEM.md §12). */
-export function Card({ padding = "md", clickable = false, className, children, ...rest }: CardProps) {
+/** Base surface primitive underlying every card variant with modern, clean styling. */
+export function Card({
+  padding = "md",
+  clickable = false,
+  className,
+  children,
+  ...rest
+}: CardProps) {
+  const paddingClasses = {
+    none: "",
+    sm: "p-4",
+    md: "p-5 sm:p-6",
+    lg: "p-6 sm:p-8",
+  };
+
   return (
     <div
       className={cn(
-        "rounded-lg border border-border bg-card shadow-sm",
-        padding === "md" ? "p-6" : "p-4",
-        clickable && "cursor-pointer transition-shadow duration-150 hover:bg-card-hover hover:shadow-md",
+        "rounded-xl border border-stone-200/80 bg-white shadow-sm transition-all duration-150",
+        paddingClasses[padding],
+        clickable && "cursor-pointer hover:bg-stone-50 hover:border-stone-300 hover:shadow-md",
         className,
       )}
       {...rest}
     >
+
       {children}
     </div>
   );

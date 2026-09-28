@@ -13,28 +13,27 @@ const STORAGE_KEY = "hfmg-theme";
 
 function readStoredTheme(): Theme {
   try {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    return stored === "light" ? "light" : "dark";
+    window.localStorage.setItem(STORAGE_KEY, "light");
   } catch {
-    return "dark"; // Dark is the native default theme (DESIGN.md §2.4).
+    // ignore
   }
+  return "light";
 }
 
 /**
- * Dark mode is the default, native theme (DESIGN.md §2.4) — light mode is a
- * deliberate opt-in, not derived from system preference, since this is an
- * internal ops tool designed dark-first rather than a consumer app that
- * should defer to OS preference.
+ * Executive Warm Minimalist Light Mode is enforced across HFMG IT Helpdesk.
  */
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(readStoredTheme);
 
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
+    document.documentElement.setAttribute("data-theme", "light");
+    document.documentElement.classList.remove("dark");
+    document.documentElement.style.colorScheme = "light";
     try {
-      window.localStorage.setItem(STORAGE_KEY, theme);
+      window.localStorage.setItem(STORAGE_KEY, "light");
     } catch {
-      // localStorage unavailable (private browsing, blocked storage) — theme still applies for this session.
+      // ignore
     }
   }, [theme]);
 

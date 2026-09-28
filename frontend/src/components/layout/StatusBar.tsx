@@ -15,11 +15,31 @@ export function StatusBar() {
   });
 
   return (
-    <div className="flex flex-wrap items-center gap-4">
-      <StatusIndicator status={data?.openai.status ?? "unknown"} label="OpenAI" lastChecked={data?.openai.lastChecked} />
-      <StatusIndicator status={data?.twilio.status ?? "unknown"} label="Twilio" lastChecked={data?.twilio.lastChecked} />
-      <StatusIndicator status={data?.database.status ?? "unknown"} label="Database" lastChecked={data?.database.lastChecked} />
-      <StatusIndicator status={data?.email.status ?? "unknown"} label="Email" lastChecked={data?.email.lastChecked} />
+    <div className="flex flex-wrap items-center gap-3">
+      <StatusIndicator
+        status={data?.openai.status ?? "unknown"}
+        label="OpenAI"
+        lastChecked={data?.openai.lastChecked}
+        to="/ai-insights"
+      />
+      <StatusIndicator
+        status={data?.twilio.status ?? "unknown"}
+        label="Twilio"
+        lastChecked={data?.twilio.lastChecked}
+        to="/calls"
+      />
+      <StatusIndicator
+        status={data?.database.status ?? "unknown"}
+        label="Database"
+        lastChecked={data?.database.lastChecked}
+        to="/tickets"
+      />
+      <StatusIndicator
+        status={data?.email.status ?? "unknown"}
+        label="Email"
+        lastChecked={data?.email.lastChecked}
+        to="/settings"
+      />
     </div>
   );
 }

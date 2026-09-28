@@ -1,4 +1,4 @@
-import { Inbox, SearchX } from "lucide-react";
+import { Inbox, Plus, SearchX } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useCategoriesQuery, useTicketsQuery } from "../api/tickets";
@@ -86,9 +86,14 @@ export function TicketsPage() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-bold text-foreground">Tickets</h1>
-        <Button variant="primary" onClick={() => navigate("/tickets/new")}>
-          + New Ticket
+        <h1 className="text-2xl font-bold tracking-tight text-stone-900">Tickets</h1>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => navigate("/tickets/new")}
+          icon={<Plus className="size-3.5" />}
+        >
+          New Ticket
         </Button>
       </div>
 

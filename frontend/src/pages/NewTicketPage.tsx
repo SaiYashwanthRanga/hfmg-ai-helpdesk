@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { ArrowLeft, Plus } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api/client";
+import { Button } from "../components/ui/Button";
+import { Card } from "../components/ui/Card";
+import { toast } from "../lib/toastStore";
 import type { Category, Priority, TicketCreateInput } from "../types/ticket";
 import { PRIORITY_OPTIONS } from "../types/ticket";
 
@@ -31,7 +35,7 @@ export function NewTicketPage() {
           setForm((f) => ({ ...f, category_id: cats[0].id }));
         }
       })
-      .catch(() => setSubmitError("Failed to load categories"));
+      .catch(() => setSubmitError("Failed to load categories from database"));
   }, []);
 
   function validate(): boolean {
@@ -56,7 +60,8 @@ export function NewTicketPage() {
         email: form.email?.trim() ? form.email.trim() : undefined,
       };
       const ticket = await api.createTicket(payload);
-      navigate(`/tickets/${ticket.id}`);
+      toast.success(`Ticket ${ticket.ticket_number} created successfully`);
+      navigate(`/tickets?ticket=${ticket.id}`);
     } catch (err) {
       setSubmitError(err instanceof ApiError ? err.message : "Failed to create ticket");
     } finally {
@@ -65,75 +70,126 @@ export function NewTicketPage() {
   }
 
   return (
-    <div style={{ maxWidth: 560 }}>
-      <h1>New Ticket</h1>
-      <form onSubmit={handleSubmit}>
-        <Field label="Caller Name" error={fieldErrors.caller_name}>
-          <input
-            value={form.caller_name}
-            onChange={(e) => setForm({ ...form, caller_name: e.target.value })}
-          />
-        </Field>
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
+      <div className="flex items-center gap-3">
+        <Link
+          to="/tickets"
+          className="inline-flex size-8 items-center justify-center rounded-lg border border-stone-200/80 bg-white text-stone-600 shadow-2xs hover:bg-stone-50 hover:text-stone-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-800"
+          title="Back to Tickets"
+          aria-label="Back to Tickets"
+        >
+          <ArrowLeft className="size-4" />
+        </Link>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-stone-900">Create New Ticket</h1>
+          <p className="text-xs text-stone-500">Record a new manual incident or service request into PostgreSQL.</p>
+        </div>
+      </div>
 
-        <Field label="Phone Number" error={fieldErrors.phone_number}>
-          <input
-            value={form.phone_number}
-            onChange={(e) => setForm({ ...form, phone_number: e.target.value })}
-            placeholder="+15551234567"
-          />
-        </Field>
+      <Card className="p-6">
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <Field label="Caller Name" error={fieldErrors.caller_name}>
+            <input
+              type="text"
+              value={form.caller_name}
+              onChange={(e) => setForm({ ...form, caller_name: e.target.value })}
+              placeholder="e.g. Maria Gomez"
+              className="w-full rounded-lg border border-stone-200/80 bg-stone-50/50 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-emerald-800 focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-800"
+            />
+          </Field>
 
-        <Field label="Email (optional)">
-          <input
-            type="email"
-            value={form.email}
-            onChange={(e) => setForm({ ...form, email: e.target.value })}
-          />
-        </Field>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Phone Number" error={fieldErrors.phone_number}>
+              <input
+                type="tel"
+                value={form.phone_number}
+                onChange={(e) => setForm({ ...form, phone_number: e.target.value })}
+                placeholder="+15551234567"
+                className="w-full rounded-lg border border-stone-200/80 bg-stone-50/50 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-emerald-800 focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-800"
+              />
+            </Field>
 
-        <Field label="Category" error={fieldErrors.category_id}>
-          <select
-            value={form.category_id}
-            onChange={(e) => setForm({ ...form, category_id: e.target.value })}
-          >
-            {categories.map((cat) => (
-              <option key={cat.id} value={cat.id}>
-                {cat.name}
-              </option>
-            ))}
-          </select>
-        </Field>
+            <Field label="Email (Optional)">
+              <input
+                type="email"
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                placeholder="caller@example.com"
+                className="w-full rounded-lg border border-stone-200/80 bg-stone-50/50 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-emerald-800 focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-800"
+              />
+            </Field>
+          </div>
 
-        <Field label="Priority (optional — defaults from category)">
-          <select
-            value={form.priority ?? ""}
-            onChange={(e) =>
-              setForm({ ...form, priority: (e.target.value || undefined) as Priority | undefined })
-            }
-          >
-            <option value="">Default</option>
-            {PRIORITY_OPTIONS.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-        </Field>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Category" error={fieldErrors.category_id}>
+              <select
+                value={form.category_id}
+                onChange={(e) => setForm({ ...form, category_id: e.target.value })}
+                className="w-full rounded-lg border border-stone-200/80 bg-stone-50/50 px-3 py-2 text-sm text-stone-900 focus:border-emerald-800 focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-800"
+              >
+                {categories.map((cat) => (
+                  <option key={cat.id} value={cat.id}>
+                    {cat.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
 
-        <Field label="Description" error={fieldErrors.description}>
-          <textarea
-            rows={6}
-            value={form.description}
-            onChange={(e) => setForm({ ...form, description: e.target.value })}
-          />
-        </Field>
+            <Field label="Priority (Optional — defaults from category)">
+              <select
+                value={form.priority ?? ""}
+                onChange={(e) =>
+                  setForm({ ...form, priority: (e.target.value || undefined) as Priority | undefined })
+                }
+                className="w-full rounded-lg border border-stone-200/80 bg-stone-50/50 px-3 py-2 text-sm text-stone-900 focus:border-emerald-800 focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-800"
+              >
+                <option value="">Default (From category)</option>
+                {PRIORITY_OPTIONS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
 
-        {submitError && <p style={{ color: "#dc2626" }}>{submitError}</p>}
+          <Field label="Description" error={fieldErrors.description}>
+            <textarea
+              rows={5}
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              placeholder="Describe the issue, symptoms, and troubleshooting steps taken..."
+              className="w-full rounded-lg border border-stone-200/80 bg-stone-50/50 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-emerald-800 focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-800 resize-y"
+            />
+          </Field>
 
-        <button type="submit" disabled={submitting}>
-          {submitting ? "Submitting…" : "Submit Ticket"}
-        </button>
-      </form>
+          {submitError && (
+            <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+              {submitError}
+            </div>
+          )}
+
+          <div className="mt-2 flex items-center justify-end gap-3 pt-4 border-t border-stone-100">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => navigate("/tickets")}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              size="sm"
+              loading={submitting}
+              icon={<Plus className="size-3.5" />}
+            >
+              Submit Ticket
+            </Button>
+          </div>
+        </form>
+      </Card>
     </div>
   );
 }
@@ -148,10 +204,10 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div style={{ marginBottom: 14 }}>
-      <label style={{ display: "block", marginBottom: 4, fontWeight: 600 }}>{label}</label>
+    <div className="flex flex-col gap-1.5">
+      <label className="text-xs font-semibold text-stone-800">{label}</label>
       {children}
-      {error && <div style={{ color: "#dc2626", fontSize: 13, marginTop: 4 }}>{error}</div>}
+      {error && <span className="text-[11px] font-medium text-rose-600">{error}</span>}
     </div>
   );
 }

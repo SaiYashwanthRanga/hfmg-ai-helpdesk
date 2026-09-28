@@ -76,7 +76,7 @@ export function CallDrawer({ callId, onClose }: CallDrawerProps) {
               <dd className="text-foreground">{call.misunderstanding_count} / 3</dd>
             </dl>
             {call.ticket_id ? (
-              <Link to={`/tickets?ticket=${call.ticket_id}`} className="text-sm font-medium text-primary hover:underline">
+              <Link to={`/tickets?ticket=${call.ticket_id}`} className="text-sm font-semibold text-emerald-800 hover:text-emerald-900 hover:underline inline-flex items-center gap-1">
                 View linked ticket →
               </Link>
             ) : null}

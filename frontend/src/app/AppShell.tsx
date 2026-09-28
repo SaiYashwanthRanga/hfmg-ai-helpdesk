@@ -23,7 +23,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           >
             Skip to content
           </a>
-          <div className="flex h-dvh flex-col overflow-hidden bg-background">
+          <div className="flex h-dvh flex-col overflow-hidden bg-[#FBFBF9] text-stone-900">
             <Header />
             {/*
               `min-h-0` overrides the flex default of `min-height: auto`,
@@ -33,9 +33,9 @@ export function AppShell({ children }: { children: ReactNode }) {
               a scroll container. With it, this row is pinned to exactly
               `h-dvh - header height`, and only #main-content below scrolls.
             */}
-            <div className="flex min-h-0 flex-1">
+            <div className="flex min-h-0 flex-1 bg-[#FBFBF9]">
               <Sidebar />
-              <div id="main-content" tabIndex={-1} className="min-w-0 flex-1 overflow-y-auto focus:outline-none">
+              <div id="main-content" tabIndex={-1} className="min-w-0 flex-1 overflow-y-auto bg-[#FBFBF9] focus:outline-none">
                 {children}
               </div>
             </div>

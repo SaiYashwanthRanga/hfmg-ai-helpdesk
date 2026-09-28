@@ -20,15 +20,16 @@ export interface BadgeProps {
 }
 
 const COLOR_CLASSES: Record<SemanticColor, string> = {
-  primary: "bg-primary/16 text-primary",
-  secondary: "bg-secondary/16 text-secondary-foreground",
-  success: "bg-success/16 text-success",
-  warning: "bg-warning/16 text-warning",
-  danger: "bg-danger/16 text-danger",
-  info: "bg-info/16 text-info",
-  muted: "bg-muted-foreground/16 text-muted-foreground",
-  "ai-accent": "bg-ai-subtle text-ai-accent",
+  primary: "bg-emerald-50 border border-emerald-200/80 text-emerald-800",
+  secondary: "bg-stone-100 border border-stone-200 text-stone-700",
+  success: "bg-emerald-50 border border-emerald-200/80 text-emerald-800",
+  warning: "bg-amber-50 border border-amber-200/80 text-amber-800",
+  danger: "bg-rose-50 border border-rose-200/80 text-rose-700 font-medium",
+  info: "bg-stone-100 border border-stone-200 text-stone-700",
+  muted: "bg-stone-100 border border-stone-200 text-stone-500",
+  "ai-accent": "bg-emerald-50 border border-emerald-200/80 text-emerald-800",
 };
+
 
 /**
  * Base pill primitive underlying StatusBadge/PriorityBadge/SourceBadge
