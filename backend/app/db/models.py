@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, SmallInteger, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, SmallInteger, String, Text, func, text
 from sqlalchemy.dialects.postgresql import CITEXT, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import Enum as SQLEnum
@@ -39,16 +39,31 @@ class TicketSource(str, enum.Enum):
     PHONE = "PHONE"
     EMAIL = "EMAIL"
     WALK_IN = "WALK_IN"
+    # Created by the AI Call Simulator (VOICE_SIMULATOR_DESIGN.md). Excluded
+    # from the queue, dashboards and analytics -- see OPERATIONAL_SOURCES.
+    SIMULATOR = "SIMULATOR"
+
+
+# Every ticket source that represents real help desk work. Operational
+# queries filter on this so simulator test tickets never reach a dashboard.
+OPERATIONAL_SOURCES = tuple(s for s in TicketSource if s is not TicketSource.SIMULATOR)
 
 
 class VoiceCallState(str, enum.Enum):
     GREETING = "GREETING"
     COLLECT_DESCRIPTION = "COLLECT_DESCRIPTION"
+    # When it started / whether the caller can work (asked only if not volunteered).
+    COLLECT_DETAILS = "COLLECT_DETAILS"
     COLLECT_NAME = "COLLECT_NAME"
+    # Name read back spelled; on "no", the caller spells first and last name.
+    CONFIRM_NAME = "CONFIRM_NAME"
     COLLECT_PHONE = "COLLECT_PHONE"
     COLLECT_EMAIL = "COLLECT_EMAIL"
     CONFIRM_EMAIL = "CONFIRM_EMAIL"
     CONFIRM_CATEGORY = "CONFIRM_CATEGORY"
+    # The whole ticket read back (who, what, since when, priority and why)
+    # before it is created; the caller can correct it.
+    CONFIRM_SUMMARY = "CONFIRM_SUMMARY"
     ANYTHING_ELSE = "ANYTHING_ELSE"
     ESCALATED = "ESCALATED"
     COMPLETED = "COMPLETED"
@@ -141,6 +156,11 @@ class VoiceCallSession(Base):
     """
 
     __tablename__ = "voice_call_sessions"
+    __table_args__ = (
+        # Partial: simulated rows are the minority, and only simulator
+        # queries look them up by this flag.
+        Index("ix_voice_call_sessions_is_simulated", "is_simulated", postgresql_where=text("is_simulated")),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     twilio_call_sid: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
@@ -167,6 +187,87 @@ class VoiceCallSession(Base):
         UUID(as_uuid=True), ForeignKey("tickets.id", ondelete="SET NULL"), nullable=True, index=True
     )
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # True for AI Call Simulator sessions. Operational queries (Calls page,
+    # dashboards, analytics) exclude these rows.
+    is_simulated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class VoiceSimulatorSession(Base):
+    """Simulator-only options for a simulated VoiceCallSession.
+
+    Kept out of voice_call_sessions so the Twilio path's table carries no
+    simulator columns beyond the is_simulated flag.
+    """
+
+    __tablename__ = "voice_simulator_sessions"
+
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("voice_call_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    tts_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    send_notifications: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    end_reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    last_activity_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class VoiceSimulatorTurn(Base):
+    """One simulated caller turn: transcript, timings and debug trace. Never audio."""
+
+    __tablename__ = "voice_simulator_turns"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("voice_call_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    turn_client_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), unique=True, nullable=False)
+    turn_index: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    # "transcribed" after /audio, "completed" after /process.
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    input_mode: Mapped[str] = mapped_column(String(8), nullable=False)
+
+    utterance: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stt_raw: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    stt_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    state_before: Mapped[VoiceCallState | None] = mapped_column(
+        SQLEnum(VoiceCallState, name="voice_call_state_enum"), nullable=True
+    )
+    state_after: Mapped[VoiceCallState | None] = mapped_column(
+        SQLEnum(VoiceCallState, name="voice_call_state_enum"), nullable=True
+    )
+    intent: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    agent_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    call_ended: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    collected_after: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    ticket_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    llm_trace: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    errors: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+
+    # Server-measured, milliseconds.
+    stt_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    llm_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    tts_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ticket_create_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    server_total_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Browser-reported, milliseconds (POST /client-metrics).
+    utterance_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    capture_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    queue_wait_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    playback_start_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    playback_duration_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    turn_total_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at: Mapped[datetime] = mapped_column(

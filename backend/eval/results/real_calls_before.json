@@ -1,0 +1,332 @@
+[
+  {
+    "ticket": "SIM-2026-79A66954",
+    "final_state": "COMPLETED",
+    "priority": "HIGH",
+    "collected": {
+      "asked": [
+        "details",
+        "department",
+        "name_confirm",
+        "email"
+      ],
+      "impact": "one user, minor issue",
+      "started": "today morning",
+      "category": "Other",
+      "priority": "HIGH",
+      "department": "Development",
+      "caller_name": "Yashwanth",
+      "description": "The Bluetooth on the caller's laptop is not working.",
+      "short_issue": "laptop Bluetooth",
+      "phone_number": "+12148859089",
+      "work_blocked": true,
+      "affected_scope": "one_person",
+      "category_confidence": "high"
+    },
+    "intake_details": "Department: Development\nStarted: today morning\nWork blocked: yes\nImpact: one user, minor issue",
+    "turns": [
+      {
+        "state": "GREETING",
+        "next": "COLLECT_DESCRIPTION",
+        "caller": null,
+        "agent": "Thank you for calling Horizon Family Medical Group IT Help Desk. How can I assist you today?"
+      },
+      {
+        "state": "COLLECT_DESCRIPTION",
+        "next": "COLLECT_DETAILS",
+        "caller": "The Bluetooth in my laptop is not working.",
+        "agent": "I understand you're having an issue with laptop Bluetooth. When did this start?"
+      },
+      {
+        "state": "COLLECT_DETAILS",
+        "next": "COLLECT_NAME",
+        "caller": "It started today morning and I can't able to connect my AirPods to my laptop and I can't able to work.",
+        "agent": "May I have your name and department?"
+      },
+      {
+        "state": "COLLECT_NAME",
+        "next": "CONFIRM_NAME",
+        "caller": "My name is Yashvant and I'm from Development department.",
+        "agent": "I have your name as Y A S H V A N T. Is that right?"
+      },
+      {
+        "state": "CONFIRM_NAME",
+        "next": "COLLECT_PHONE",
+        "caller": "No, it's not correct. My name is Y-A-S-H-W-A-N-T-H.",
+        "agent": "What's the best phone number for us to reach you?"
+      },
+      {
+        "state": "COLLECT_PHONE",
+        "next": "COLLECT_EMAIL",
+        "caller": "It's 214-885-9089.",
+        "agent": "Thank you, Yashwanth. For email updates, please spell the part of your HFMG email before the at sign, one letter at a time. Or say skip."
+      },
+      {
+        "state": "COLLECT_EMAIL",
+        "next": "ANYTHING_ELSE",
+        "caller": "I don't want to add any email address right now.",
+        "agent": "Since this is affecting one user, minor issue, I'm marking it high priority. Let me create that ticket for you. One moment. Your ticket number is S I M, 2 0 2 6, 7 9 A 6 6 9 5 4. I've sent it to our IT team and they'll follow up with you. Is there anything else I can help you with?"
+      },
+      {
+        "state": "ANYTHING_ELSE",
+        "next": "COMPLETED",
+        "caller": "Nothing, thank you.",
+        "agent": "Thank you for calling Horizon Family Medical Group IT Help Desk. Goodbye."
+      }
+    ]
+  },
+  {
+    "ticket": "SIM-2026-185A0C0D",
+    "final_state": "ESCALATED",
+    "priority": "HIGH",
+    "collected": {
+      "asked": [
+        "details",
+        "department",
+        "name_confirm"
+      ],
+      "impact": "one user, impaired but can work",
+      "started": "today",
+      "category": "Network",
+      "priority": "MEDIUM",
+      "department": "Development",
+      "caller_name": "Chandu Natekereni",
+      "description": "The caller's laptop hotspot is not turning on.",
+      "short_issue": "laptop hotspot",
+      "work_blocked": false,
+      "affected_scope": "one_person",
+      "name_spell_step": null,
+      "escalation_pending": false,
+      "category_confidence": "high"
+    },
+    "intake_details": "Department: Development\nStarted: today\nWork blocked: no\nImpact: one user, impaired but can work",
+    "turns": [
+      {
+        "state": "GREETING",
+        "next": "COLLECT_DESCRIPTION",
+        "caller": null,
+        "agent": "Thank you for calling Horizon Family Medical Group IT Help Desk. How can I assist you today?"
+      },
+      {
+        "state": "COLLECT_DESCRIPTION",
+        "next": "COLLECT_DETAILS",
+        "caller": "Yeah, hi, my, like, my hotspot is not turning on in my laptop.",
+        "agent": "I understand you're having an issue with laptop hotspot. When did this start?"
+      },
+      {
+        "state": "COLLECT_DETAILS",
+        "next": "COLLECT_NAME",
+        "caller": "Yesterday it was working fine, but today I can't turn it on. Today, from today.",
+        "agent": "May I have your name and department?"
+      },
+      {
+        "state": "COLLECT_NAME",
+        "next": "CONFIRM_NAME",
+        "caller": "My name is Chindun Natakarani. I am from development department.",
+        "agent": "I have your name as C H I N D U N, N A T A K A R A N I. Is that right?"
+      },
+      {
+        "state": "CONFIRM_NAME",
+        "next": "CONFIRM_NAME",
+        "caller": "No, I after CH.",
+        "agent": "Sorry about that. Please spell your first name, one letter at a time."
+      },
+      {
+        "state": "CONFIRM_NAME",
+        "next": "CONFIRM_NAME",
+        "caller": "C H A N D U",
+        "agent": "Thanks. And your last name, one letter at a time?"
+      },
+      {
+        "state": "CONFIRM_NAME",
+        "next": "COLLECT_PHONE",
+        "caller": "N A T E K E R E N I",
+        "agent": "What's the best phone number for us to reach you?"
+      },
+      {
+        "state": "COLLECT_PHONE",
+        "next": "COLLECT_PHONE",
+        "caller": "Number is like 11006.",
+        "agent": "Could you say that number again, one digit at a time?"
+      },
+      {
+        "state": "COLLECT_PHONE",
+        "next": "COLLECT_PHONE",
+        "caller": "1-0-0-6",
+        "agent": "Sorry, what's the best callback number, one digit at a time?"
+      },
+      {
+        "state": "COLLECT_PHONE",
+        "next": "ESCALATED",
+        "caller": "866-882-085-444",
+        "agent": "I'm sorry, I'm having trouble understanding. I'll log a request for our IT team to follow up. Your callback request is ticket number S I M, 2 0 2 6, 1 8 5 A 0 C 0 D. Someone will reach out to you shortly. Thank you for calling Horizon Family Medical Group IT Help Desk. Goodbye."
+      }
+    ]
+  },
+  {
+    "ticket": "SIM-2026-48EC118F",
+    "final_state": "COMPLETED",
+    "priority": "HIGH",
+    "collected": {
+      "asked": [
+        "details",
+        "department",
+        "name_confirm",
+        "email"
+      ],
+      "email": "ranga.saiyashwanth@hfmg.net",
+      "impact": "one user, impaired",
+      "started": "this morning",
+      "category": "Other",
+      "priority": "HIGH",
+      "department": "AI Developer",
+      "caller_name": "Yashwanth",
+      "description": "The caller is having a problem with their laptop.",
+      "short_issue": "laptop problem",
+      "phone_number": "+12148859089",
+      "work_blocked": true,
+      "affected_scope": "one_person",
+      "name_spell_step": null,
+      "category_confidence": "medium"
+    },
+    "intake_details": "Department: AI Developer\nStarted: this morning\nWork blocked: yes\nImpact: one user, impaired",
+    "turns": [
+      {
+        "state": "GREETING",
+        "next": "COLLECT_DESCRIPTION",
+        "caller": null,
+        "agent": "Thank you for calling Horizon Family Medical Group IT Help Desk. How can I assist you today?"
+      },
+      {
+        "state": "COLLECT_DESCRIPTION",
+        "next": "COLLECT_DETAILS",
+        "caller": "I'm having a problem with the uh my laptop.",
+        "agent": "I understand you're having an issue with laptop problem. When did this start, and is it stopping you from working?"
+      },
+      {
+        "state": "COLLECT_DETAILS",
+        "next": "COLLECT_NAME",
+        "caller": "Yes, it started this morning and yeah, I can't able to work from this morning.",
+        "agent": "May I have your name and department?"
+      },
+      {
+        "state": "COLLECT_NAME",
+        "next": "CONFIRM_NAME",
+        "caller": "My name is Yashwant, and my department is AI Developer.",
+        "agent": "I have your name as Y A S H W A N T. Is that right?"
+      },
+      {
+        "state": "CONFIRM_NAME",
+        "next": "CONFIRM_NAME",
+        "caller": "Can you add H in the last?",
+        "agent": "Sorry about that. Please spell your first name, one letter at a time."
+      },
+      {
+        "state": "CONFIRM_NAME",
+        "next": "COLLECT_PHONE",
+        "caller": "Y A S H W A N T H",
+        "agent": "What's the best phone number for us to reach you?"
+      },
+      {
+        "state": "COLLECT_PHONE",
+        "next": "COLLECT_EMAIL",
+        "caller": "214-885-9089",
+        "agent": "Thank you, Yashwanth. For email updates, please spell the part of your HFMG email before the at sign, one letter at a time. Or say skip."
+      },
+      {
+        "state": "COLLECT_EMAIL",
+        "next": "CONFIRM_EMAIL",
+        "caller": "R A N G A dot S A I Y A S H W A N T H at hfmg.net.",
+        "agent": "I have r a n g a . s a i y a s h w a n t h at h f m g dot net. Is that correct?"
+      },
+      {
+        "state": "CONFIRM_EMAIL",
+        "next": "ANYTHING_ELSE",
+        "caller": "Yes.",
+        "agent": "Since this is affecting one user, impaired, I'm marking it high priority. Let me create that ticket for you. One moment. Your ticket number is S I M, 2 0 2 6, 4 8 E C 1 1 8 F. I've sent it to our IT team and they'll follow up with you. Is there anything else I can help you with?"
+      },
+      {
+        "state": "ANYTHING_ELSE",
+        "next": "COMPLETED",
+        "caller": "No, thank you.",
+        "agent": "Thank you for calling Horizon Family Medical Group IT Help Desk. Goodbye."
+      }
+    ]
+  },
+  {
+    "ticket": "SIM-2026-68A67058",
+    "final_state": "ABANDONED",
+    "priority": "LOW",
+    "collected": {
+      "asked": [
+        "details",
+        "department",
+        "name_confirm",
+        "email"
+      ],
+      "impact": "one user, minor issue",
+      "started": "this morning",
+      "category": "Other",
+      "priority": "LOW",
+      "department": "AI Director",
+      "caller_name": "Yashwant",
+      "description": "The caller's headset is not working.",
+      "short_issue": "headset not working",
+      "phone_number": "+12148859089",
+      "work_blocked": false,
+      "affected_scope": "one_person",
+      "category_confidence": "high"
+    },
+    "intake_details": "Department: AI Director\nStarted: this morning\nWork blocked: no\nImpact: one user, minor issue",
+    "turns": [
+      {
+        "state": "GREETING",
+        "next": "COLLECT_DESCRIPTION",
+        "caller": null,
+        "agent": "Thank you for calling Horizon Family Medical Group IT Help Desk. How can I assist you today?"
+      },
+      {
+        "state": "COLLECT_DESCRIPTION",
+        "next": "COLLECT_DETAILS",
+        "caller": "My headset is not working.",
+        "agent": "I understand you're having an issue with headset not working. When did this start?"
+      },
+      {
+        "state": "COLLECT_DETAILS",
+        "next": "COLLECT_NAME",
+        "caller": "It started this morning.",
+        "agent": "May I have your name and department?"
+      },
+      {
+        "state": "COLLECT_NAME",
+        "next": "CONFIRM_NAME",
+        "caller": "My name is Yashwant and my department is AI Director.",
+        "agent": "I have your name as Y A S H W A N T. Is that right?"
+      },
+      {
+        "state": "CONFIRM_NAME",
+        "next": "COLLECT_PHONE",
+        "caller": "Yes.",
+        "agent": "What's the best phone number for us to reach you?"
+      },
+      {
+        "state": "COLLECT_PHONE",
+        "next": "COLLECT_PHONE",
+        "caller": "It's still on forward, edit file 985.",
+        "agent": "Could you say that number again, one digit at a time?"
+      },
+      {
+        "state": "COLLECT_PHONE",
+        "next": "COLLECT_EMAIL",
+        "caller": "214-885-9089",
+        "agent": "Thank you, Yashwant. For email updates, please spell the part of your HFMG email before the at sign, one letter at a time. Or say skip."
+      },
+      {
+        "state": "COLLECT_EMAIL",
+        "next": "ANYTHING_ELSE",
+        "caller": "Thank you. Bye bye.",
+        "agent": "Let me create that ticket for you. One moment. Your ticket number is S I M, 2 0 2 6, 6 8 A 6 7 0 5 8. I've sent it to our IT team and they'll follow up with you. Is there anything else I can help you with?"
+      }
+    ]
+  }
+]

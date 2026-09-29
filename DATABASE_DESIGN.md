@@ -251,6 +251,20 @@ State lives in Postgres rather than process memory because each webhook turn is 
 
 No call recordings are stored — recording stays off pending compliance sign-off (`TWILIO_ARCHITECTURE.md` §9). The `turns` transcript is PHI-adjacent and carries the same handling rules as `tickets.description`.
 
+`is_simulated` (`BOOLEAN`, NOT NULL, default `false`, partial index `WHERE is_simulated`) marks AI Call Simulator sessions (§3.9). Every operational query filters these out.
+
+### 3.9 AI Call Simulator tables (implemented, migration `e41f7a2c9b10`)
+
+Test data only. See [VOICE_SIMULATOR.md](VOICE_SIMULATOR.md). Simulated calls reuse `voice_call_sessions` (with `is_simulated = true`) so the orchestrator runs unchanged; these two tables hold what is simulator-specific. **No audio is stored anywhere.**
+
+- **`ticket_source_enum`** gains `SIMULATOR`. Those tickets are numbered `SIM-YYYY-XXXXXXXX`: random, so they never consume an `HFMG-` number, race under load, or collide after a purge.
+- **`voice_simulator_sessions`**: `session_id` (PK, FK → `voice_call_sessions` ON DELETE CASCADE), `label`, `tts_enabled`, `send_notifications`, `end_reason`, `last_activity_at` (drives the idle sweep), `created_at` (indexed; drives the hourly cap).
+- **`voice_simulator_turns`**: one row per turn. `turn_client_id` is UNIQUE (the idempotency key); `status` is `transcribed`, then `processing`, then `completed`. It holds the utterance, `stt_raw`, `state_before`/`state_after`, `intent`, `agent_text`, `collected_after`, `ticket_payload`, `llm_trace` (JSONB: every model call's prompt, output, error and timing) and `errors`. Server timings are `stt_ms`, `llm_ms`, `tts_ms`, `ticket_create_ms`, `queue_wait_ms` and `server_total_ms`; browser timings are `utterance_ms`, `capture_ms`, `playback_start_ms`, `playback_duration_ms` and `turn_total_ms`. FK → `voice_call_sessions` ON DELETE CASCADE.
+
+**Retention:** `backend/purge_simulator_data.py` deletes simulated sessions (turns cascade) and `SIMULATOR` tickets older than `SIMULATOR_RETENTION_DAYS` (default 14). `llm_trace` contains caller speech, so it is PHI-adjacent like `turns`.
+
+**Downgrade** deletes all simulator data and rebuilds `ticket_source_enum` without `SIMULATOR` (Postgres cannot drop an enum value in place).
+
 ## 4. Constraints & Data Integrity Rules
 
 - `tickets.email` and `tickets.phone_number`: format validated at the application layer (Pydantic) before insert; a lightweight `CHECK` constraint enforces non-empty phone number as a defense-in-depth backstop.

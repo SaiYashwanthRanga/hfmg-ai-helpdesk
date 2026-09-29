@@ -1,4 +1,4 @@
-import { CircleHelp, Globe, Mail, Phone, User } from "lucide-react";
+import { CircleHelp, FlaskConical, Globe, Mail, Phone, User } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { SemanticColor } from "../ui/Badge";
 import { Badge } from "../ui/Badge";
@@ -11,6 +11,7 @@ const SOURCE_COLOR: Record<TicketSource, SemanticColor> = {
   PHONE: "ai-accent",
   EMAIL: "info",
   WALK_IN: "muted",
+  SIMULATOR: "warning",
 };
 
 const SOURCE_ICON: Record<TicketSource, LucideIcon> = {
@@ -18,6 +19,7 @@ const SOURCE_ICON: Record<TicketSource, LucideIcon> = {
   PHONE: Phone,
   EMAIL: Mail,
   WALK_IN: User,
+  SIMULATOR: FlaskConical,
 };
 
 const SOURCE_LABEL: Record<TicketSource, string> = {
@@ -25,6 +27,7 @@ const SOURCE_LABEL: Record<TicketSource, string> = {
   PHONE: "Phone",
   EMAIL: "Email",
   WALK_IN: "Walk-in",
+  SIMULATOR: "Simulator",
 };
 
 /**

@@ -5,6 +5,8 @@
 
 This document defines the conversation state machine: every state, every transition, what the caller hears, and what happens when things go wrong.
 
+**Second entry point:** the AI Call Simulator ([VOICE_SIMULATOR.md](VOICE_SIMULATOR.md)) drives this same state machine (`orchestrator.start_call` / `handle_turn` / `escalate` / `salvage_abandoned_call`) from a browser instead of Twilio webhooks. Everything here applies to simulated calls unchanged, except that their tickets get source `SIMULATOR`. Changing a transition changes both.
+
 ---
 
 ## 1. Flow Overview
@@ -19,16 +21,27 @@ This document defines the conversation state machine: every state, every transit
                     ┌──────────────────────┐
                     │ COLLECT_DESCRIPTION   │◄── re-prompt on no/unclear input
                     └──────────┬───────────┘
-                               │ description captured + classified
+                               │ description captured + classified, plus anything
+                               │ volunteered (name, department, when, can-you-work)
                                ▼
-                    ┌──────────────────────┐
-                    │    COLLECT_NAME       │◄── re-prompt
-                    └──────────┬───────────┘
+                    ┌──────────────────────┐   only if start time or work status
+                    │   COLLECT_DETAILS     │   was NOT volunteered; asked once,
+                    └──────────┬───────────┘   never retried (optional)
+                               │
+                               ▼
+                    ┌──────────────────────┐   "name and department" in one question;
+                    │    COLLECT_NAME       │◄── skipped if already said; department
+                    └──────────┬───────────┘   asked once if only the name is known
+                               │ unfamiliar name / low recognizer confidence only
+                               ▼
+                    ┌──────────────────────┐   read back SPELLED; "no" → spell it, then
+                    │    CONFIRM_NAME       │   the corrected name is read back again
+                    └──────────┬───────────┘   (max 2 rounds, then accepted + flagged)
                                │
                                ▼
                     ┌──────────────────────┐   caller ID present → SKIPPED entirely
-                    │    COLLECT_PHONE      │   caller ID blocked → ask for it
-                    └──────────┬───────────┘
+                    │    COLLECT_PHONE      │   2 failed tries → carry on without one
+                    └──────────┬───────────┘   (never an escalation)
                                │
                                ▼
                     ┌──────────────────────┐
@@ -37,10 +50,10 @@ This document defines the conversation state machine: every state, every transit
                     └──────────┬───────────┘   skip after 2 failed tries
                                │
                                ▼
-                    ┌──────────────────────┐
-                    │  CONFIRM_CATEGORY     │  only if classifier confidence is low
-                    └──────────┬───────────┘
-                               │
+                    ┌──────────────────────┐   the whole ticket read back: who, what, since
+                    │   CONFIRM_SUMMARY     │   when, priority AND WHY, spoken phone number.
+                    └──────────┬───────────┘   "no" / "yes, but…" → change it → read again
+                               │ yes            (max 2 corrections, then filed + flagged)
                                ▼
                     ┌──────────────────────┐
                     │   CREATING_TICKET     │  TicketService.create_ticket(source=PHONE)
@@ -65,6 +78,10 @@ This document defines the conversation state machine: every state, every transit
                              or:   misunderstanding_count reaches 3
                              or:   unrecoverable system error
 
+   ANY state ──► COMPLETED   when: caller says goodbye mid-intake ("Thank you. Bye bye."):
+                             a ticket is filed from what was collected, at the priority
+                             assessed (not bumped), flagged if intake was incomplete
+
    ANY state ──► ABANDONED   when: caller hangs up (status callback)
 ```
 
@@ -75,12 +92,15 @@ This document defines the conversation state machine: every state, every transit
 | State | Caller is being asked | Exits to |
 |---|---|---|
 | `GREETING` | Open-ended: "How can I assist you today?" | `COLLECT_DESCRIPTION` |
-| `COLLECT_DESCRIPTION` | Problem description (often already answered by the greeting) | `COLLECT_NAME` |
-| `COLLECT_NAME` | Caller's name | `COLLECT_PHONE` / `COLLECT_EMAIL` |
-| `COLLECT_PHONE` | Callback number — **only entered when caller ID is unavailable** | `COLLECT_EMAIL` |
-| `COLLECT_EMAIL` | Email address (optional) | `CONFIRM_EMAIL` / `CONFIRM_CATEGORY` |
-| `CONFIRM_EMAIL` | "Did I get that right?" read-back | `CONFIRM_CATEGORY` / back to `COLLECT_EMAIL` |
-| `CONFIRM_CATEGORY` | Disambiguation — **only when classifier confidence is low** | `CREATING_TICKET` |
+| `COLLECT_DESCRIPTION` | Problem description (often already answered by the greeting) | `COLLECT_DETAILS` / `COLLECT_NAME` / later states, whichever is the first thing still missing |
+| `COLLECT_DETAILS` | "When did this start, and is it stopping you from working?" — **only if not volunteered**; optional, silence or an unclear answer moves on | `COLLECT_NAME` / later states |
+| `COLLECT_NAME` | Caller's name and department (department asked once; optional) | `CONFIRM_NAME` |
+| `CONFIRM_NAME` | Name read back **spelled**; "no" → spell first name, then last name (decoded letter by letter). Optional, never counts as a misunderstanding. `VOICE_CONFIRM_NAME=false` skips it | `COLLECT_PHONE` / `COLLECT_EMAIL` |
+| `COLLECT_PHONE` | Callback number — **only entered when caller ID is unavailable**. A retry says what was wrong ("I only caught 5 digits"); after two tries the call carries on without a number (noted on the ticket), it never escalates over this | `COLLECT_EMAIL` |
+| `COLLECT_EMAIL` | The part of the HFMG email **before the @, spelled** (a full address said aloud still works); `@hfmg.net` is added. Optional | `CONFIRM_EMAIL` / `CONFIRM_CATEGORY` |
+| `CONFIRM_EMAIL` | "Did I get that right?" read-back | `CONFIRM_SUMMARY` / back to `COLLECT_EMAIL` |
+| `CONFIRM_SUMMARY` | The whole ticket read back — name, department, the problem, since when, **priority and the reason for it**, and the callback number if it was spoken (not if caller ID gave it). "No" → "What should I change?"; "yes, but…" is a correction, not a yes. Two corrections at most, then it is filed and noted. `VOICE_CONFIRM_SUMMARY=false` skips it | `CREATING_TICKET` |
+| `CONFIRM_CATEGORY` | Legacy: only used when `VOICE_CONFIRM_SUMMARY=false` and classifier confidence is low. With the read-back on, an uncertain category is instead mentioned in it ("I'm filing it under Network") and can be corrected there | `CREATING_TICKET` |
 | `CREATING_TICKET` | (no input — ticket is created) | `READ_BACK` |
 | `READ_BACK` | (no input — number is read) | `ANYTHING_ELSE` |
 | `ANYTHING_ELSE` | "Anything else I can help with?" | `COLLECT_DESCRIPTION` / `COMPLETED` |
@@ -103,6 +123,19 @@ Description first, contact details after. Callers phone a help desk to report a 
 **Phone is captured silently from caller ID and never asked about**, per the requirement. Twilio supplies `From` on every webhook; when it's a usable number, the agent stores it and says nothing. The `COLLECT_PHONE` state is entered *only* when caller ID is absent, blocked, or anonymous.
 
 This is a deliberate revision: an earlier draft had the agent confirm the number out loud ("I have your number as 845-555-0142 — is that right?"). That cost a full turn on every single call to verify data Twilio already gave us reliably, and every turn is a chance for STT to fail. Silent capture means the typical call is **three questions: problem, name, email.**
+
+**Revision (2026-09-28, voice latency/accuracy work — `docs/reviews/VOICE_LATENCY_ACCURACY_REPORT.md`):** the agent now also records department, when the problem started, and whether the caller can work, because priority depends on them and help desk staff asked for them. To keep the call short:
+- the first description is mined for anything volunteered (name, department, timing, work status), and nothing already said is asked again;
+- timing and work status are asked together in one optional question, name and department in another;
+- "can't work at all" is a deterministic floor of High priority.
+
+A caller who volunteers everything still hears three questions; a terse caller hears four. Each question is chosen by `_next_step()` in `orchestrator.py` as "the first thing still missing".
+
+**Revision (2026-09-29, conversation review — `docs/reviews/VOICE_CONVERSATION_REVIEW.md`):**
+- **The priority and the reason for it come from one rule** (`app/voice/priority.py`), so the agent can no longer say "minor issue" next to "high priority". Only facts the caller stated decide it: can they work, who is affected, is patient care affected.
+- **Confidence is per entity.** A name is read back only if it is unfamiliar or the recognizer was unsure; a department is matched against HFMG's list and flagged when it isn't on it.
+- **Nothing is filed without a read-back**, and every correction is repeated back rather than silently applied.
+- **Wording varies and is shorter**, and the acknowledgement uses the caller's own thing ("Sorry to hear about your laptop's Bluetooth") or nothing at all.
 
 The trade-off is that a caller phoning from a shared clinic extension gets that extension recorded as their callback number. Mitigations: the caller's name and email are still collected, and the transcript is on the ticket, so an agent has what they need. If shared-line callbacks become a real problem in practice, the cheap fix is to confirm the number only for extensions on a known-shared list rather than for everyone.
 
@@ -144,6 +177,13 @@ Two triggers, one destination.
 5. `<Hangup/>`.
 
 The caller always leaves with a ticket number, even on escalation. Nothing is lost, and there's no dead-end "sorry, goodbye."
+
+**Revision (2026-09-28, from real test calls):**
+- **A callback needs a number.** If the caller asks for a person and there is no caller ID and no number yet, the agent first asks *"Of course. What's the best number for our IT team to call you back on?"*, once. It escalates after that answer whether or not a number was heard, and that question never counts as a misunderstanding.
+- **The problem is kept.** "My password was reset and I can't fix it — have IT call me back" records the description and classification on the callback ticket before escalating, instead of an empty ticket.
+- **No false apology.** A caller who asked for a person is never told "I'm having trouble understanding"; with no number they hear *"Of course. I'll ask a member of our IT team to follow up with you."*
+- **Greetings aren't failures.** "Hi." or "Hello, is this the help desk?" gets *"Sure. Can you tell me briefly what's going wrong?"* without a model call or a misunderstanding count (once per call).
+- **"Is this about Other?" is never asked:** the catch-all category is not confirmed.
 
 ## 7. Email Handling (Optional Field)
 

@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.v1.router import api_router
 from app.core.config import get_settings
+from app.simulator.routes import AudioSizeLimitMiddleware
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,6 +19,10 @@ logger = logging.getLogger("hfmg.main")
 settings = get_settings()
 
 app = FastAPI(title="HFMG AI Help Desk API", version="0.1.0")
+
+# Refuses an oversized simulator audio upload before any body parsing.
+# Registered before CORS so CORS wraps it and the 413 stays readable in a browser.
+app.add_middleware(AudioSizeLimitMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

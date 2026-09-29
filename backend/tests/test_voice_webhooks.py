@@ -86,14 +86,14 @@ async def test_full_call_creates_phone_ticket(client, db_session, monkeypatch):
                 category="Network",
                 priority=Priority.HIGH,
                 impact="the back office",
-                extras={"short_issue": "the network"},
+                extras={"short_issue": "the network", "started": "this morning", "work_blocked": True},
             )
         ),
     )
     monkeypatch.setattr(
         nlu,
         "interpret_name",
-        lambda u: _async(nlu.TurnResult(value="John Smith", unable_to_determine=False)),
+        lambda u, **k: _async(nlu.TurnResult(value="John Smith", unable_to_determine=False)),
     )
     monkeypatch.setattr(
         nlu,

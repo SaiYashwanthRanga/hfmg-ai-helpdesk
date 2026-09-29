@@ -101,6 +101,41 @@ async def test_structured_returns_parsed_json(monkeypatch):
     assert fmt["schema"] == SCHEMA
 
 
+async def test_per_call_model_override_gets_its_own_defaults(monkeypatch):
+    """VOICE_NLU_MODEL: OPENAI_MODEL's temperature/effort must not leak onto it."""
+    monkeypatch.setattr(settings, "openai_model", "gpt-5-nano")
+    monkeypatch.setattr(settings, "openai_reasoning_effort", "low")
+    provider, client = make_provider(monkeypatch, ['{"value": "x"}', '{"value": "y"}'])
+
+    await provider.structured(system="s", user="u", schema_name="t", schema=SCHEMA, model="gpt-4.1-mini")
+    call = client.responses.calls[0]
+    assert call["model"] == "gpt-4.1-mini"
+    assert "reasoning" not in call  # a non-reasoning model rejects it
+    assert call["temperature"] == 0  # extraction should be deterministic
+
+    await provider.structured(system="s", user="u", schema_name="t", schema=SCHEMA, model="gpt-5-mini")
+    call = client.responses.calls[1]
+    assert call["reasoning"] == {"effort": "minimal"}  # the family default, not OPENAI_REASONING_EFFORT
+    assert "temperature" not in call
+
+
+async def test_voice_nlu_uses_the_voice_model(monkeypatch):
+    from app.voice import nlu
+
+    seen = {}
+
+    class Recorder:
+        async def structured(self, **kwargs):
+            seen.update(kwargs)
+            return None
+
+    monkeypatch.setattr(nlu, "get_provider", lambda: Recorder())
+    monkeypatch.setattr(settings, "voice_nlu_model", "gpt-4.1-mini")
+    await nlu.interpret_name("Maria")
+    assert seen["model"] == "gpt-4.1-mini"
+    assert seen["timeout"] == settings.voice_nlu_timeout_seconds
+
+
 async def test_temperature_is_not_sent_by_default(monkeypatch):
     """gpt-5 models reject `temperature`; sending it would 400 every call."""
     monkeypatch.setattr(settings, "openai_temperature", None)

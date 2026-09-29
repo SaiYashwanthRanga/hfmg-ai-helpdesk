@@ -15,7 +15,7 @@ from app.db.models import (
     TicketSource,
     VoiceCallState,
 )
-from app.voice import nlu, orchestrator
+from app.voice import nlu, orchestrator, scripts
 from app.voice.session import get_or_create_session
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
@@ -31,7 +31,8 @@ def described(**overrides):
         category="eClinicalWorks",
         priority=Priority.HIGH,
         impact="multiple people",
-        extras={"short_issue": "eClinicalWorks"},
+        # Start time and work status volunteered, so the details question is skipped.
+        extras={"short_issue": "eClinicalWorks", "started": "this morning", "work_blocked": True},
     )
     for key, value in overrides.items():
         setattr(result, key, value)
@@ -77,13 +78,13 @@ async def test_happy_path_skips_phone_question_when_caller_id_present(db_session
     monkeypatch.setattr(nlu, "interpret_description", lambda u: _async(described()))
     out = await orchestrator.handle_turn(db_session, session, utterance="eCW won't load")
     assert session.state == VoiceCallState.COLLECT_NAME
-    assert "May I have your name" in out.twiml
+    assert any(o in out.twiml for o in scripts.NAME_ASK_OPTIONS)
 
     # Caller ID was usable, so phone is never asked -- straight to email.
-    monkeypatch.setattr(nlu, "interpret_name", lambda u: _async(extracted("Maria Lopez")))
+    monkeypatch.setattr(nlu, "interpret_name", lambda u, **k: _async(extracted("Maria Lopez")))
     out = await orchestrator.handle_turn(db_session, session, utterance="Maria Lopez")
     assert session.state == VoiceCallState.COLLECT_EMAIL
-    assert "email address" in out.twiml
+    assert "spell the part before the at sign" in out.twiml
     assert session.collected["phone_number"] == CALLER_ID
 
     monkeypatch.setattr(nlu, "interpret_email", lambda u: _async(extracted("mlopez@hfmg.net")))
@@ -115,11 +116,11 @@ async def test_phone_is_asked_when_caller_id_unavailable(db_session, monkeypatch
     monkeypatch.setattr(nlu, "interpret_description", lambda u: _async(described()))
     await orchestrator.handle_turn(db_session, session, utterance="eCW won't load")
 
-    monkeypatch.setattr(nlu, "interpret_name", lambda u: _async(extracted("Maria Lopez")))
+    monkeypatch.setattr(nlu, "interpret_name", lambda u, **k: _async(extracted("Maria Lopez")))
     out = await orchestrator.handle_turn(db_session, session, utterance="Maria Lopez")
 
     assert session.state == VoiceCallState.COLLECT_PHONE
-    assert "phone number" in out.twiml
+    assert scripts.PHONE_ASK in out.twiml
 
     monkeypatch.setattr(nlu, "interpret_phone", lambda u: _async(extracted("+18455550143")))
     await orchestrator.handle_turn(db_session, session, utterance="845 555 0143")
@@ -186,7 +187,7 @@ async def test_email_failures_do_not_escalate_and_skip_after_two_tries(db_sessio
 
     monkeypatch.setattr(nlu, "interpret_description", lambda u: _async(described()))
     await orchestrator.handle_turn(db_session, session, utterance="eCW down")
-    monkeypatch.setattr(nlu, "interpret_name", lambda u: _async(extracted("Maria Lopez")))
+    monkeypatch.setattr(nlu, "interpret_name", lambda u, **k: _async(extracted("Maria Lopez")))
     await orchestrator.handle_turn(db_session, session, utterance="Maria Lopez")
 
     monkeypatch.setattr(nlu, "interpret_email", lambda u: _async(failure()))
@@ -212,7 +213,7 @@ async def test_low_confidence_category_triggers_confirmation(db_session, monkeyp
         nlu, "interpret_description", lambda u: _async(described(confidence="low"))
     )
     await orchestrator.handle_turn(db_session, session, utterance="something is broken")
-    monkeypatch.setattr(nlu, "interpret_name", lambda u: _async(extracted("Maria Lopez")))
+    monkeypatch.setattr(nlu, "interpret_name", lambda u, **k: _async(extracted("Maria Lopez")))
     await orchestrator.handle_turn(db_session, session, utterance="Maria Lopez")
     monkeypatch.setattr(nlu, "interpret_email", lambda u: _async(extracted("mlopez@hfmg.net")))
     await orchestrator.handle_turn(db_session, session, utterance="email")
@@ -238,7 +239,7 @@ async def test_ticket_creation_is_idempotent_on_replay(db_session, monkeypatch):
 
     monkeypatch.setattr(nlu, "interpret_description", lambda u: _async(described()))
     await orchestrator.handle_turn(db_session, session, utterance="eCW down")
-    monkeypatch.setattr(nlu, "interpret_name", lambda u: _async(extracted("Maria Lopez")))
+    monkeypatch.setattr(nlu, "interpret_name", lambda u, **k: _async(extracted("Maria Lopez")))
     await orchestrator.handle_turn(db_session, session, utterance="Maria Lopez")
     monkeypatch.setattr(nlu, "interpret_email", lambda u: _async(nlu.TurnResult(
         unable_to_determine=False, extras={"declined": True}

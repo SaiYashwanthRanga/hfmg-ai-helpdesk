@@ -29,6 +29,7 @@ This document describes the full target contract (including Phase 3 features lik
 | §12 Analytics | ✅ Built | New — 8 endpoints; `ai_resolution_rate` is deliberately a blocked field, not a number (see `REMAINING_PRODUCT_DECISIONS.md`) |
 | §13 Voice Calls (read) | ✅ Built | New — list/detail/summary over `voice_call_sessions` |
 | §14 AI Insights | 🔶 Built (partial) | New — only Category Breakdown returns data; every other section is an explicit blocked field, not fabricated content |
+| §16 AI Call Simulator | ✅ Built (feature-flagged) | 11 endpoints under `/voice-simulator`, all `404` unless `ENABLE_VOICE_SIMULATOR=true` outside production. `SIMULATOR` tickets are excluded from §3 list and §12/§13/§14 results |
 
 **Full-text search correction:** `ix_tickets_fts` (the GIN index this document's `q` param implies) does **not exist** in either the dev or test database — confirmed via `\d tickets`, not assumed from `DATABASE_DESIGN.md`. `q` is implemented with `ILIKE` across `caller_name`/`ticket_number`/`description`/`ai_summary` instead, which is correctness-equivalent at this system's documented volume. See `docs/archive/DOCS_GAP_REPORT.md`.
 
@@ -479,3 +480,26 @@ Applied per-IP and per-user at the reverse proxy / API gateway layer:
 - `POST /api/v1/webhooks/twilio/*`: exempted from per-IP limits (Twilio's IPs), protected instead by signature validation.
 
 Exceeding a limit returns `429` with a `Retry-After` header.
+
+---
+
+## 16. AI Call Simulator (feature-flagged, test environments only)
+
+Browser-based test calls to the voice agent: the production orchestrator driven by typed or transcribed text instead of Twilio webhooks. Every route returns **`404`** unless `ENABLE_VOICE_SIMULATOR=true` and `ENVIRONMENT` is not `production`. Responses use the plain `{"detail": …}` error shape like the rest of the running API, not the §1.1 envelope.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/v1/voice-simulator/config` | Capabilities and limits |
+| `POST /api/v1/voice-simulator/start` | New simulated call; returns the greeting |
+| `POST /api/v1/voice-simulator/audio` | Multipart speech-to-text for one utterance (audio never stored) |
+| `POST /api/v1/voice-simulator/process` | One agent turn; idempotent on `turn_client_id` |
+| `POST /api/v1/voice-simulator/end` | Hang up (salvages a ticket like the phone path, unless `reason=cleared`) |
+| `GET /api/v1/voice-simulator/session/{id}` | Transcript, per-turn trace, timings |
+| `GET /api/v1/voice-simulator/metrics/{id}` | Per-stage latency statistics |
+| `POST /api/v1/voice-simulator/session/{id}/client-metrics` | Browser-measured timings |
+| `GET /api/v1/voice-simulator/stats` | Observability roll-up across all simulated sessions |
+| `GET /api/v1/voice-simulator/mock-caller`, `/random-issue` | Deterministic test data |
+
+Full contracts, status codes and field definitions: [VOICE_SIMULATOR.md](VOICE_SIMULATOR.md) §2. Schemas: `backend/app/simulator/schemas.py`.
+
+**Effect on existing endpoints:** `GET /tickets` omits `source=SIMULATOR` tickets unless `source=SIMULATOR` is passed. Analytics, AI Insights and Voice Calls endpoints always exclude simulator data. `GET /settings/status` gains `environment.voice_simulator_enabled`.

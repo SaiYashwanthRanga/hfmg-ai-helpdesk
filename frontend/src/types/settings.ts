@@ -18,6 +18,8 @@ export interface EnvironmentStatus {
   environment: string;
   enable_ai_summary: boolean;
   enable_email_notifications: boolean;
+  /** True only when ENABLE_VOICE_SIMULATOR=true outside production. */
+  voice_simulator_enabled?: boolean;
 }
 
 export interface SettingsStatusResponse {

@@ -6,8 +6,10 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core import trace
 from app.core.config import get_settings
 from app.db.models import (
+    OPERATIONAL_SOURCES,
     VALID_STATUS_TRANSITIONS,
     AISummaryStatus,
     Category,
@@ -36,26 +38,47 @@ async def _next_ticket_number(db: AsyncSession) -> str:
     return f"{prefix}{count + 1:06d}"
 
 
-async def create_ticket(db: AsyncSession, payload: TicketCreate) -> Ticket:
+def _simulator_ticket_number() -> str:
+    """SIM-2026-3F9A12C4: a separate namespace from HFMG-… numbers.
+
+    Random rather than count-based for two reasons: simulator tickets are
+    purged after a retention window (a count would then re-issue numbers
+    still in use), and the load test creates them concurrently (a count
+    races). 32 random bits make a collision negligible at test volumes.
+    """
+    year = datetime.now(timezone.utc).year
+    return f"SIM-{year}-{uuid.uuid4().hex[:8].upper()}"
+
+
+async def create_ticket(
+    db: AsyncSession, payload: TicketCreate, *, source: TicketSource = TicketSource.WEB
+) -> Ticket:
     category = await db.get(Category, payload.category_id)
     if category is None or not category.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown or inactive category")
 
     priority = payload.priority or category.default_priority or Priority.MEDIUM
 
-    ticket = Ticket(
-        ticket_number=await _next_ticket_number(db),
-        caller_name=payload.caller_name,
-        phone_number=payload.phone_number,
-        email=payload.email,
-        category_id=payload.category_id,
-        priority=priority,
-        description=payload.description,
-        status=TicketStatus.NEW,
-        ai_summary_status=AISummaryStatus.PENDING if settings.enable_ai_summary else AISummaryStatus.DISABLED,
-    )
-    db.add(ticket)
-    await db.commit()
+    with trace.span("ticket_create", data=payload.model_dump(mode="json") | {"source": source.value}):
+        ticket_number = (
+            _simulator_ticket_number()
+            if source is TicketSource.SIMULATOR
+            else await _next_ticket_number(db)
+        )
+        ticket = Ticket(
+            ticket_number=ticket_number,
+            caller_name=payload.caller_name,
+            phone_number=payload.phone_number,
+            email=payload.email,
+            category_id=payload.category_id,
+            priority=priority,
+            description=payload.description,
+            status=TicketStatus.NEW,
+            source=source,
+            ai_summary_status=AISummaryStatus.PENDING if settings.enable_ai_summary else AISummaryStatus.DISABLED,
+        )
+        db.add(ticket)
+        await db.commit()
     # Re-fetch rather than a partial refresh() so every column (including
     # server-generated ones like updated_at) is loaded before this leaves
     # the async session — a lazy load triggered later from sync Pydantic
@@ -91,6 +114,10 @@ async def list_tickets(
         filters.append(Ticket.priority == priority)
     if source is not None:
         filters.append(Ticket.source == source)
+    else:
+        # Simulator tickets only appear when asked for by name, so the
+        # working queue never shows test data.
+        filters.append(Ticket.source.in_(OPERATIONAL_SOURCES))
     if q:
         # Plain ILIKE rather than the full-text (`to_tsvector`/GIN) search
         # API_SPEC.md documents: `ix_tickets_fts` is not actually present in

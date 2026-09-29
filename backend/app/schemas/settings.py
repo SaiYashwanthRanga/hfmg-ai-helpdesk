@@ -21,6 +21,9 @@ class EnvironmentStatus(BaseModel):
     environment: str
     enable_ai_summary: bool
     enable_email_notifications: bool
+    # True only when ENABLE_VOICE_SIMULATOR=true outside production; the
+    # dashboard hides the AI Call Simulator nav entry otherwise.
+    voice_simulator_enabled: bool = False
 
 
 class SettingsStatusResponse(BaseModel):

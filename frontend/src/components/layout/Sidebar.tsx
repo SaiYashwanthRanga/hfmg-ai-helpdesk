@@ -5,7 +5,7 @@ import { useSidebar } from "../../app/SidebarContext";
 import { useFocusTrap } from "../../lib/useFocusTrap";
 import { Button } from "../ui/Button";
 import { NavItem } from "./NavItem";
-import { NAV_ITEMS } from "./navItems";
+import { useNavItems } from "./navItems";
 
 /**
  * Persistent navigation (DESIGN.md §4/§5). Three responsive states
@@ -14,6 +14,7 @@ import { NAV_ITEMS } from "./navItems";
  * mobile (<768px), triggered by Header's hamburger button.
  */
 export function Sidebar() {
+  const navItems = useNavItems();
   return (
     <>
       {/*
@@ -26,7 +27,7 @@ export function Sidebar() {
         aria-label="Primary"
         className="hidden shrink-0 flex-col gap-1 overflow-y-auto border-r border-stone-200/80 bg-white p-3 md:flex md:w-16 xl:w-60"
       >
-        {NAV_ITEMS.map((item) => (
+        {navItems.map((item) => (
           <NavItem key={item.to} item={item} collapsed />
         ))}
       </nav>
@@ -39,6 +40,7 @@ export function Sidebar() {
 function MobileSidebar() {
   const { mobileOpen, closeMobile } = useSidebar();
   const containerRef = useFocusTrap<HTMLDivElement>(mobileOpen, closeMobile);
+  const navItems = useNavItems();
 
   return createPortal(
     <AnimatePresence>
@@ -71,7 +73,7 @@ function MobileSidebar() {
                 <X className="size-4" aria-hidden="true" />
               </Button>
             </div>
-            {NAV_ITEMS.map((item) => (
+            {navItems.map((item) => (
               <NavItem key={item.to} item={item} onNavigate={closeMobile} />
             ))}
           </motion.div>

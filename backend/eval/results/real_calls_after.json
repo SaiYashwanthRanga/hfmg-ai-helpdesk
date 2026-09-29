@@ -1,0 +1,424 @@
+{
+  "SIM-2026-79A66954": {
+    "final_state": "COMPLETED",
+    "priority": "HIGH",
+    "collected": {
+      "description": "The Bluetooth in the caller's laptop is not working.",
+      "category": "Other",
+      "category_confidence": "high",
+      "model_priority": "LOW",
+      "short_issue": "your laptop's Bluetooth",
+      "started": "this morning",
+      "work_blocked": true,
+      "affected_scope": "one_person",
+      "patient_care_affected": false,
+      "priority": "HIGH",
+      "priority_reason": "you can't work",
+      "priority_rule": "caller_blocked",
+      "impact": "One person, unable to work",
+      "asked": [
+        "details",
+        "department",
+        "email"
+      ],
+      "caller_name": "Yashwanth",
+      "name_confidence": "high",
+      "name_confirm_pending": false,
+      "department": "Development",
+      "department_verified": false,
+      "name_spell_step": null,
+      "name_reconfirm": false,
+      "name_rounds": 0,
+      "name_confirmed_as": "Yashwanth",
+      "phone_number": "+12148859089",
+      "phone_spoken": true,
+      "phone_attempts": 0,
+      "summary_text": "Okay Yashwanth, let me make sure I have this right. You're in Development, and you're having trouble with your laptop's Bluetooth. It started this morning. Since you can't work, I'll mark this high priority. I'll reach you at 2 1 4, 8 8 5, 9 0 8 9. Does that sound right?",
+      "summary_confirmed": true,
+      "summary_awaiting_change": false
+    },
+    "intake_details": "Department: Development (unverified: not on HFMG's department list)\nStarted: this morning\nWork blocked: yes\nImpact: One person, unable to work\nPriority: High: you can't work",
+    "turns": [
+      {
+        "state": "GREETING",
+        "caller": null,
+        "agent": "Thank you for calling Horizon Family Medical Group IT Help Desk. How can I assist you today?",
+        "next": "COLLECT_DESCRIPTION"
+      },
+      {
+        "state": "COLLECT_DESCRIPTION",
+        "caller": "The Bluetooth in my laptop is not working.",
+        "agent": "Got it, your laptop's Bluetooth. When did this start?",
+        "next": "COLLECT_DETAILS"
+      },
+      {
+        "state": "COLLECT_DETAILS",
+        "caller": "It started today morning and I can't able to connect my AirPods to my laptop and I can't able to work.",
+        "agent": "Who am I speaking with, and which department are you in?",
+        "next": "COLLECT_NAME"
+      },
+      {
+        "state": "COLLECT_NAME",
+        "caller": "My name is Yashvant and I'm from Development department.",
+        "agent": "Just to be sure I have your name right: Y A S H V A N T. Is that correct?",
+        "next": "CONFIRM_NAME"
+      },
+      {
+        "state": "CONFIRM_NAME",
+        "caller": "No, it's not correct. My name is Y-A-S-H-W-A-N-T-H.",
+        "agent": "Thanks. So that's Y A S H W A N T H. Is that right?",
+        "next": "CONFIRM_NAME"
+      },
+      {
+        "state": "CONFIRM_NAME",
+        "caller": "Yes, that's right.",
+        "agent": "What's the best number to reach you on?",
+        "next": "COLLECT_PHONE"
+      },
+      {
+        "state": "COLLECT_PHONE",
+        "caller": "It's 214-885-9089.",
+        "agent": "Thanks, Yashwanth. What's your HFMG email? Just spell the part before the at sign, or say skip.",
+        "next": "COLLECT_EMAIL"
+      },
+      {
+        "state": "COLLECT_EMAIL",
+        "caller": "I don't want to add any email address right now.",
+        "agent": "Okay Yashwanth, let me make sure I have this right. You're in Development, and you're having trouble with your laptop's Bluetooth. It started this morning. Since you can't work, I'll mark this high priority. I'll reach you at 2 1 4, 8 8 5, 9 0 8 9. Does that sound right?",
+        "next": "CONFIRM_SUMMARY"
+      },
+      {
+        "state": "CONFIRM_SUMMARY",
+        "caller": "Yes, that's right.",
+        "agent": "Great, I'm filing that now. Your ticket number is S I M, 2 0 2 6, B C 2 E 6 5 A C. I've sent it to our IT team and they'll follow up with you. Is there anything else I can help you with?",
+        "next": "ANYTHING_ELSE"
+      },
+      {
+        "state": "ANYTHING_ELSE",
+        "caller": "Nothing, thank you.",
+        "agent": "Thank you for calling Horizon Family Medical Group IT Help Desk. Goodbye.",
+        "next": "COMPLETED"
+      }
+    ],
+    "escalated": false
+  },
+  "SIM-2026-185A0C0D": {
+    "final_state": "COMPLETED",
+    "priority": "MEDIUM",
+    "collected": {
+      "description": "The caller's laptop hotspot is not turning on.",
+      "category": "Network",
+      "category_confidence": "high",
+      "model_priority": "MEDIUM",
+      "short_issue": "your laptop's hotspot",
+      "started": "today",
+      "work_blocked": false,
+      "affected_scope": "one_person",
+      "patient_care_affected": false,
+      "priority": "MEDIUM",
+      "priority_reason": null,
+      "priority_rule": "caller_working",
+      "impact": "One person, can still work",
+      "asked": [
+        "details",
+        "department",
+        "email"
+      ],
+      "caller_name": "Chandu Natekereni",
+      "name_confidence": "high",
+      "name_confirm_pending": false,
+      "department": "Development",
+      "department_verified": false,
+      "name_spell_step": null,
+      "name_reconfirm": false,
+      "name_rounds": 0,
+      "name_confirmed_as": "Chandu Natekereni",
+      "phone_attempts": 2,
+      "phone_skipped": true,
+      "summary_text": "Okay Chandu, let me make sure I have this right. You're in Development, and you're having trouble with your laptop's hotspot. It started today. Since you can still work, I'll log it as medium priority. Does that sound right?",
+      "summary_confirmed": true,
+      "summary_awaiting_change": false
+    },
+    "intake_details": "Department: Development (unverified: not on HFMG's department list)\nStarted: today\nWork blocked: no\nImpact: One person, can still work\nPriority: Medium\nCallback number: not captured (the caller could not give one)",
+    "turns": [
+      {
+        "state": "GREETING",
+        "caller": null,
+        "agent": "Thank you for calling Horizon Family Medical Group IT Help Desk. How can I assist you today?",
+        "next": "COLLECT_DESCRIPTION"
+      },
+      {
+        "state": "COLLECT_DESCRIPTION",
+        "caller": "Yeah, hi, my, like, my hotspot is not turning on in my laptop.",
+        "agent": "Got it, your laptop's hotspot. When did this start?",
+        "next": "COLLECT_DETAILS"
+      },
+      {
+        "state": "COLLECT_DETAILS",
+        "caller": "Yesterday it was working fine, but today I can't turn it on. Today, from today.",
+        "agent": "Who am I speaking with, and which department are you in?",
+        "next": "COLLECT_NAME"
+      },
+      {
+        "state": "COLLECT_NAME",
+        "caller": "My name is Chindun Natakarani. I am from development department.",
+        "agent": "Just to be sure I have your name right: C H I N D U N, N A T A K A R A N I. Is that correct?",
+        "next": "CONFIRM_NAME"
+      },
+      {
+        "state": "CONFIRM_NAME",
+        "caller": "No, I after CH.",
+        "agent": "Sorry about that. Could you spell your first name for me, one letter at a time?",
+        "next": "CONFIRM_NAME"
+      },
+      {
+        "state": "CONFIRM_NAME",
+        "caller": "C H A N D U",
+        "agent": "Thanks. And your last name, one letter at a time?",
+        "next": "CONFIRM_NAME"
+      },
+      {
+        "state": "CONFIRM_NAME",
+        "caller": "N A T E K E R E N I",
+        "agent": "Thanks. So that's C H A N D U, N A T E K E R E N I. Is that right?",
+        "next": "CONFIRM_NAME"
+      },
+      {
+        "state": "CONFIRM_NAME",
+        "caller": "Yes, that's right.",
+        "agent": "What's the best number to reach you on?",
+        "next": "COLLECT_PHONE"
+      },
+      {
+        "state": "COLLECT_PHONE",
+        "caller": "Number is like 11006.",
+        "agent": "I only caught 5 digits, and I need all ten. Could you say the whole number again, slowly?",
+        "next": "COLLECT_PHONE"
+      },
+      {
+        "state": "COLLECT_PHONE",
+        "caller": "1-0-0-6",
+        "agent": "That's okay, we'll follow up another way. Thanks, Chandu. What's your HFMG email? Just spell the part before the at sign, or say skip.",
+        "next": "COLLECT_EMAIL"
+      },
+      {
+        "state": "COLLECT_EMAIL",
+        "caller": "Skip.",
+        "agent": "Okay Chandu, let me make sure I have this right. You're in Development, and you're having trouble with your laptop's hotspot. It started today. Since you can still work, I'll log it as medium priority. Does that sound right?",
+        "next": "CONFIRM_SUMMARY"
+      },
+      {
+        "state": "CONFIRM_SUMMARY",
+        "caller": "Yes.",
+        "agent": "Great, I'm filing that now. Your ticket number is S I M, 2 0 2 6, C 6 6 6 D E 2 E. I've sent it to our IT team and they'll follow up with you. Is there anything else I can help you with?",
+        "next": "ANYTHING_ELSE"
+      },
+      {
+        "state": "ANYTHING_ELSE",
+        "caller": "No, thank you.",
+        "agent": "Thank you for calling Horizon Family Medical Group IT Help Desk. Goodbye.",
+        "next": "COMPLETED"
+      }
+    ],
+    "escalated": false
+  },
+  "SIM-2026-48EC118F": {
+    "final_state": "COMPLETED",
+    "priority": "HIGH",
+    "collected": {
+      "description": "The caller is having a problem with their laptop.",
+      "category": "Other",
+      "category_confidence": "medium",
+      "model_priority": "MEDIUM",
+      "short_issue": "your laptop",
+      "started": "this morning",
+      "work_blocked": true,
+      "affected_scope": "one_person",
+      "patient_care_affected": false,
+      "priority": "HIGH",
+      "priority_reason": "you can't work",
+      "priority_rule": "caller_blocked",
+      "impact": "One person, unable to work",
+      "asked": [
+        "details",
+        "department",
+        "email"
+      ],
+      "caller_name": "Yashwanth",
+      "name_confidence": "high",
+      "name_confirm_pending": false,
+      "department": "AI Developer",
+      "department_verified": false,
+      "name_spell_step": null,
+      "name_reconfirm": false,
+      "name_rounds": 0,
+      "name_confirmed_as": "Yashwanth",
+      "phone_number": "+12148859089",
+      "phone_spoken": true,
+      "phone_attempts": 0,
+      "email": "ranga.saiyashwanth@hfmg.net",
+      "summary_text": "Okay Yashwanth, let me make sure I have this right. You're in AI Developer, and you're having trouble with your laptop. It started this morning. Since you can't work, I'll mark this high priority. I'll reach you at 2 1 4, 8 8 5, 9 0 8 9. Is that right?",
+      "summary_confirmed": true,
+      "summary_awaiting_change": false
+    },
+    "intake_details": "Department: AI Developer (unverified: not on HFMG's department list)\nStarted: this morning\nWork blocked: yes\nImpact: One person, unable to work\nPriority: High: you can't work",
+    "turns": [
+      {
+        "state": "GREETING",
+        "caller": null,
+        "agent": "Thank you for calling Horizon Family Medical Group IT Help Desk. How can I assist you today?",
+        "next": "COLLECT_DESCRIPTION"
+      },
+      {
+        "state": "COLLECT_DESCRIPTION",
+        "caller": "I'm having a problem with the uh my laptop.",
+        "agent": "Got it, your laptop. When did this start, and can you still get your work done?",
+        "next": "COLLECT_DETAILS"
+      },
+      {
+        "state": "COLLECT_DETAILS",
+        "caller": "Yes, it started this morning and yeah, I can't able to work from this morning.",
+        "agent": "Who am I speaking with, and which department are you in?",
+        "next": "COLLECT_NAME"
+      },
+      {
+        "state": "COLLECT_NAME",
+        "caller": "My name is Yashwant, and my department is AI Developer.",
+        "agent": "Just to be sure I have your name right: Y A S H W A N T. Is that correct?",
+        "next": "CONFIRM_NAME"
+      },
+      {
+        "state": "CONFIRM_NAME",
+        "caller": "Can you add H in the last?",
+        "agent": "Thanks. So that's Y A S H W A N T H. Is that right?",
+        "next": "CONFIRM_NAME"
+      },
+      {
+        "state": "CONFIRM_NAME",
+        "caller": "Yes.",
+        "agent": "What's the best number to reach you on?",
+        "next": "COLLECT_PHONE"
+      },
+      {
+        "state": "COLLECT_PHONE",
+        "caller": "214-885-9089",
+        "agent": "Thanks, Yashwanth. What's your HFMG email? Just spell the part before the at sign, or say skip.",
+        "next": "COLLECT_EMAIL"
+      },
+      {
+        "state": "COLLECT_EMAIL",
+        "caller": "R A N G A dot S A I Y A S H W A N T H at hfmg.net.",
+        "agent": "I have r a n g a . s a i y a s h w a n t h at h f m g dot net. Is that correct?",
+        "next": "CONFIRM_EMAIL"
+      },
+      {
+        "state": "CONFIRM_EMAIL",
+        "caller": "Yes.",
+        "agent": "Okay Yashwanth, let me make sure I have this right. You're in AI Developer, and you're having trouble with your laptop. It started this morning. Since you can't work, I'll mark this high priority. I'll reach you at 2 1 4, 8 8 5, 9 0 8 9. Is that right?",
+        "next": "CONFIRM_SUMMARY"
+      },
+      {
+        "state": "CONFIRM_SUMMARY",
+        "caller": "Yes.",
+        "agent": "Great, I'm filing that now. Your ticket number is S I M, 2 0 2 6, C 5 0 F 8 5 B 6. I've sent it to our IT team and they'll follow up with you. Is there anything else I can help you with?",
+        "next": "ANYTHING_ELSE"
+      },
+      {
+        "state": "ANYTHING_ELSE",
+        "caller": "No, thank you.",
+        "agent": "Thank you for calling Horizon Family Medical Group IT Help Desk. Goodbye.",
+        "next": "COMPLETED"
+      }
+    ],
+    "escalated": false
+  },
+  "SIM-2026-68A67058": {
+    "final_state": "COMPLETED",
+    "priority": "LOW",
+    "collected": {
+      "description": "The caller's headset is not working.",
+      "category": "Other",
+      "category_confidence": "high",
+      "model_priority": "LOW",
+      "short_issue": "your headset",
+      "started": "this morning",
+      "work_blocked": false,
+      "affected_scope": "one_person",
+      "patient_care_affected": false,
+      "priority": "LOW",
+      "priority_reason": null,
+      "priority_rule": "caller_working",
+      "impact": "One person, can still work",
+      "asked": [
+        "details",
+        "department",
+        "email"
+      ],
+      "caller_name": "Yashwant",
+      "name_confidence": "low",
+      "name_confirm_pending": false,
+      "department": "AI Director",
+      "department_verified": false,
+      "name_confirmed_as": "Yashwant",
+      "name_reconfirm": false,
+      "name_spell_step": null,
+      "name_rounds": 0,
+      "phone_attempts": 0,
+      "phone_number": "+12148859089",
+      "phone_spoken": true,
+      "summary_skipped": true
+    },
+    "intake_details": "Department: AI Director (unverified: not on HFMG's department list)\nStarted: this morning\nWork blocked: no\nImpact: One person, can still work\nPriority: Low\nRead-back: not done: the caller ended the call first",
+    "turns": [
+      {
+        "state": "GREETING",
+        "caller": null,
+        "agent": "Thank you for calling Horizon Family Medical Group IT Help Desk. How can I assist you today?",
+        "next": "COLLECT_DESCRIPTION"
+      },
+      {
+        "state": "COLLECT_DESCRIPTION",
+        "caller": "My headset is not working.",
+        "agent": "Got it, your headset. When did this start?",
+        "next": "COLLECT_DETAILS"
+      },
+      {
+        "state": "COLLECT_DETAILS",
+        "caller": "It started this morning.",
+        "agent": "Who am I speaking with, and which department are you in?",
+        "next": "COLLECT_NAME"
+      },
+      {
+        "state": "COLLECT_NAME",
+        "caller": "My name is Yashwant and my department is AI Director.",
+        "agent": "Just to be sure I have your name right: Y A S H W A N T. Is that correct?",
+        "next": "CONFIRM_NAME"
+      },
+      {
+        "state": "CONFIRM_NAME",
+        "caller": "Yes.",
+        "agent": "What's the best number to reach you on?",
+        "next": "COLLECT_PHONE"
+      },
+      {
+        "state": "COLLECT_PHONE",
+        "caller": "It's still on forward, edit file 985.",
+        "agent": "I only caught 3 digits, and I need all ten. Could you say the whole number again, slowly?",
+        "next": "COLLECT_PHONE"
+      },
+      {
+        "state": "COLLECT_PHONE",
+        "caller": "214-885-9089",
+        "agent": "Thanks, Yashwant. What's your HFMG email? Just spell the part before the at sign, or say skip.",
+        "next": "COLLECT_EMAIL"
+      },
+      {
+        "state": "COLLECT_EMAIL",
+        "caller": "Thank you. Bye bye.",
+        "agent": "No problem. I've saved what you told me. Your ticket number is S I M, 2 0 2 6, 9 4 E 5 B 1 D E. Take care.",
+        "next": "COMPLETED"
+      }
+    ],
+    "escalated": false
+  }
+}

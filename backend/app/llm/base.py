@@ -28,8 +28,12 @@ class LLMProvider(Protocol):
         schema: dict[str, Any],
         timeout: float | None = None,
         max_retries: int | None = None,
+        model: str | None = None,
     ) -> dict[str, Any] | None:
         """Return JSON matching `schema`, or None if the call could not be completed.
+
+        `model` overrides the provider's default model for this call (the
+        voice NLU uses a faster model than summaries).
 
         Returning None rather than raising is deliberate: callers treat an
         uninterpretable turn as a normal conversational failure (re-prompt,

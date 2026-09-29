@@ -150,6 +150,15 @@ Complete variable reference — every variable the app reads:
 | `VOICE_NLU_TIMEOUT_SECONDS` | `4.0` | Must stay well under Twilio's ~15s webhook timeout |
 | `VOICE_MAX_MISUNDERSTANDINGS` | `3` | Escalation threshold |
 | `VOICE_MAX_EMAIL_ATTEMPTS` | `2` | |
+| `VOICE_NLU_MODEL` | `gpt-4.1-mini` | Model for understanding callers, separate from `OPENAI_MODEL` (summaries). Chosen by measurement: see [the latency/accuracy report](docs/reviews/VOICE_LATENCY_ACCURACY_REPORT.md) |
+| `VOICE_CONFIRM_NAME` | `true` | A name we're unsure of (unfamiliar, or low recognizer confidence) is read back spelled ("Y A S H W A N T H — is that right?"); on "no" they spell it and the corrected name is read back again. Common names cost no extra turn |
+| `VOICE_CONFIRM_SUMMARY` | `true` | The whole ticket (who, what, since when, priority and why) is read back and can be corrected before it is created. One extra turn per call. `false` restores the old create-immediately flow |
+| `VOICE_MAX_PHONE_ATTEMPTS` | `2` | After this many failed tries the agent carries on without a callback number instead of escalating |
+| `VOICE_DEPARTMENTS` | HFMG's departments, comma-separated | **Set this.** Callers' departments are matched against it; anything else is read back and marked "unverified" on the ticket. If empty, a placeholder list written without HFMG's org chart is used |
+| `VOICE_NLU_HEDGE_AFTER_SECONDS` | `2.5` | A slow NLU call gets a duplicate request; first answer wins. Cuts tail latency at the cost of extra tokens on slow calls only. `0` disables |
+| `ENVIRONMENT` | `production` | Must be exactly this in production: it hard-disables the AI Call Simulator and `LLM_PROVIDER=fake` |
+| `ENABLE_VOICE_SIMULATOR` | *(unset / `false`)* | **Never `true` in production.** The API refuses to start if it is. Test environments only; see [VOICE_SIMULATOR.md](VOICE_SIMULATOR.md) §3 |
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `5` / `10` | Per worker. Each voice turn holds a connection through its NLU call; see [the performance report](docs/reviews/VOICE_SIMULATOR_PERFORMANCE.md) §3 before raising, and keep workers × (pool + overflow) under Postgres `max_connections` |
 
 Frontend build-time variable (`frontend/.env`): `VITE_API_BASE_URL=https://helpdesk.hfmg.net/api/v1`.
 

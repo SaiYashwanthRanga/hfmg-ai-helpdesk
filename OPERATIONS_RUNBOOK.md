@@ -146,6 +146,8 @@ Filter by prefix — logs are plain text, not JSON (Phase 3 adds structured logg
 | `hfmg.voice.security` | Rejected webhook signatures |
 | `hfmg.notifications.email` | Send success/failure |
 | `hfmg.ai.summarizer` | Summary generation failures |
+| `hfmg.simulator` | AI Call Simulator turns (test environments only): `simulator session=… turn=… A->B intent=… llm_ms=…`, never caller text |
+| `hfmg.speech.openai` | Simulator speech-to-text / text-to-speech failures |
 
 Tracing one call end to end:
 ```bash
@@ -322,6 +324,8 @@ WHERE datname = 'hfmg_helpdesk' GROUP BY state;
 ```
 Fix by reducing `--workers`, raising `max_connections`, or killing leaked idle sessions. Check for long-running queries holding connections open.
 
+The opposite problem, callers hearing dead air when many calls arrive at once, is **pool** exhaustion rather than Postgres exhaustion. Each voice turn holds one pooled connection for its whole NLU call, so a worker serves at most `DB_POOL_SIZE + DB_MAX_OVERFLOW` (default 15) turns at once, and later turns queue. The AI Call Simulator's load test measured this at 25 concurrent callers: [performance report](docs/reviews/VOICE_SIMULATOR_PERFORMANCE.md) §3, F1.
+
 ### Disk filling up
 Usual culprits in order: journald logs, Postgres WAL (if `archive_mode=on` but archiving is failing, WAL accumulates indefinitely and **will** take the database down), and old backup files.
 ```bash
@@ -343,6 +347,8 @@ DELETE FROM voice_call_sessions
 WHERE created_at < now() - interval '<retention>' AND ticket_id IS NULL;
 ```
 Confirm the retention interval with compliance before running this — and back up first.
+
+AI Call Simulator sessions (`is_simulated = true`) and their `SIMULATOR` tickets are test data with their own purge: `python purge_simulator_data.py` in `backend/`, meant to run daily in any environment where the simulator is enabled. See [VOICE_SIMULATOR.md](VOICE_SIMULATOR.md) §5.3.
 
 ## 8. Escalation Contacts
 

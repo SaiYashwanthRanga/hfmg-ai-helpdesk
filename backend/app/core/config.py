@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Any
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,6 +9,12 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+asyncpg://hfmg:hfmg_dev_local@localhost:5432/hfmg_helpdesk"
+    # SQLAlchemy's defaults. A voice turn (Twilio or simulator) holds a pooled
+    # connection for its whole NLU round trip, so concurrent calls beyond
+    # pool_size + max_overflow queue for a connection. See
+    # docs/reviews/VOICE_SIMULATOR_PERFORMANCE.md before raising these.
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
 
     cors_origins: str = "http://localhost:5173"
 
@@ -73,6 +79,76 @@ class Settings(BaseSettings):
     voice_nlu_max_retries: int = 1
     voice_max_misunderstandings: int = 3
     voice_max_email_attempts: int = 2
+    # Model for the voice agent's NLU, separate from OPENAI_MODEL (summaries)
+    # because a caller is waiting on every NLU call. Empty = OPENAI_MODEL.
+    # See docs/reviews/VOICE_LATENCY_ACCURACY_REPORT.md for the measurements.
+    # gpt-4.1-mini: the only model tested that classified every eval
+    # description correctly (9/9 vs 5-6/9), at the same latency -- the
+    # latency is network-bound, not model-bound.
+    voice_nlu_model: str = "gpt-4.1-mini"
+    # Send an identical second NLU request if the first hasn't answered by
+    # then; first usable answer wins. 0 disables.
+    voice_nlu_hedge_after_seconds: float = 2.5
+    # Read the caller's name back spelled when confidence in it is low
+    # (unfamiliar name, low recognizer confidence), and let them correct it.
+    voice_confirm_name: bool = True
+    # Read the whole intake back (who, what, since when, impact, priority)
+    # and let the caller correct it before the ticket is created.
+    voice_confirm_summary: bool = True
+    # Callback-number attempts before the agent carries on without one.
+    voice_max_phone_attempts: int = 2
+    # HFMG's departments, comma-separated. Empty = the built-in placeholder list
+    # in app/voice/departments.py, which is NOT HFMG's real org chart.
+    voice_departments: str = ""
+
+    # --- AI Call Simulator (VOICE_SIMULATOR_DESIGN.md) ---
+    # Off by default. The API has no authentication, so when on, anyone who
+    # can reach it can spend OpenAI credit and create (SIMULATOR) tickets.
+    # Refused outright when ENVIRONMENT=production -- see the validator below.
+    enable_voice_simulator: bool = False
+    simulator_max_audio_bytes: int = 2_000_000
+    simulator_max_turns_per_session: int = 40
+    simulator_max_concurrent_sessions: int = 30
+    simulator_max_sessions_per_hour: int = 300
+    simulator_session_idle_timeout_seconds: int = 600
+    simulator_retention_days: int = 14
+    # Whether a simulator session may opt in to the real "ticket created"
+    # email. Off by default: with it on, anyone who can reach the API could
+    # send the help desk inbox one email per simulated ticket.
+    simulator_allow_notifications: bool = False
+
+    # --- Speech (simulator only; the phone path uses Twilio's STT and Polly) ---
+    speech_provider: str = "openai"
+    speech_stt_model: str = "gpt-4o-mini-transcribe"
+    # tts-1, not gpt-4o-mini-tts: measured first-audio p95 1.9 s vs 34-161 s
+    # stalls (docs/reviews/VOICE_LATENCY_ACCURACY_REPORT.md).
+    speech_tts_model: str = "tts-1"
+    speech_tts_voice: str = "alloy"
+    speech_tts_format: str = "mp3"
+    speech_timeout_seconds: float = 10.0
+    # Bias transcription with HFMG vocabulary and the expected answer shape.
+    speech_stt_context: bool = True
+    # Used when the caller is spelling (name correction, email) and to
+    # re-transcribe anything that came back in a non-English script.
+    # whisper-1 writes spelled letters literally; gpt-4o-*-transcribe
+    # "corrects" them into words (eval/spelling_bench.py: 34/36 vs 29/36 names).
+    speech_stt_spelling_model: str = "whisper-1"
+    # Synthesized replies kept in memory by exact text (greeting, retries,
+    # fixed questions repeat across calls). 0 disables.
+    speech_tts_cache_entries: int = 256
+
+    # LLM_PROVIDER=fake only (load tests, demos): simulated model latency.
+    fake_llm_latency_ms: int = 300
+
+    @model_validator(mode="after")
+    def _simulator_never_in_production(self) -> "Settings":
+        """Fail startup rather than expose the simulator on a production API."""
+        if self.enable_voice_simulator and self.environment.strip().lower() in ("production", "prod"):
+            raise ValueError(
+                "ENABLE_VOICE_SIMULATOR=true is not allowed when ENVIRONMENT=production. "
+                "The simulator has no authentication and spends OpenAI credit."
+            )
+        return self
 
     @field_validator("openai_temperature", mode="before")
     @classmethod

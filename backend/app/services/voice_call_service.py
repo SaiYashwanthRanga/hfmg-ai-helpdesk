@@ -64,7 +64,8 @@ async def list_voice_calls(
     state: VoiceCallState | None = None,
     escalated: bool | None = None,
 ) -> tuple[list[VoiceCallListItem], int]:
-    filters = []
+    # AI Call Simulator sessions are test data, never shown on the Calls page.
+    filters = [VoiceCallSession.is_simulated.is_(False)]
     if state is not None:
         filters.append(VoiceCallSession.state == state)
     if escalated is not None:
@@ -85,13 +86,17 @@ async def list_voice_calls(
 
 async def get_voice_call(db: AsyncSession, call_id: uuid.UUID) -> VoiceCallDetail:
     session = await db.get(VoiceCallSession, call_id)
-    if session is None:
+    if session is None or session.is_simulated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Voice call not found")
     return _to_detail(session)
 
 
 async def get_summary(db: AsyncSession) -> VoiceCallSummary:
-    state_counts_stmt = select(VoiceCallSession.state, func.count()).group_by(VoiceCallSession.state)
+    state_counts_stmt = (
+        select(VoiceCallSession.state, func.count())
+        .where(VoiceCallSession.is_simulated.is_(False))
+        .group_by(VoiceCallSession.state)
+    )
     rows = (await db.execute(state_counts_stmt)).all()
     by_state = {state: count for state, count in rows}
 

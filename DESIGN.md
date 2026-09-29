@@ -82,6 +82,8 @@ Settings
 
 Six top-level items, flat — no nested menus. If a seventh item becomes necessary later, that's the signal to introduce grouping rather than growing the flat list; don't pre-build grouping for a list this short.
 
+**Exception — Call Simulator.** In development and test environments where `ENABLE_VOICE_SIMULATOR=true`, a "Call Simulator" entry (`/voice-simulator`, [VOICE_SIMULATOR.md](VOICE_SIMULATOR.md)) appears directly after Calls. It is a developer/QA tool that production can never show (the backend refuses to enable it there), so the operational navigation users see stays at six and this does not trigger the grouping rule. The page follows this document's visual language. Like the rest of the app on the current branch, it is light-mode only, because `ThemeProvider` pins light mode.
+
 ## 5. Layout
 
 ```

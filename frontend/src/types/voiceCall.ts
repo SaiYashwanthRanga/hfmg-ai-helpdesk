@@ -1,18 +1,22 @@
 import type { Priority } from "./ticket";
 
-// Matches backend/app/db/models.py's VoiceCallState exactly — 11 values.
+// Matches backend/app/db/models.py's VoiceCallState exactly — 12 values.
 // CALL_FLOW.md/TWILIO_ARCHITECTURE.md previously documented 13 (including
 // CREATING_TICKET/READ_BACK); those were corrected in Backend Tier 5 — they
 // are narrative steps inline within another transition, never a distinct
-// persisted state, and the API will never return them.
+// persisted state, and the API will never return them. COLLECT_DETAILS
+// (when it started / can you work) was added with the voice accuracy work.
 export type VoiceCallState =
   | "GREETING"
   | "COLLECT_DESCRIPTION"
+  | "COLLECT_DETAILS"
   | "COLLECT_NAME"
+  | "CONFIRM_NAME"
   | "COLLECT_PHONE"
   | "COLLECT_EMAIL"
   | "CONFIRM_EMAIL"
   | "CONFIRM_CATEGORY"
+  | "CONFIRM_SUMMARY"
   | "ANYTHING_ELSE"
   | "ESCALATED"
   | "COMPLETED"

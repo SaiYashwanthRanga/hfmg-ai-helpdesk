@@ -19,11 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import (
+    OPERATIONAL_SOURCES,
     AISummaryStatus,
     Category,
     Priority,
     Ticket,
-    TicketSource,
     TicketStatus,
     VoiceCallSession,
     VoiceCallState,
@@ -33,6 +33,11 @@ from app.db.models import (
 # definition lives here, once, rather than being re-guessed per query.
 _CLOSED_TICKET_STATUSES = (TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED)
 _TERMINAL_CALL_STATES = (VoiceCallState.COMPLETED, VoiceCallState.ESCALATED, VoiceCallState.ABANDONED)
+
+# AI Call Simulator data is test data: every query below applies one of these
+# so it never reaches a dashboard or chart (VOICE_SIMULATOR_DESIGN.md §4).
+_REAL_TICKET = Ticket.source.in_(OPERATIONAL_SOURCES)
+_REAL_CALL = VoiceCallSession.is_simulated.is_(False)
 
 _AI_RESOLUTION_RATE_BLOCKED_REASON = (
     "AI Resolution Rate has no finalized definition yet -- DESIGN.md §20 lists "
@@ -46,25 +51,31 @@ def _start_of_today() -> datetime:
 
 
 async def get_kpis(db: AsyncSession) -> dict:
-    open_count_stmt = select(func.count()).select_from(Ticket).where(Ticket.status.notin_(_CLOSED_TICKET_STATUSES))
+    open_count_stmt = (
+        select(func.count())
+        .select_from(Ticket)
+        .where(Ticket.status.notin_(_CLOSED_TICKET_STATUSES), _REAL_TICKET)
+    )
     open_count = (await db.execute(open_count_stmt)).scalar_one()
 
     start_of_today = _start_of_today()
-    today_count_stmt = select(func.count()).select_from(Ticket).where(Ticket.created_at >= start_of_today)
+    today_count_stmt = (
+        select(func.count()).select_from(Ticket).where(Ticket.created_at >= start_of_today, _REAL_TICKET)
+    )
     today_count = (await db.execute(today_count_stmt)).scalar_one()
 
     # Disclosed assumption (REMAINING_PRODUCT_DECISIONS.md): "Calls Today"
     # and "Escalations" are both day-scoped, matching their KPI-row siblings
     # (Open Tickets excepted, which is a point-in-time count by nature).
     calls_today_stmt = select(func.count()).select_from(VoiceCallSession).where(
-        VoiceCallSession.created_at >= start_of_today
+        VoiceCallSession.created_at >= start_of_today, _REAL_CALL
     )
     calls_today = (await db.execute(calls_today_stmt)).scalar_one()
 
     escalations_today_stmt = (
         select(func.count())
         .select_from(VoiceCallSession)
-        .where(VoiceCallSession.created_at >= start_of_today, VoiceCallSession.escalated.is_(True))
+        .where(VoiceCallSession.created_at >= start_of_today, VoiceCallSession.escalated.is_(True), _REAL_CALL)
     )
     escalations_today = (await db.execute(escalations_today_stmt)).scalar_one()
 
@@ -82,7 +93,13 @@ async def get_kpis(db: AsyncSession) -> dict:
 
 
 async def get_recent_activity(db: AsyncSession, *, limit: int) -> list[Ticket]:
-    stmt = select(Ticket).options(selectinload(Ticket.category)).order_by(Ticket.created_at.desc()).limit(limit)
+    stmt = (
+        select(Ticket)
+        .options(selectinload(Ticket.category))
+        .where(_REAL_TICKET)
+        .order_by(Ticket.created_at.desc())
+        .limit(limit)
+    )
     return list((await db.execute(stmt)).scalars().all())
 
 
@@ -94,7 +111,7 @@ async def get_tickets_by_category(db: AsyncSession, *, days: int) -> list[dict]:
     stmt = (
         select(Category.name, func.count(Ticket.id))
         .join(Ticket, Ticket.category_id == Category.id)
-        .where(Ticket.created_at >= _since(days))
+        .where(Ticket.created_at >= _since(days), _REAL_TICKET)
         .group_by(Category.name)
         .order_by(func.count(Ticket.id).desc())
     )
@@ -105,7 +122,7 @@ async def get_tickets_by_category(db: AsyncSession, *, days: int) -> list[dict]:
 async def get_tickets_by_priority(db: AsyncSession, *, days: int) -> list[dict]:
     stmt = (
         select(Ticket.priority, func.count())
-        .where(Ticket.created_at >= _since(days))
+        .where(Ticket.created_at >= _since(days), _REAL_TICKET)
         .group_by(Ticket.priority)
     )
     rows = dict((await db.execute(stmt)).all())
@@ -117,11 +134,11 @@ async def get_tickets_by_priority(db: AsyncSession, *, days: int) -> list[dict]:
 async def get_tickets_by_source(db: AsyncSession, *, days: int) -> list[dict]:
     stmt = (
         select(Ticket.source, func.count())
-        .where(Ticket.created_at >= _since(days))
+        .where(Ticket.created_at >= _since(days), _REAL_TICKET)
         .group_by(Ticket.source)
     )
     rows = dict((await db.execute(stmt)).all())
-    return [{"source": s, "count": rows.get(s, 0)} for s in TicketSource]
+    return [{"source": s, "count": rows.get(s, 0)} for s in OPERATIONAL_SOURCES]
 
 
 async def get_calls_by_day(db: AsyncSession, *, days: int) -> list[dict]:
@@ -129,7 +146,7 @@ async def get_calls_by_day(db: AsyncSession, *, days: int) -> list[dict]:
     day_column = func.date(VoiceCallSession.created_at)
     stmt = (
         select(day_column, func.count())
-        .where(VoiceCallSession.created_at >= since)
+        .where(VoiceCallSession.created_at >= since, _REAL_CALL)
         .group_by(day_column)
     )
     rows = {d: count for d, count in (await db.execute(stmt)).all()}
@@ -149,14 +166,18 @@ async def get_escalation_rate(db: AsyncSession, *, days: int) -> dict:
     terminal_stmt = (
         select(func.count())
         .select_from(VoiceCallSession)
-        .where(VoiceCallSession.created_at >= since, VoiceCallSession.state.in_(_TERMINAL_CALL_STATES))
+        .where(
+            VoiceCallSession.created_at >= since,
+            VoiceCallSession.state.in_(_TERMINAL_CALL_STATES),
+            _REAL_CALL,
+        )
     )
     total_terminal = (await db.execute(terminal_stmt)).scalar_one()
 
     escalated_stmt = (
         select(func.count())
         .select_from(VoiceCallSession)
-        .where(VoiceCallSession.created_at >= since, VoiceCallSession.escalated.is_(True))
+        .where(VoiceCallSession.created_at >= since, VoiceCallSession.escalated.is_(True), _REAL_CALL)
     )
     escalated = (await db.execute(escalated_stmt)).scalar_one()
 
@@ -167,7 +188,7 @@ async def get_escalation_rate(db: AsyncSession, *, days: int) -> dict:
 async def get_ai_summary_usage(db: AsyncSession, *, days: int) -> list[dict]:
     stmt = (
         select(Ticket.ai_summary_status, func.count())
-        .where(Ticket.created_at >= _since(days))
+        .where(Ticket.created_at >= _since(days), _REAL_TICKET)
         .group_by(Ticket.ai_summary_status)
     )
     rows = dict((await db.execute(stmt)).all())

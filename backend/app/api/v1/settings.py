@@ -6,6 +6,7 @@ from app.core.masking import mask_secret
 from app.db.base import get_db
 from app.schemas.settings import EnvironmentStatus, ProviderStatus, SettingsStatusResponse
 from app.services.dependency_health import get_dependency_health
+from app.simulator.routes import simulator_allowed
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 settings = get_settings()
@@ -76,5 +77,6 @@ async def settings_status(db: AsyncSession = Depends(get_db)) -> SettingsStatusR
             environment=settings.environment,
             enable_ai_summary=settings.enable_ai_summary,
             enable_email_notifications=settings.enable_email_notifications,
+            voice_simulator_enabled=simulator_allowed(),
         ),
     )

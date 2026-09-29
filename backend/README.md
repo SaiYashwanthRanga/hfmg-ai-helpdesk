@@ -38,12 +38,14 @@ API docs (interactive): http://localhost:8000/docs
 
 ## Running tests
 
-Tests run against a **separate** database — never point them at your dev database, since the test suite truncates tables between tests.
+Tests run against a **separate** database, because the suite drops, recreates and truncates every table. This is enforced in `tests/conftest.py`: a plain `pytest` uses your `.env` database's name plus `_test` (e.g. `hfmg_helpdesk_test`) and creates it on first run. It refuses outright to run against any database whose name doesn't end in `_test`.
 
 ```bash
-createdb -O hfmg hfmg_helpdesk_test
-DATABASE_URL="postgresql+asyncpg://hfmg:hfmg_dev_local@localhost:5432/hfmg_helpdesk_test" pytest
+pytest                                              # uses <your dev db>_test automatically
+TEST_DATABASE_URL="postgresql+asyncpg://hfmg:hfmg_dev_local@localhost:5432/other_test" pytest   # explicit
 ```
+
+Before this guard existed, a plain `pytest` ran against `DATABASE_URL` from `.env`, i.e. the dev database, and wiped it. If your dev database suddenly has no categories or tickets, that is the likely cause: run `python seed.py` to restore the categories.
 
 ## Notes
 

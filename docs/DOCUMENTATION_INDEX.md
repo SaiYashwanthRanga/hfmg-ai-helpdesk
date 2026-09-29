@@ -77,6 +77,8 @@ The complete map of this repository's documentation. Paths are relative to this 
 | [../CALL_FLOW.md](../CALL_FLOW.md) | The conversation state machine |
 | [../VOICE_AGENT_DESIGN.md](../VOICE_AGENT_DESIGN.md) | Prompts, understanding, classification |
 | [../TWILIO_SETUP.md](../TWILIO_SETUP.md) | Configuration steps when credentials arrive |
+| [../VOICE_SIMULATOR.md](../VOICE_SIMULATOR.md) | AI Call Simulator (test environments only): architecture, API, deployment, testing, operations, troubleshooting |
+| [../VOICE_SIMULATOR_DESIGN.md](../VOICE_SIMULATOR_DESIGN.md) | The simulator's design, and the deviations made while building it (§11) |
 | [reviews/TWILIO_READINESS_CHECK.md](reviews/TWILIO_READINESS_CHECK.md) | What is ready, what needs credentials, configuration, or live testing (latest) |
 | [reviews/TWILIO_READINESS_REPORT.md](reviews/TWILIO_READINESS_REPORT.md) | Earlier readiness report with the go-live checklist |
 
@@ -109,6 +111,9 @@ Start with [reviews/EXECUTIVE_RECOMMENDATIONS.md](reviews/EXECUTIVE_RECOMMENDATI
 | Testing and validation | [TEST_COVERAGE_REVIEW](reviews/TEST_COVERAGE_REVIEW.md), [SYSTEM_VALIDATION_REPORT](reviews/SYSTEM_VALIDATION_REPORT.md) |
 | Frontend | [UX_REVIEW](reviews/UX_REVIEW.md), [UI_POLISH_REPORT](reviews/UI_POLISH_REPORT.md) |
 | Voice | [TWILIO_READINESS_CHECK](reviews/TWILIO_READINESS_CHECK.md), [TWILIO_READINESS_REPORT](reviews/TWILIO_READINESS_REPORT.md) |
+| Voice latency & understanding | [VOICE_LATENCY_ACCURACY_REPORT](reviews/VOICE_LATENCY_ACCURACY_REPORT.md) (root causes, fixes, before/after on a real-audio eval corpus; harness in `backend/eval/`) |
+| Voice conversation quality | [VOICE_CONVERSATION_REVIEW](reviews/VOICE_CONVERSATION_REVIEW.md) (name/department confidence, read-back before ticket creation, priority reasoning, before/after transcripts of four real calls) |
+| AI Call Simulator | [COMPLETION_REPORT](reviews/VOICE_SIMULATOR_COMPLETION_REPORT.md) (per-phase reports, production readiness), [SECURITY_REVIEW](reviews/VOICE_SIMULATOR_SECURITY_REVIEW.md), [PERFORMANCE](reviews/VOICE_SIMULATOR_PERFORMANCE.md) (load test at 1/5/10/25 callers; DB pool finding) |
 | Email | [EMAIL_RELEASE_SUMMARY](reviews/EMAIL_RELEASE_SUMMARY.md) (branch, commit, tests), [EMAIL_TEST_REPORT](reviews/EMAIL_TEST_REPORT.md) (real sends and the Email-tile fix) |
 | Documentation | [DOCUMENTATION_AUDIT_V2](reviews/DOCUMENTATION_AUDIT_V2.md) (why every file lives where it does) |
 

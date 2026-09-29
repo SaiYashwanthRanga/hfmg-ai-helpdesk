@@ -1,22 +1,73 @@
+import os
 import uuid
+from pathlib import Path
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from dotenv import dotenv_values
+from sqlalchemy.engine import make_url
 
-from app.core.config import get_settings
-from app.db.base import Base, async_session_factory, engine
-from app.main import app
+
+def _test_database_url() -> str:
+    """The database the suite may destroy -- never the development database.
+
+    The fixtures below drop, recreate and truncate every table. Before this
+    guard they ran against DATABASE_URL from backend/.env, which is the
+    developer's working database, and wiped it. Now the suite uses
+    TEST_DATABASE_URL if set, else the .env database's name plus "_test"
+    (created on first run), and refuses any database whose name does not end
+    in "_test".
+    """
+    explicit = os.environ.get("TEST_DATABASE_URL")
+    if explicit:
+        url = make_url(explicit)
+    else:
+        env_file = dotenv_values(Path(__file__).resolve().parents[1] / ".env")
+        base = os.environ.get("DATABASE_URL") or env_file.get("DATABASE_URL")
+        if not base:
+            raise pytest.UsageError("Set TEST_DATABASE_URL (or DATABASE_URL in backend/.env) to run the tests.")
+        url = make_url(base)
+        if not (url.database or "").endswith("_test"):
+            url = url.set(database=f"{url.database}_test")
+    if not (url.database or "").endswith("_test"):
+        raise pytest.UsageError(
+            f"Refusing to run tests against database {url.database!r}: the suite destroys its data. "
+            "Point TEST_DATABASE_URL at a database whose name ends in '_test'."
+        )
+    return url.render_as_string(hide_password=False)
+
+
+# Must happen before any `app` import: settings and the engine read it at import time.
+os.environ["DATABASE_URL"] = _test_database_url()
+
+from httpx import ASGITransport, AsyncClient  # noqa: E402
+
+from app.core.config import get_settings  # noqa: E402
+from app.db.base import Base, async_session_factory, engine  # noqa: E402
+from app.main import app  # noqa: E402
 
 settings = get_settings()
 
 
+async def _ensure_test_database_exists() -> None:
+    import asyncpg
+
+    url = make_url(settings.database_url)
+    admin = url.set(drivername="postgresql", database="postgres").render_as_string(hide_password=False)
+    conn = await asyncpg.connect(admin)
+    try:
+        exists = await conn.fetchval("SELECT 1 FROM pg_database WHERE datname = $1", url.database)
+        if not exists:
+            await conn.execute(f'CREATE DATABASE "{url.database}"')
+    finally:
+        await conn.close()
+
+
 @pytest.fixture(scope="session", autouse=True)
 async def _create_schema():
-    """Create the schema once for the whole test session.
-
-    Assumes DATABASE_URL points at a disposable local Postgres database
-    (see backend/README.md) — never point this at a database with real data.
-    """
+    """Create the schema once for the whole test session, in the *_test
+    database chosen above (never the development database)."""
+    assert (make_url(settings.database_url).database or "").endswith("_test")
+    await _ensure_test_database_exists()
     async with engine.begin() as conn:
         await conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS citext")
         await conn.run_sync(Base.metadata.drop_all)
@@ -42,6 +93,17 @@ def _hermetic_ai_summary_defaults(monkeypatch):
     """
     monkeypatch.setattr(settings, "enable_ai_summary", False)
     monkeypatch.setattr(settings, "openai_api_key", "")
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _voice_flow_defaults(monkeypatch):
+    """Scripted conversation tests predate the name and summary read-backs;
+    they test other behaviour and keep their original question order. The
+    read-backs have their own tests (test_voice_conversation.py,
+    test_voice_spelling.py), which switch them back on."""
+    monkeypatch.setattr(settings, "voice_confirm_name", False)
+    monkeypatch.setattr(settings, "voice_confirm_summary", False)
     yield
 
 
@@ -77,7 +139,8 @@ async def _truncate_tables():
     yield
     async with engine.begin() as conn:
         await conn.exec_driver_sql(
-            "TRUNCATE TABLE voice_call_sessions, tickets, categories RESTART IDENTITY CASCADE"
+            "TRUNCATE TABLE voice_simulator_turns, voice_simulator_sessions, voice_call_sessions, "
+            "tickets, categories RESTART IDENTITY CASCADE"
         )
 
 

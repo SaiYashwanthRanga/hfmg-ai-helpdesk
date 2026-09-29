@@ -1,0 +1,842 @@
+[
+  {
+    "state": "COLLECT_DESCRIPTION",
+    "noisy": false,
+    "ms": 998.3903999673203,
+    "wer": 0.0,
+    "text": "Hi, yeah, my Outlook won't open. It just keeps spinning.",
+    "spoken": "Hi, yeah, my Outlook won't open. It just keeps spinning."
+  },
+  {
+    "state": "COLLECT_DETAILS",
+    "noisy": false,
+    "ms": 1056.0725000104867,
+    "wer": 0.0,
+    "text": "It started this morning when I logged in. I can still get my email on my phone, so I'm working, just slower.",
+    "spoken": "It started this morning when I logged in. I can still get my email on my phone, so I'm working, just slower."
+  },
+  {
+    "state": "COLLECT_DESCRIPTION",
+    "noisy": true,
+    "ms": 1083.7036999873817,
+    "wer": 0.0,
+    "text": "Hi, yeah, my Outlook won't open, it just keeps spinning.",
+    "spoken": "Hi, yeah, my Outlook won't open. It just keeps spinning."
+  },
+  {
+    "state": "COLLECT_DETAILS",
+    "noisy": true,
+    "ms": 1393.6165000195615,
+    "wer": 0.0,
+    "text": "It started this morning when I logged in. I can still get my email on my phone, so I'm working just slower.",
+    "spoken": "It started this morning when I logged in. I can still get my email on my phone, so I'm working, just slower."
+  },
+  {
+    "state": "COLLECT_NAME",
+    "noisy": false,
+    "ms": 767.9627999896184,
+    "wer": 0.0,
+    "text": "It's Maria Lopez. I'm in billing.",
+    "spoken": "It's Maria Lopez, I'm in billing."
+  },
+  {
+    "state": "COLLECT_NAME",
+    "noisy": true,
+    "ms": 729.7607000218704,
+    "wer": 0.0,
+    "text": "It's Maria Lopez. I'm in billing.",
+    "spoken": "It's Maria Lopez, I'm in billing."
+  },
+  {
+    "state": "COLLECT_PHONE",
+    "noisy": false,
+    "ms": 890.1679000118747,
+    "wer": 0.0,
+    "text": "845-555-0142",
+    "spoken": "Eight four five, five five five, zero one four two."
+  },
+  {
+    "state": "COLLECT_PHONE",
+    "noisy": true,
+    "ms": 732.884600001853,
+    "wer": 0.0,
+    "text": "845-555-0142.",
+    "spoken": "Eight four five, five five five, zero one four two."
+  },
+  {
+    "state": "CONFIRM_EMAIL",
+    "noisy": false,
+    "ms": 543.6471999855712,
+    "wer": 0.0,
+    "text": "Yes, please",
+    "spoken": "Yes, please."
+  },
+  {
+    "state": "COLLECT_EMAIL",
+    "noisy": false,
+    "ms": 808.3597000222653,
+    "wer": 0.2857142857142857,
+    "text": "It's mlopez@hfmg.net",
+    "spoken": "It's m lopez at h f m g dot net."
+  },
+  {
+    "state": "COLLECT_EMAIL",
+    "noisy": true,
+    "ms": 821.4572000433691,
+    "wer": 0.2857142857142857,
+    "text": "It's mlopez@hfmg.net.",
+    "spoken": "It's m lopez at h f m g dot net."
+  },
+  {
+    "state": "CONFIRM_EMAIL",
+    "noisy": true,
+    "ms": 576.3298000092618,
+    "wer": 0.0,
+    "text": "Yes, please.",
+    "spoken": "Yes, please."
+  },
+  {
+    "state": "CONFIRM_CATEGORY",
+    "noisy": false,
+    "ms": 560.2833000011742,
+    "wer": 0.0,
+    "text": "Yes",
+    "spoken": "Yes."
+  },
+  {
+    "state": "CONFIRM_CATEGORY",
+    "noisy": true,
+    "ms": 548.6718000029214,
+    "wer": 0.0,
+    "text": "Yes",
+    "spoken": "Yes."
+  },
+  {
+    "state": "ANYTHING_ELSE",
+    "noisy": false,
+    "ms": 787.6245999941602,
+    "wer": 0.0,
+    "text": "No, that's all. Thank you.",
+    "spoken": "No, that's all, thank you."
+  },
+  {
+    "state": "ANYTHING_ELSE",
+    "noisy": true,
+    "ms": 766.7463000398129,
+    "wer": 0.0,
+    "text": "No, that's all, thank you",
+    "spoken": "No, that's all, thank you."
+  },
+  {
+    "state": "COLLECT_DETAILS",
+    "noisy": false,
+    "ms": 865.60499999905,
+    "wer": 0.16666666666666666,
+    "text": "Since about 8:30. And no, nobody up front can do anything.",
+    "spoken": "Since about eight thirty, and no, nobody up front can do anything."
+  },
+  {
+    "state": "COLLECT_DETAILS",
+    "noisy": true,
+    "ms": 864.1740999883041,
+    "wer": 0.16666666666666666,
+    "text": "Since about 8:30, and no, nobody up front can do anything.",
+    "spoken": "Since about eight thirty, and no, nobody up front can do anything."
+  },
+  {
+    "state": "COLLECT_DESCRIPTION",
+    "noisy": false,
+    "ms": 1510.566300014034,
+    "wer": 0.07142857142857142,
+    "text": "Hey, good morning. This is James Carter from the front desk at the Newburgh office. So since about 8:30 today, none of us can log into eClinicalWorks. Like the whole front desk, we literally can't check patients in at all.",
+    "spoken": "Hey, good morning, this is James Carter from the front desk at the Newburgh office, um, so since about eight thirty today none of us can log into eClinicalWorks, like the whole front desk, we literally can't check patients in at all."
+  },
+  {
+    "state": "COLLECT_DESCRIPTION",
+    "noisy": true,
+    "ms": 1725.5486999638379,
+    "wer": 0.11904761904761904,
+    "text": "Hey, good morning. This is James Carter from the front desk at the Newburgh office. So since about 8:30 today, none of us can log in to eClinicalWorks. Like the whole front desk, we literally can't check patients in at all.",
+    "spoken": "Hey, good morning, this is James Carter from the front desk at the Newburgh office, um, so since about eight thirty today none of us can log into eClinicalWorks, like the whole front desk, we literally can't check patients in at all."
+  },
+  {
+    "state": "COLLECT_NAME",
+    "noisy": true,
+    "ms": 551.479899964761,
+    "wer": 0.0,
+    "text": "James Carter, front desk.",
+    "spoken": "James Carter, front desk."
+  },
+  {
+    "state": "COLLECT_NAME",
+    "noisy": false,
+    "ms": 634.6980000380427,
+    "wer": 0.0,
+    "text": "James Carter, front desk.",
+    "spoken": "James Carter, front desk."
+  },
+  {
+    "state": "COLLECT_PHONE",
+    "noisy": false,
+    "ms": 776.6005999874324,
+    "wer": 0.0,
+    "text": "It's 845-555-0177.",
+    "spoken": "It's eight four five, five five five, zero one seven seven."
+  },
+  {
+    "state": "COLLECT_PHONE",
+    "noisy": true,
+    "ms": 744.6575000067241,
+    "wer": 0.0,
+    "text": "It's 845-555-0177.",
+    "spoken": "It's eight four five, five five five, zero one seven seven."
+  },
+  {
+    "state": "COLLECT_EMAIL",
+    "noisy": true,
+    "ms": 707.7048000064678,
+    "wer": 0.3333333333333333,
+    "text": "jcarter@hfmg.net",
+    "spoken": "j carter at h f m g dot net."
+  },
+  {
+    "state": "COLLECT_EMAIL",
+    "noisy": false,
+    "ms": 967.410999990534,
+    "wer": 0.3333333333333333,
+    "text": "jcarter@hfmg.net",
+    "spoken": "j carter at h f m g dot net."
+  },
+  {
+    "state": "CONFIRM_EMAIL",
+    "noisy": false,
+    "ms": 585.1483999867924,
+    "wer": 0.0,
+    "text": "Yeah, that's right.",
+    "spoken": "Yeah, that's right."
+  },
+  {
+    "state": "CONFIRM_CATEGORY",
+    "noisy": false,
+    "ms": 476.3630000525154,
+    "wer": 0.0,
+    "text": "Yes",
+    "spoken": "Yes."
+  },
+  {
+    "state": "CONFIRM_EMAIL",
+    "noisy": true,
+    "ms": 595.3837999841198,
+    "wer": 0.0,
+    "text": "Yeah, that's right.",
+    "spoken": "Yeah, that's right."
+  },
+  {
+    "state": "CONFIRM_CATEGORY",
+    "noisy": true,
+    "ms": 584.1032000025734,
+    "wer": 0.0,
+    "text": "Yes.",
+    "spoken": "Yes."
+  },
+  {
+    "state": "ANYTHING_ELSE",
+    "noisy": false,
+    "ms": 842.5769000314176,
+    "wer": 0.0,
+    "text": "Nope, that's it. Please hurry.",
+    "spoken": "Nope, that's it, please hurry."
+  },
+  {
+    "state": "ANYTHING_ELSE",
+    "noisy": true,
+    "ms": 892.3670999938622,
+    "wer": 0.0,
+    "text": "Nope, that's it. Please hurry.",
+    "spoken": "Nope, that's it, please hurry."
+  },
+  {
+    "state": "COLLECT_DESCRIPTION",
+    "noisy": false,
+    "ms": 1102.9558000154793,
+    "wer": 0.30434782608695654,
+    "text": "Yeah, so my computer, it says my password expired and I can't get in at all.",
+    "spoken": "Uh... yeah, so, um, my... my computer, it keeps... it says my password expired? And I, uh, I can't get in at all."
+  },
+  {
+    "state": "COLLECT_DESCRIPTION",
+    "noisy": true,
+    "ms": 934.6728000091389,
+    "wer": 0.43478260869565216,
+    "text": "My computer says my password expired, and I can't get in at all.",
+    "spoken": "Uh... yeah, so, um, my... my computer, it keeps... it says my password expired? And I, uh, I can't get in at all."
+  },
+  {
+    "state": "COLLECT_DETAILS",
+    "noisy": false,
+    "ms": 989.9681999813765,
+    "wer": 0.0,
+    "text": "Um, just now, this morning. And no, I can't do anything, I can't get past the login screen.",
+    "spoken": "Um, just now, this morning. And no, I can't do anything, I can't get past the login screen."
+  },
+  {
+    "state": "COLLECT_DETAILS",
+    "noisy": true,
+    "ms": 974.2688999976963,
+    "wer": 0.05555555555555555,
+    "text": "Just now, this morning. And no, I can't do anything. I can't get past the login screen.",
+    "spoken": "Um, just now, this morning. And no, I can't do anything, I can't get past the login screen."
+  },
+  {
+    "state": "COLLECT_NAME",
+    "noisy": true,
+    "ms": 682.248700002674,
+    "wer": 0.3333333333333333,
+    "text": "Priya Shah. I work in radiology.",
+    "spoken": "Oh, uh, Priya... Priya Shah. I work in radiology."
+  },
+  {
+    "state": "COLLECT_NAME",
+    "noisy": false,
+    "ms": 782.8730999608524,
+    "wer": 0.0,
+    "text": "Oh, uh, Priya, Priya Shah. I work in radiology.",
+    "spoken": "Oh, uh, Priya... Priya Shah. I work in radiology."
+  },
+  {
+    "state": "COLLECT_PHONE",
+    "noisy": false,
+    "ms": 763.5403000167571,
+    "wer": 0.0,
+    "text": "Um, 845-555-0231.",
+    "spoken": "Um, eight four five... five five five... zero two three one."
+  },
+  {
+    "state": "COLLECT_PHONE",
+    "noisy": true,
+    "ms": 806.7975000012666,
+    "wer": 0.5,
+    "text": "845-555-0231",
+    "spoken": "Um, eight four five... five five five... zero two three one."
+  },
+  {
+    "state": "COLLECT_EMAIL",
+    "noisy": false,
+    "ms": 817.7082999609411,
+    "wer": 0.14285714285714285,
+    "text": "p shah at hfmg dot net.",
+    "spoken": "Uh, p shah, at, h f m g, dot net."
+  },
+  {
+    "state": "COLLECT_EMAIL",
+    "noisy": true,
+    "ms": 818.1800000020303,
+    "wer": 0.42857142857142855,
+    "text": "ahenshaw@hfmg.net",
+    "spoken": "Uh, p shah, at, h f m g, dot net."
+  },
+  {
+    "state": "CONFIRM_EMAIL",
+    "noisy": false,
+    "ms": 522.1191999735311,
+    "wer": 0.0,
+    "text": "Yes, that's it.",
+    "spoken": "Yes, that's it."
+  },
+  {
+    "state": "CONFIRM_EMAIL",
+    "noisy": true,
+    "ms": 510.1239000214264,
+    "wer": 0.0,
+    "text": "Yes, that's it",
+    "spoken": "Yes, that's it."
+  },
+  {
+    "state": "CONFIRM_CATEGORY",
+    "noisy": false,
+    "ms": 559.9576000240631,
+    "wer": 0.0,
+    "text": "Yes, I think so.",
+    "spoken": "Yes, I think so."
+  },
+  {
+    "state": "CONFIRM_CATEGORY",
+    "noisy": true,
+    "ms": 560.9775999910198,
+    "wer": 0.0,
+    "text": "Yes, I think so.",
+    "spoken": "Yes, I think so."
+  },
+  {
+    "state": "ANYTHING_ELSE",
+    "noisy": false,
+    "ms": 808.8502999744378,
+    "wer": 0.0,
+    "text": "No, no, that's everything. Thank you, dear.",
+    "spoken": "No, no, that's everything. Thank you, dear."
+  },
+  {
+    "state": "ANYTHING_ELSE",
+    "noisy": true,
+    "ms": 786.6367999813519,
+    "wer": 0.0,
+    "text": "No, no, that's everything. Thank you, dear.",
+    "spoken": "No, no, that's everything. Thank you, dear."
+  },
+  {
+    "state": "COLLECT_DESCRIPTION",
+    "noisy": false,
+    "ms": 939.66689996887,
+    "wer": 0.0,
+    "text": "Front desk printer's jammed again. We're using the one in the back for now.",
+    "spoken": "Front desk printer's jammed again, we're using the one in the back for now."
+  },
+  {
+    "state": "COLLECT_NAME",
+    "noisy": false,
+    "ms": 799.5867999852635,
+    "wer": 0.0,
+    "text": "Tom Reilly, reception.",
+    "spoken": "Tom Reilly, reception."
+  },
+  {
+    "state": "COLLECT_DETAILS",
+    "noisy": false,
+    "ms": 1265.728099970147,
+    "wer": 0.0,
+    "text": "Since like ten minutes ago. And yeah, we can still work, we're using the back one.",
+    "spoken": "Since like ten minutes ago, and yeah we can still work, we're using the back one."
+  },
+  {
+    "state": "COLLECT_EMAIL",
+    "noisy": false,
+    "ms": 588.7413999880664,
+    "wer": 0.0,
+    "text": "Skip",
+    "spoken": "Skip."
+  },
+  {
+    "state": "CONFIRM_EMAIL",
+    "noisy": false,
+    "ms": 596.1050000041723,
+    "wer": 1.0,
+    "text": "Yup!",
+    "spoken": "Yep."
+  },
+  {
+    "state": "CONFIRM_CATEGORY",
+    "noisy": false,
+    "ms": 571.9145000330172,
+    "wer": 0.0,
+    "text": "Yep.",
+    "spoken": "Yep."
+  },
+  {
+    "state": "ANYTHING_ELSE",
+    "noisy": false,
+    "ms": 721.9974999898113,
+    "wer": 0.0,
+    "text": "Nope, thanks.",
+    "spoken": "Nope, thanks."
+  },
+  {
+    "state": "COLLECT_DESCRIPTION",
+    "noisy": true,
+    "ms": 1025.9792999713682,
+    "wer": 0.0,
+    "text": "Good afternoon, my VPN is not connecting from home since yesterday evening. I am not able to do any work.",
+    "spoken": "Good afternoon. My VPN is not connecting from home since yesterday evening, I am not able to do any work."
+  },
+  {
+    "state": "COLLECT_DETAILS",
+    "noisy": false,
+    "ms": 976.4736000215635,
+    "wer": 0.0,
+    "text": "From yesterday evening only. No, I am completely stuck. I cannot do anything.",
+    "spoken": "From yesterday evening only. No, I am completely stuck, I cannot do anything."
+  },
+  {
+    "state": "COLLECT_DETAILS",
+    "noisy": true,
+    "ms": 1159.7040999913588,
+    "wer": 0.0,
+    "text": "From yesterday evening only. No, I am completely stuck, I cannot do anything.",
+    "spoken": "From yesterday evening only. No, I am completely stuck, I cannot do anything."
+  },
+  {
+    "state": "COLLECT_DESCRIPTION",
+    "noisy": false,
+    "ms": 2321.001200005412,
+    "wer": 0.0,
+    "text": "Good afternoon. My VPN is not connecting from home since yesterday evening. I am not able to do any work.",
+    "spoken": "Good afternoon. My VPN is not connecting from home since yesterday evening, I am not able to do any work."
+  },
+  {
+    "state": "COLLECT_NAME",
+    "noisy": false,
+    "ms": 1155.8628000202589,
+    "wer": 0.0,
+    "text": "My name is Suresh Kumar from the finance department.",
+    "spoken": "My name is Suresh Kumar, from the finance department."
+  },
+  {
+    "state": "COLLECT_NAME",
+    "noisy": true,
+    "ms": 682.7693000086583,
+    "wer": 0.1111111111111111,
+    "text": "My name is Suraj Kumar from the finance department.",
+    "spoken": "My name is Suresh Kumar, from the finance department."
+  },
+  {
+    "state": "COLLECT_PHONE",
+    "noisy": false,
+    "ms": 605.9616000275128,
+    "wer": 0.0,
+    "text": "914-555-0444.",
+    "spoken": "Nine one four, five five five, zero four four four."
+  },
+  {
+    "state": "COLLECT_PHONE",
+    "noisy": true,
+    "ms": 656.7238999996334,
+    "wer": 0.0,
+    "text": "914-555-0444.",
+    "spoken": "Nine one four, five five five, zero four four four."
+  },
+  {
+    "state": "COLLECT_EMAIL",
+    "noisy": false,
+    "ms": 654.7347999876365,
+    "wer": 0.2857142857142857,
+    "text": "kumar@hfmg.net",
+    "spoken": "Suresh dot kumar at h f m g dot net."
+  },
+  {
+    "state": "COLLECT_EMAIL",
+    "noisy": true,
+    "ms": 709.5687999972142,
+    "wer": 0.2857142857142857,
+    "text": "kumar@hfmg.net",
+    "spoken": "Suresh dot kumar at h f m g dot net."
+  },
+  {
+    "state": "CONFIRM_EMAIL",
+    "noisy": false,
+    "ms": 575.8825999801047,
+    "wer": 0.0,
+    "text": "Yes, correct.",
+    "spoken": "Yes, correct."
+  },
+  {
+    "state": "CONFIRM_EMAIL",
+    "noisy": true,
+    "ms": 551.7871999763884,
+    "wer": 0.0,
+    "text": "Yes, correct.",
+    "spoken": "Yes, correct."
+  },
+  {
+    "state": "CONFIRM_CATEGORY",
+    "noisy": false,
+    "ms": 480.39459995925426,
+    "wer": 0.0,
+    "text": "Yes.",
+    "spoken": "Yes."
+  },
+  {
+    "state": "CONFIRM_CATEGORY",
+    "noisy": true,
+    "ms": 603.445400018245,
+    "wer": 0.0,
+    "text": "yes",
+    "spoken": "Yes."
+  },
+  {
+    "state": "ANYTHING_ELSE",
+    "noisy": true,
+    "ms": 804.4874999905005,
+    "wer": 0.0,
+    "text": "No, that is all. Thank you so much!",
+    "spoken": "No, that is all. Thank you so much."
+  },
+  {
+    "state": "ANYTHING_ELSE",
+    "noisy": false,
+    "ms": 906.8122999742627,
+    "wer": 0.0,
+    "text": "No, that is all. Thank you so much.",
+    "spoken": "No, that is all. Thank you so much."
+  },
+  {
+    "state": "COLLECT_DESCRIPTION",
+    "noisy": false,
+    "ms": 819.6192000177689,
+    "wer": 0.0,
+    "text": "Hello, the scanner in the lab is making a grinding noise, but it still scans.",
+    "spoken": "Hello, the scanner in the lab is making a grinding noise, but it still scans."
+  },
+  {
+    "state": "COLLECT_NAME",
+    "noisy": false,
+    "ms": 701.97090000147,
+    "wer": 0.0,
+    "text": "Lucia Ortiz, from the laboratory.",
+    "spoken": "Lucia Ortiz, from the laboratory."
+  },
+  {
+    "state": "COLLECT_PHONE",
+    "noisy": false,
+    "ms": 641.1795999738388,
+    "wer": 0.0,
+    "text": "845-555-0551",
+    "spoken": "Eight four five, five five five, zero five five one."
+  },
+  {
+    "state": "COLLECT_DETAILS",
+    "noisy": false,
+    "ms": 1369.7211000253446,
+    "wer": 0.0,
+    "text": "Since last week, maybe Thursday, and yes, I can still work, it still scans.",
+    "spoken": "Since last week, maybe Thursday. And yes, I can still work, it still scans."
+  },
+  {
+    "state": "CONFIRM_EMAIL",
+    "noisy": false,
+    "ms": 533.4367000032216,
+    "wer": 0.0,
+    "text": "Yes is correct.",
+    "spoken": "Yes, is correct."
+  },
+  {
+    "state": "COLLECT_EMAIL",
+    "noisy": false,
+    "ms": 788.8077999814413,
+    "wer": 0.3333333333333333,
+    "text": "lortiz@hfmg.net",
+    "spoken": "l ortiz at h f m g dot net."
+  },
+  {
+    "state": "CONFIRM_CATEGORY",
+    "noisy": false,
+    "ms": 481.69159999815747,
+    "wer": 0.0,
+    "text": "Yes",
+    "spoken": "Yes."
+  },
+  {
+    "state": "ANYTHING_ELSE",
+    "noisy": false,
+    "ms": 1070.5796999973245,
+    "wer": 0.0,
+    "text": "No, thank you.",
+    "spoken": "No, thank you."
+  },
+  {
+    "state": "COLLECT_DESCRIPTION",
+    "noisy": false,
+    "ms": 1050.4812999861315,
+    "wer": 0.0,
+    "text": "So my Teams is actually no, sorry, it's Outlook. My Outlook calendar won't sync. It hasn't since Monday.",
+    "spoken": "So my Teams is\u2014 actually no, sorry, it's Outlook, my Outlook calendar won't sync, it hasn't since Monday."
+  },
+  {
+    "state": "COLLECT_DETAILS",
+    "noisy": false,
+    "ms": 850.0104999984615,
+    "wer": 0.0,
+    "text": "Since Monday. I can still work. I'm just missing meeting invites.",
+    "spoken": "Since Monday. I can still work, I'm just missing meeting invites."
+  },
+  {
+    "state": "COLLECT_NAME",
+    "noisy": false,
+    "ms": 747.3169000004418,
+    "wer": 0.0,
+    "text": "Daniel Nguyen, I'm in HR.",
+    "spoken": "Daniel Nguyen, I'm in HR."
+  },
+  {
+    "state": "COLLECT_PHONE",
+    "noisy": false,
+    "ms": 758.9057000004686,
+    "wer": 0.0,
+    "text": "845-555-0662",
+    "spoken": "Eight four five, five five five, zero six six two."
+  },
+  {
+    "state": "COLLECT_EMAIL",
+    "noisy": false,
+    "ms": 709.414699987974,
+    "wer": 0.5,
+    "text": "dnguyen@hfmg.net",
+    "spoken": "d nguyen, that's n g u y e n, at h f m g dot net."
+  },
+  {
+    "state": "CONFIRM_CATEGORY",
+    "noisy": false,
+    "ms": 483.3142000134103,
+    "wer": 0.0,
+    "text": "Yes.",
+    "spoken": "Yes."
+  },
+  {
+    "state": "CONFIRM_EMAIL",
+    "noisy": false,
+    "ms": 746.7946999822743,
+    "wer": 0.0,
+    "text": "That's right.",
+    "spoken": "That's right."
+  },
+  {
+    "state": "ANYTHING_ELSE",
+    "noisy": false,
+    "ms": 768.7204999965616,
+    "wer": 0.0,
+    "text": "No, that's everything.",
+    "spoken": "No, that's everything."
+  },
+  {
+    "state": "COLLECT_DESCRIPTION",
+    "noisy": false,
+    "ms": 810.4532000143081,
+    "wer": 0.0,
+    "text": "Yeah, something's wrong with my computer. It's just really, really slow.",
+    "spoken": "Yeah, something's wrong with my computer, it's just really, really slow."
+  },
+  {
+    "state": "COLLECT_NAME",
+    "noisy": false,
+    "ms": 637.953000026755,
+    "wer": 0.0,
+    "text": "Omar Haddad, accounts payable.",
+    "spoken": "Omar Haddad, accounts payable."
+  },
+  {
+    "state": "COLLECT_PHONE",
+    "noisy": false,
+    "ms": 610.6067000073381,
+    "wer": 0.0,
+    "text": "845-555-0717",
+    "spoken": "Eight four five, five five five, zero seven one seven."
+  },
+  {
+    "state": "COLLECT_DETAILS",
+    "noisy": false,
+    "ms": 1362.7472999505699,
+    "wer": 0.0,
+    "text": "A couple of days now. I can work, it's just painful.",
+    "spoken": "A couple of days now. I can work, it's just painful."
+  },
+  {
+    "state": "COLLECT_EMAIL",
+    "noisy": false,
+    "ms": 666.7091000126675,
+    "wer": 0.3333333333333333,
+    "text": "ohaddad@hfmg.net",
+    "spoken": "o haddad at h f m g dot net."
+  },
+  {
+    "state": "CONFIRM_EMAIL",
+    "noisy": false,
+    "ms": 517.3470000154339,
+    "wer": 0.0,
+    "text": "Yes.",
+    "spoken": "Yes."
+  },
+  {
+    "state": "CONFIRM_CATEGORY",
+    "noisy": false,
+    "ms": 579.7410999657586,
+    "wer": 0.0,
+    "text": "Sure, yes.",
+    "spoken": "Sure, yes."
+  },
+  {
+    "state": "ANYTHING_ELSE",
+    "noisy": false,
+    "ms": 911.0904999542981,
+    "wer": 0.0,
+    "text": "No.",
+    "spoken": "No."
+  },
+  {
+    "state": "COLLECT_DESCRIPTION",
+    "noisy": false,
+    "ms": 745.075499988161,
+    "wer": 0.0,
+    "text": "Can I just talk to a real person, please?",
+    "spoken": "Can I just talk to a real person, please?"
+  },
+  {
+    "state": "COLLECT_DESCRIPTION",
+    "noisy": false,
+    "ms": 1054.89479994867,
+    "wer": 0.0,
+    "text": "I got locked out of eClinicalWorks after too many tries and I've got patients waiting.",
+    "spoken": "I got locked out of eClinicalWorks after too many tries, and I've got patients waiting."
+  },
+  {
+    "state": "COLLECT_NAME",
+    "noisy": false,
+    "ms": 697.0601000357419,
+    "wer": 0.0,
+    "text": "Grace Kim, family medicine.",
+    "spoken": "Grace Kim, family medicine."
+  },
+  {
+    "state": "COLLECT_DETAILS",
+    "noisy": false,
+    "ms": 851.624799950514,
+    "wer": 0.0,
+    "text": "About twenty minutes ago. No, I can't see my schedule or chart anything.",
+    "spoken": "About twenty minutes ago. No, I can't see my schedule or chart anything."
+  },
+  {
+    "state": "COLLECT_PHONE",
+    "noisy": false,
+    "ms": 680.9138000244275,
+    "wer": 0.0,
+    "text": "It's 845-555-0199.",
+    "spoken": "It's eight four five, five five five, zero one nine nine."
+  },
+  {
+    "state": "CONFIRM_EMAIL",
+    "noisy": false,
+    "ms": 503.51249997038394,
+    "wer": 0.0,
+    "text": "Yes.",
+    "spoken": "Yes."
+  },
+  {
+    "state": "COLLECT_EMAIL",
+    "noisy": false,
+    "ms": 690.9856999991462,
+    "wer": 0.0,
+    "text": "I'd rather not, skip that.",
+    "spoken": "I'd rather not, skip that."
+  },
+  {
+    "state": "CONFIRM_CATEGORY",
+    "noisy": false,
+    "ms": 724.6548000257462,
+    "wer": 0.0,
+    "text": "Yes",
+    "spoken": "Yes."
+  },
+  {
+    "state": "ANYTHING_ELSE",
+    "noisy": false,
+    "ms": 726.5868000104092,
+    "wer": 0.0,
+    "text": "No, thanks.",
+    "spoken": "No, thanks."
+  },
+  {
+    "state": "COLLECT_PHONE",
+    "noisy": false,
+    "ms": 34047.771300014574,
+    "wer": 1.0,
+    "text": "845-550-3333",
+    "spoken": "Eight four five five five five zero three three three."
+  }
+]

@@ -15,7 +15,9 @@ export type AISummaryStatus = "DISABLED" | "PENDING" | "COMPLETED" | "FAILED";
 // Tier 0 — see BACKEND_GAP_ANALYSIS.md/WORK_LOG.md). Kept optional here
 // rather than required so SourceBadge's existing "Unknown" fallback stays
 // harmless if it's ever missing, but it should always be present now.
-export type TicketSource = "WEB" | "PHONE" | "EMAIL" | "WALK_IN";
+// SIMULATOR tickets come from the AI Call Simulator. The backend hides them
+// from lists unless `source=SIMULATOR` is requested explicitly.
+export type TicketSource = "WEB" | "PHONE" | "EMAIL" | "WALK_IN" | "SIMULATOR";
 
 export interface Category {
   id: string;
@@ -74,7 +76,7 @@ export const STATUS_OPTIONS: TicketStatus[] = [
 
 export const PRIORITY_OPTIONS: Priority[] = ["LOW", "MEDIUM", "HIGH", "URGENT"];
 
-export const SOURCE_OPTIONS: TicketSource[] = ["WEB", "PHONE", "EMAIL", "WALK_IN"];
+export const SOURCE_OPTIONS: TicketSource[] = ["WEB", "PHONE", "EMAIL", "WALK_IN", "SIMULATOR"];
 
 /**
  * Mirrors `VALID_STATUS_TRANSITIONS` in backend/app/db/models.py exactly.
