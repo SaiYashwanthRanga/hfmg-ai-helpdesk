@@ -1,4 +1,4 @@
-# Server deployment (Windows)
+﻿# Server deployment (Windows)
 
 Everything that can be prepared ahead of time is already in this folder.
 
@@ -35,3 +35,11 @@ After changing `frontend/`, on a machine with Node 20+:
 cd frontend ; $env:VITE_API_BASE_URL='/api/v1' ; npm ci ; npm run build
 Remove-Item -Recurse ..\deploy\frontend-dist ; Copy-Item -Recurse dist ..\deploy\frontend-dist
 ```
+
+## Updating a server that is a plain copy (no git)
+Use this when the app folder on the server has no `.git` (e.g. `C:\HorizonApps\HFMG AI Helpdesk Backend`).
+1. Copy `hfmg-sip-release.zip` to the server and extract it to a **separate** folder, e.g. `C:\HorizonApps\release`.
+2. From an elevated PowerShell in that folder:
+   `.\deploy\update-server.ps1 -ServiceName <your service name>`
+   (add `-ServeDashboard` to have the backend serve the bundled dashboard).
+The script backs up the database, keeps `.env` and `.venv`, migrates, restarts and health-checks.
