@@ -1,4 +1,4 @@
-"""GET /health/dependencies -- the OpenAI/Twilio/Database/Email status strip.
+"""GET /health/dependencies -- the OpenAI/SIP/Database/Email status strip.
 
 Follows the same monkeypatch-the-provider pattern as test_summarizer.py's
 FakeProvider so these tests never need real network access or credentials.
@@ -26,7 +26,7 @@ async def test_unconfigured_providers_report_down(client, monkeypatch):
     """No API keys set -> down, without attempting any network call."""
     settings = dependency_health.settings
     monkeypatch.setattr(settings, "openai_api_key", "")
-    monkeypatch.setattr(settings, "twilio_auth_token", "")
+    monkeypatch.setattr(settings, "voice_sip_gateway_token", "")
     monkeypatch.setattr(settings, "sendgrid_api_key", "")
 
     response = await client.get("/api/v1/health/dependencies")
@@ -34,7 +34,7 @@ async def test_unconfigured_providers_report_down(client, monkeypatch):
     body = response.json()
 
     assert body["openai"]["status"] == "down"
-    assert body["twilio"]["status"] == "down"
+    assert body["sip"]["status"] == "down"
     assert body["email"]["status"] == "down"
     assert body["database"]["status"] == "operational"  # real DB, reachable in tests
     for dependency in body.values():
@@ -46,13 +46,13 @@ async def test_configured_and_reachable_reports_operational(client, monkeypatch)
         return dependency_health.DependencyCheck(status="operational", checked_at=datetime.now(timezone.utc))
 
     monkeypatch.setattr(dependency_health, "check_openai", fake_check)
-    monkeypatch.setattr(dependency_health, "check_twilio", fake_check)
+    monkeypatch.setattr(dependency_health, "check_sip", fake_check)
     monkeypatch.setattr(dependency_health, "check_email", fake_check)
 
     response = await client.get("/api/v1/health/dependencies")
     body = response.json()
     assert body["openai"]["status"] == "operational"
-    assert body["twilio"]["status"] == "operational"
+    assert body["sip"]["status"] == "operational"
     assert body["email"]["status"] == "operational"
 
 

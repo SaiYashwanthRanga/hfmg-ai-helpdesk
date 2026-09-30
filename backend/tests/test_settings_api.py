@@ -15,14 +15,14 @@ def _reset_cache():
 async def test_settings_status_masks_configured_secrets(client, monkeypatch):
     settings = dependency_health.settings
     monkeypatch.setattr(settings, "openai_api_key", "sk-abcdefghijklmnop")
-    monkeypatch.setattr(settings, "twilio_auth_token", "twilio_secret_token_value")
+    monkeypatch.setattr(settings, "voice_sip_gateway_token", "sip_secret_token_value")
     monkeypatch.setattr(settings, "sendgrid_api_key", "SG.abcdefghijklmno.pqrstuvwxyz")
 
     response = await client.get("/api/v1/settings/status")
     assert response.status_code == 200
     body = response.json()
 
-    for provider in ("openai", "twilio", "email"):
+    for provider in ("openai", "sip", "email"):
         assert body[provider]["configured"] is True
         masked = body[provider]["masked_key"]
         assert masked is not None
@@ -30,7 +30,7 @@ async def test_settings_status_masks_configured_secrets(client, monkeypatch):
         # The raw secret must never appear anywhere in the response body.
         raw_values = {
             "openai": "sk-abcdefghijklmnop",
-            "twilio": "twilio_secret_token_value",
+            "sip": "sip_secret_token_value",
             "email": "SG.abcdefghijklmno.pqrstuvwxyz",
         }
         assert raw_values[provider] not in response.text
@@ -39,13 +39,13 @@ async def test_settings_status_masks_configured_secrets(client, monkeypatch):
 async def test_settings_status_reports_not_configured(client, monkeypatch):
     settings = dependency_health.settings
     monkeypatch.setattr(settings, "openai_api_key", "")
-    monkeypatch.setattr(settings, "twilio_auth_token", "")
+    monkeypatch.setattr(settings, "voice_sip_gateway_token", "")
     monkeypatch.setattr(settings, "sendgrid_api_key", "")
 
     response = await client.get("/api/v1/settings/status")
     body = response.json()
 
-    for provider in ("openai", "twilio", "email"):
+    for provider in ("openai", "sip", "email"):
         assert body[provider]["configured"] is False
         assert body[provider]["masked_key"] is None
         assert body[provider]["status"] == "down"

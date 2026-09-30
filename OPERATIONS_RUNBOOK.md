@@ -2,7 +2,7 @@
 
 **Audience:** whoever is on call for this system
 **Scope:** day-to-day operation, monitoring, backup, disaster recovery, troubleshooting
-**Setup docs:** [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md), [TWILIO_SETUP.md](TWILIO_SETUP.md), [SENDGRID_SETUP.md](SENDGRID_SETUP.md)
+**Setup docs:** [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md), [SIP_SETUP.md](SIP_SETUP.md), [SENDGRID_SETUP.md](SENDGRID_SETUP.md)
 
 ---
 
@@ -20,7 +20,7 @@
 | Dependency | Used for | If it's down |
 |---|---|---|
 | OpenAI API | Voice agent understanding; AI summaries | **Every caller gets escalated to a human callback.** Web ticketing unaffected; summaries stay `PENDING` |
-| Twilio | Inbound calls | Phone intake stops entirely. Web ticketing unaffected |
+| Nextiva / SIPSorcery gateway | Inbound calls | Phone intake stops entirely. Web ticketing unaffected |
 | SendGrid (API) | Notifications | Tickets still created; `helpdesk@hfmg.net` stops being notified |
 | PostgreSQL | Everything | Full outage — both web and phone |
 
@@ -58,9 +58,9 @@ journalctl -u hfmg-api --since "24 hours ago" -p err | tail # errors overnight
 | **API down** | `/api/v1/health` non-200 for 2 min | Total outage |
 | **Database unreachable** | `pg_isready` fails | `/health` does **not** cover this — see below |
 | **Disk >85%** | any volume | Postgres stops writing when full |
-| **TLS expiring** | <14 days | Twilio refuses untrusted certs; phone intake dies |
+| **TLS expiring** | <14 days | Dashboard browsers warn; phone intake is unaffected (the gateway talks to the backend internally) |
 | **5xx rate** | >1% of requests over 5 min | App-level breakage |
-| **Twilio webhook failures** | any 11200/11205 in Twilio console | Callers hearing errors |
+| **SIP gateway failures** | repeated 401/403 on `/api/v1/voice/sip/*`, or gateway logs show Nextiva registration lost | Callers hearing errors or no answer |
 | **Email provider unconfigured** | log matches `Email provider not configured` | Notifications silently not sending — `SENDGRID_API_KEY` is unset in production |
 | **Escalation rate** | >25% of calls over an hour | Agent failing callers; usually a missing/invalid OpenAI key |
 | **LLM failures** | repeated `hfmg.voice.nlu` / `hfmg.llm.openai` errors | Voice agent degraded |
@@ -83,7 +83,7 @@ A synthetic check that actually exercises the stack is more informative than eit
 curl -fsS https://helpdesk.hfmg.net/api/v1/categories > /dev/null   # hits the DB
 ```
 
-**Also now real** (not covered by this runbook's original scope, added here for operators): `GET /api/v1/health/dependencies` reports OpenAI/Twilio/Database/Email reachability in one call, each cached server-side for 30 seconds — useful as a single dashboard check before diving into the alert table above.
+**Also now real** (not covered by this runbook's original scope, added here for operators): `GET /api/v1/health/dependencies` reports OpenAI/SIP/Database/Email status in one call, each cached server-side for 30 seconds — useful as a single dashboard check before diving into the alert table above.
 
 ### 3.3 Voice agent metrics worth watching
 
@@ -206,7 +206,7 @@ Schedule at 02:00 daily. **Backups contain PHI-adjacent data**, so encrypt befor
 
 - `/home/hfmg/app/backend/.env` — **contains secrets**; store in a password manager or secrets vault, never with database backups.
 - Nginx config and TLS certs (certs are re-issuable; config is quicker to restore).
-- Twilio/SendGrid console settings — documented in their setup guides, so reproducible by hand.
+- SendGrid console settings and the SIP gateway's `appsettings.json` (Nextiva credentials, gateway token) — documented in their setup guides, so reproducible by hand.
 
 ### 5.4 Verify restores, monthly
 
@@ -250,7 +250,7 @@ Agree these with HFMG IT leadership. If 24 hours of lost tickets is unacceptable
 5. **Nginx + TLS**: guide §6. Re-issue certs with certbot if needed.
 6. **Frontend**: rebuild and deploy (guide §8).
 7. **Repoint DNS** to the new host.
-8. **Update Twilio** if the hostname changed — webhook URLs *and* `TWILIO_PUBLIC_BASE_URL` (see [TWILIO_SETUP.md](TWILIO_SETUP.md) §5).
+8. **Update the SIP gateway** if the backend hostname or address changed — its Backend URL setting (see [SIP_SETUP.md](SIP_SETUP.md) §2).
 9. **Run the full verification checklist**, guide §9 — including the off-network test proving `/api/v1/tickets` is not public.
 
 ### 6.3 Partial scenarios
@@ -261,8 +261,8 @@ Agree these with HFMG IT leadership. If 24 hours of lost tickets is unacceptable
 | **DB corrupted, host fine** | Restore from the most recent good backup into a *new* database name, verify contents, then repoint `DATABASE_URL` and restart. Don't overwrite the damaged database until the restore is confirmed good |
 | **Bad migration** | Restore the pre-migration backup (you took one — guide §7). `alembic downgrade` is a fallback, but check what it drops: the Phase 2 downgrade deletes `voice_call_sessions` and all call transcripts |
 | **Accidental ticket deletion** | Tickets are never hard-deleted by the app. If it happened via direct SQL, restore to a scratch DB and copy the rows back |
-| **Certificate expired** | `sudo certbot renew --force-renewal && sudo systemctl reload nginx`. Phone intake is down until fixed — Twilio rejects untrusted certs |
-| **Twilio account suspended** | Phone intake stops; web ticketing is unaffected. Post an internal notice telling staff to use the dashboard |
+| **Certificate expired** | `sudo certbot renew --force-renewal && sudo systemctl reload nginx`. Dashboard access is affected; phone intake continues |
+| **Nextiva account suspended / SIP registration lost** | Phone intake stops; web ticketing is unaffected. Post an internal notice telling staff to use the dashboard |
 
 ### 6.4 Communicating an outage
 
@@ -306,10 +306,10 @@ The agent can't understand anyone. Overwhelmingly the OpenAI key:
 ```bash
 journalctl -u hfmg-api | grep hfmg.voice.nlu | tail
 ```
-This is a *degraded but safe* state — callers still get tickets and callbacks, so it's urgent but not an emergency. See [TWILIO_SETUP.md](TWILIO_SETUP.md) §10.
+This is a *degraded but safe* state — callers still get tickets and callbacks, so it's urgent but not an emergency. See [SIP_SETUP.md](SIP_SETUP.md) §7.
 
-### Callers hear an error / all webhooks 403
-[TWILIO_SETUP.md](TWILIO_SETUP.md) §10 covers both in detail. The 403 shortlist: `TWILIO_PUBLIC_BASE_URL` unset or mismatched, wrong auth token, or Nginx not forwarding `X-Forwarded-Proto`.
+### Callers hear an error / gateway gets 401 or 403
+[SIP_SETUP.md](SIP_SETUP.md) §7 covers this in detail. `403` means `VOICE_SIP_GATEWAY_TOKEN` is empty on the backend; `401` means it doesn't match the gateway's `Backend.GatewayToken`.
 
 ### 500 error: duplicate key on `ix_tickets_ticket_number`
 Ticket numbers are generated by counting existing tickets for the year, so two simultaneous creations can race for the same number and one fails.
@@ -359,7 +359,7 @@ Fill in before go-live; an unfilled table is a gap, not a formality.
 | Application / deployment | | |
 | Database | | |
 | Network / DNS / TLS | | |
-| Twilio account | | |
+| Nextiva / SIP gateway | | |
 | Microsoft 365 / mail | | |
 | Compliance / privacy (PHI incidents) | | |
 | Fallback channel while the help desk is down (§6.4) | | |

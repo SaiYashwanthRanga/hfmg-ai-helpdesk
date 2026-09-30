@@ -2,13 +2,12 @@
 
 The SIP gateway (SipVoiceGateway / "Sorcery") owns telephony and speech-to-text;
 it posts each caller utterance here and speaks back the returned lines. The
-conversation logic is the same orchestrator the Twilio webhooks use -- this
-module only adapts its TwiML output to plain JSON.
+conversation logic lives in orchestrator.py -- this module only adapts its
+output to JSON.
 """
 
 import hmac
 import logging
-import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
@@ -19,7 +18,7 @@ from app.core.config import get_settings
 from app.db.base import get_db
 from app.db.models import EscalationReason, VoiceCallState
 from app.voice import orchestrator, scripts
-from app.voice.routes import _dispatch_ticket_tasks
+from app.voice.tasks import dispatch_ticket_tasks
 from app.voice.session import get_or_create_session, get_session
 
 logger = logging.getLogger("hfmg.voice.sip")
@@ -68,12 +67,9 @@ class TurnResponse(BaseModel):
 
 
 def _to_response(outcome: orchestrator.TurnOutcome) -> TurnResponse:
-    """Flatten the orchestrator's TwiML into lines to speak + whether to listen."""
-    root = ET.fromstring(outcome.twiml)
-    lines = [(el.text or "").strip() for el in root.iter("Say")]
     return TurnResponse(
-        lines=[line for line in lines if line],
-        expect_reply=root.find(".//Gather") is not None,
+        lines=outcome.lines,
+        expect_reply=outcome.expect_reply,
         ticket_id=str(outcome.ticket_id) if outcome.ticket_id else None,
     )
 
@@ -87,6 +83,13 @@ async def start_call(body: StartCallRequest, db: AsyncSession = Depends(get_db))
     session = await get_or_create_session(
         db, call_sid=body.call_id, from_number=body.from_number, to_number=body.to_number
     )
+    if session.state != VoiceCallState.GREETING:
+        # A retried /start (the gateway lost our first response). Never reset a
+        # call that has already begun: replay the greeting if nothing else has
+        # happened yet, otherwise just keep listening.
+        only_greeted = session.state == VoiceCallState.COLLECT_DESCRIPTION and len(session.turns) <= 1
+        return TurnResponse(lines=[scripts.GREETING] if only_greeted else [], expect_reply=True)
+
     try:
         outcome = await orchestrator.start_call(session)
         await db.commit()
@@ -122,7 +125,7 @@ async def turn(
             return _error_response()
 
     if outcome.ticket_id is not None:
-        await _dispatch_ticket_tasks(db, background_tasks, outcome.ticket_id)
+        await dispatch_ticket_tasks(db, background_tasks, outcome.ticket_id)
 
     logger.info(
         "sip call=%s state=%s misunderstandings=%s stt_confidence=%s",
@@ -159,7 +162,7 @@ async def call_status(
     if has_description and has_phone:
         ticket = await orchestrator.salvage_abandoned_call(db, session)
         await db.commit()
-        await _dispatch_ticket_tasks(db, background_tasks, ticket.id)
+        await dispatch_ticket_tasks(db, background_tasks, ticket.id)
         logger.info("Salvaged abandoned SIP call %s into ticket %s", body.call_id, ticket.ticket_number)
     else:
         await db.commit()

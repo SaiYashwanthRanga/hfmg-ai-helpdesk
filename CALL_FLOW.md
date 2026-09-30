@@ -1,11 +1,11 @@
 # HFMG AI Help Desk — Call Flow (Phase 2)
 
 **Status:** Approved 2026-09-19 — implemented in Phase 2
-**Companion docs:** [TWILIO_ARCHITECTURE.md](TWILIO_ARCHITECTURE.md) (infrastructure), [VOICE_AGENT_DESIGN.md](VOICE_AGENT_DESIGN.md) (prompts and NLU)
+**Companion docs:** [SIP_SETUP.md](SIP_SETUP.md) (infrastructure), [VOICE_AGENT_DESIGN.md](VOICE_AGENT_DESIGN.md) (prompts and NLU)
 
 This document defines the conversation state machine: every state, every transition, what the caller hears, and what happens when things go wrong.
 
-**Second entry point:** the AI Call Simulator ([VOICE_SIMULATOR.md](VOICE_SIMULATOR.md)) drives this same state machine (`orchestrator.start_call` / `handle_turn` / `escalate` / `salvage_abandoned_call`) from a browser instead of Twilio webhooks. Everything here applies to simulated calls unchanged, except that their tickets get source `SIMULATOR`. Changing a transition changes both.
+**Second entry point:** the AI Call Simulator ([VOICE_SIMULATOR.md](VOICE_SIMULATOR.md)) drives this same state machine (`orchestrator.start_call` / `handle_turn` / `escalate` / `salvage_abandoned_call`) from a browser instead of the SIP gateway. Everything here applies to simulated calls unchanged, except that their tickets get source `SIMULATOR`. Changing a transition changes both.
 
 ---
 
@@ -87,7 +87,7 @@ This document defines the conversation state machine: every state, every transit
 
 ## 2. States
 
-**Correction (Tier 5 documentation alignment, verified against `backend/app/db/models.py`):** `CREATING_TICKET` and `READ_BACK` in the table below are narrative steps, not persisted `voice_call_state_enum` values — the implemented enum has 11 members, not 13 (see `TWILIO_ARCHITECTURE.md` §6, `docs/archive/DOCS_GAP_REPORT.md`). In the running orchestrator, ticket creation and the read-back prompt happen inline during the same transition that exits `CONFIRM_CATEGORY` (or wherever collection completes), landing directly on `ANYTHING_ELSE`/`ESCALATED`/`COMPLETED` — there's no intermediate row update recording "now creating the ticket" as its own state. The sequence of events described here is still accurate; the state *names* for those two rows are not things `GET /api/v1/voice-calls`'s `state` field will ever return.
+**Correction (Tier 5 documentation alignment, verified against `backend/app/db/models.py`):** `CREATING_TICKET` and `READ_BACK` in the table below are narrative steps, not persisted `voice_call_state_enum` values — the implemented enum has 11 members, not 13 (see `docs/archive/DOCS_GAP_REPORT.md`). In the running orchestrator, ticket creation and the read-back prompt happen inline during the same transition that exits `CONFIRM_CATEGORY` (or wherever collection completes), landing directly on `ANYTHING_ELSE`/`ESCALATED`/`COMPLETED` — there's no intermediate row update recording "now creating the ticket" as its own state. The sequence of events described here is still accurate; the state *names* for those two rows are not things `GET /api/v1/voice-calls`'s `state` field will ever return.
 
 | State | Caller is being asked | Exits to |
 |---|---|---|
@@ -112,7 +112,7 @@ Terminal states end with `<Hangup/>`. The session row persists for audit and met
 
 ## 3. The Greeting Is a Real Question
 
-The required greeting — *"Thank you for calling Horizon Family Medical Group IT Help Desk. How can I assist you today?"* — is open-ended, so most callers answer it with their actual problem. The flow takes advantage of that: `GREETING`'s `<Gather>` result feeds straight into `COLLECT_DESCRIPTION`, so a typical caller never hears a redundant "please describe your problem."
+The required greeting — *"Thank you for calling Horizon Family Medical Group IT Help Desk. How can I assist you today?"* — is open-ended, so most callers answer it with their actual problem. The flow takes advantage of that: `GREETING`'s first caller utterance feeds straight into `COLLECT_DESCRIPTION`, so a typical caller never hears a redundant "please describe your problem."
 
 If the caller answers with something that isn't a problem description ("hi, is this IT?"), `COLLECT_DESCRIPTION` asks the explicit follow-up instead. This costs one turn only for callers who need it.
 
@@ -120,9 +120,9 @@ If the caller answers with something that isn't a problem description ("hi, is t
 
 Description first, contact details after. Callers phone a help desk to report a problem; asking "what's your name" before "what's wrong" reads as bureaucratic and increases early hang-ups. It also means that if the caller abandons mid-call, we already hold the most valuable field (see §8, abandoned-call salvage).
 
-**Phone is captured silently from caller ID and never asked about**, per the requirement. Twilio supplies `From` on every webhook; when it's a usable number, the agent stores it and says nothing. The `COLLECT_PHONE` state is entered *only* when caller ID is absent, blocked, or anonymous.
+**Phone is captured silently from caller ID and never asked about**, per the requirement. The gateway supplies `from_number` on `/start`; when it's a usable number, the agent stores it and says nothing. The `COLLECT_PHONE` state is entered *only* when caller ID is absent, blocked, or anonymous.
 
-This is a deliberate revision: an earlier draft had the agent confirm the number out loud ("I have your number as 845-555-0142 — is that right?"). That cost a full turn on every single call to verify data Twilio already gave us reliably, and every turn is a chance for STT to fail. Silent capture means the typical call is **three questions: problem, name, email.**
+This is a deliberate revision: an earlier draft had the agent confirm the number out loud ("I have your number as 845-555-0142 — is that right?"). That cost a full turn on every single call to verify data the SIP trunk already gave us reliably, and every turn is a chance for STT to fail. Silent capture means the typical call is **three questions: problem, name, email.**
 
 **Revision (2026-09-28, voice latency/accuracy work — `docs/reviews/VOICE_LATENCY_ACCURACY_REPORT.md`):** the agent now also records department, when the problem started, and whether the caller can work, because priority depends on them and help desk staff asked for them. To keep the call short:
 - the first description is mined for anything volunteered (name, department, timing, work status), and nothing already said is asked again;
@@ -142,7 +142,7 @@ The trade-off is that a caller phoning from a shared clinic extension gets that 
 ## 5. Retry and Failure Rules
 
 A **failure** is any of:
-- `<Gather>` returns no speech (caller silent / timeout)
+- The gateway posts an empty utterance (caller silent / timeout)
 - STT confidence below threshold *and* the NLU can't extract the required slot
 - The NLU returns "could not determine" for a required slot
 - The model call itself errors or times out
@@ -207,11 +207,11 @@ This is a deliberate safety net, not a requirement — but losing a caller's iss
 
 ## 9. Idempotency
 
-Twilio retries webhooks it considers failed, so every turn must be safe to replay:
+The gateway may retry a request it considers failed, so every turn must be safe to replay:
 
-- `voice_call_sessions.twilio_call_sid` is unique — turn 0 replays load the existing session instead of creating a second one.
-- `CREATING_TICKET` checks `session.ticket_id` first. If a ticket already exists, it is **not** created again; the `READ_BACK` TwiML is simply re-rendered with the existing number.
-- Each turn records the `SpeechResult` it consumed; an identical replayed payload for an already-advanced state re-renders that state's TwiML rather than advancing twice.
+- `voice_call_sessions.call_id` is unique — turn 0 replays load the existing session instead of creating a second one.
+- `CREATING_TICKET` checks `session.ticket_id` first. If a ticket already exists, it is **not** created again; the read-back lines are simply returned again with the existing number.
+- A replayed `/turn` for an already-advanced state returns that state's lines rather than advancing twice.
 
 ## 10. Example: Happy Path
 
@@ -251,25 +251,16 @@ Note there's no argument and no retry loop — the agent hands off immediately a
 > *(escalation ticket created, priority HIGH, transcript attached)*
 > **Agent:** Your callback request is ticket number H-F-M-G, 2-0-2-6, 0-0-0-4-8-4. Thank you for calling, and sorry for the trouble. Goodbye.
 
-## 13. TwiML Shape (illustrative)
+## 13. Gateway Turn Shape (illustrative)
 
-Every conversational turn is the same construct — a `<Gather>` wrapping the prompt, with a `<Redirect>` after it that catches silence:
+Every conversational turn is one JSON exchange between the SIPSorcery gateway and the backend (see [SIP_SETUP.md](SIP_SETUP.md) §3):
 
-```xml
-<Response>
-  <Gather input="speech"
-          action="/api/v1/webhooks/twilio/voice/gather"
-          method="POST"
-          speechTimeout="auto"
-          speechModel="experimental_conversations"
-          language="en-US"
-          bargeIn="true"
-          timeout="6">
-    <Say voice="Polly.Joanna-Neural">Can I get your name, please?</Say>
-  </Gather>
-  <!-- reached only if the caller said nothing: counts as a failure -->
-  <Redirect method="POST">/api/v1/webhooks/twilio/voice/gather?timeout=1</Redirect>
-</Response>
+```json
+// gateway -> POST /api/v1/voice/sip/turn
+{ "call_id": "abc-123", "utterance": "Maria Lopez", "confidence": 0.94 }
+
+// backend -> gateway
+{ "lines": ["Thanks Maria. What's the best email for you?"], "expect_reply": true, "ticket_id": null }
 ```
 
-`bargeIn="true"` lets callers interrupt the prompt once they know what to say — a small detail that makes the agent feel far less robotic. Terminal states drop the `<Gather>` and end with `<Hangup/>`.
+The gateway speaks every entry in `lines`, then listens if `expect_reply` is true. Silence handling and barge-in belong to the gateway; when the caller says nothing it posts an empty `utterance`, which the backend counts as a failure. Terminal states return `expect_reply: false` and the gateway hangs up.

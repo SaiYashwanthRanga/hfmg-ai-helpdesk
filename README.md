@@ -1,6 +1,6 @@
 # HFMG AI Help Desk
 
-An AI-powered IT operations center for Horizon Family Medical Group: ticket submission and triage, a Twilio voice agent, an executive dashboard, call monitoring, analytics, and AI-generated insights — all against a real, tested API.
+An AI-powered IT operations center for Horizon Family Medical Group: ticket submission and triage, a SIP voice agent (Nextiva + SIPSorcery), an executive dashboard, call monitoring, analytics, and AI-generated insights — all against a real, tested API.
 
 **New to this project?** Reading this file plus the following four is enough to understand the system end to end — nothing else is required reading:
 
@@ -22,7 +22,7 @@ Staff report IT issues by web form or by calling a phone number answered by an A
 React + Vite + TypeScript (frontend)  ──HTTP/JSON──►  FastAPI (backend)  ──asyncpg──►  PostgreSQL
                                                             │
                                                             ├──► OpenAI (AI summaries, voice NLU)
-                                                            ├──► Twilio (voice agent)
+                                                            ├──◄ SIPSorcery gateway ◄── Nextiva (voice agent)
                                                             └──► SendGrid (email notifications)
 ```
 
@@ -32,7 +32,7 @@ No Docker, no Redis/Celery, **no authentication** — all deliberate MVP scope d
 
 **Backend and frontend are both feature-complete against every currently-approved product decision.** See [FINAL_PROJECT_STATUS.md](FINAL_PROJECT_STATUS.md) for the authoritative, verified breakdown — features completed, open risks, technical debt, security assessment, and production readiness — and `API_SPEC.md` §0 for the endpoint-by-endpoint status table.
 
-**Backend:** FastAPI, SQLAlchemy (async, `asyncpg`), Pydantic, Alembic, PostgreSQL. Three tables: `categories`, `tickets`, `voice_call_sessions`. Covers: ticket CRUD-minus-delete with search/filtering, status transitions, AI-summary regeneration, cached dependency health checks (OpenAI/Twilio/DB/Email), read-only settings status, a full analytics surface (KPIs, category/priority/source/day breakdowns, escalation rate, AI-summary usage), read access to voice call sessions, and an AI Insights endpoint.
+**Backend:** FastAPI, SQLAlchemy (async, `asyncpg`), Pydantic, Alembic, PostgreSQL. Three tables: `categories`, `tickets`, `voice_call_sessions`. Covers: ticket CRUD-minus-delete with search/filtering, status transitions, AI-summary regeneration, cached dependency health checks (OpenAI/SIP/DB/Email), read-only settings status, a full analytics surface (KPIs, category/priority/source/day breakdowns, escalation rate, AI-summary usage), read access to voice call sessions, and an AI Insights endpoint.
 
 **Frontend:** React 19, Vite, TypeScript (strict), Tailwind v4, TanStack Query, React Router, Recharts, Framer Motion, Lucide icons. Every page in the six-item nav (Dashboard, Tickets, Calls, Analytics, AI Insights, Settings) renders real data against the backend above. The only unbuilt screen is a live in-progress-call monitor (a deliberately-scoped future item), and a handful of AI Insights sections are honest blocked states pending product decisions rather than fabricated content — see [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) and [REMAINING_PRODUCT_DECISIONS.md](REMAINING_PRODUCT_DECISIONS.md).
 
@@ -68,9 +68,9 @@ Start with the five documents at the top of this file. Everything else is refere
 | Change the schema or write queries | [DATABASE_DESIGN.md](DATABASE_DESIGN.md) |
 | Deploy | [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md), then [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) |
 | Run it in production | [OPERATIONS_RUNBOOK.md](OPERATIONS_RUNBOOK.md) |
-| Configure the phone number and webhooks | [TWILIO_SETUP.md](TWILIO_SETUP.md) |
+| Configure the SIP gateway and voice endpoints | [SIP_SETUP.md](SIP_SETUP.md) |
 | Configure outbound email (SendGrid or the HFMG internal mail API) | [EMAIL_INTEGRATION.md](EMAIL_INTEGRATION.md), [SENDGRID_SETUP.md](SENDGRID_SETUP.md) |
-| Understand or change the voice agent | [TWILIO_ARCHITECTURE.md](TWILIO_ARCHITECTURE.md), [CALL_FLOW.md](CALL_FLOW.md), [VOICE_AGENT_DESIGN.md](VOICE_AGENT_DESIGN.md) |
+| Understand or change the voice agent | [SIP_SETUP.md](SIP_SETUP.md), [CALL_FLOW.md](CALL_FLOW.md), [VOICE_AGENT_DESIGN.md](VOICE_AGENT_DESIGN.md) |
 | See what is done, risky or unbuilt | [FINAL_PROJECT_STATUS.md](FINAL_PROJECT_STATUS.md), [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md), [TECHNICAL_DEBT.md](TECHNICAL_DEBT.md) |
 | See which business decisions are still open | [REMAINING_PRODUCT_DECISIONS.md](REMAINING_PRODUCT_DECISIONS.md) |
 | Check security posture | [docs/reviews/SECURITY_REVIEW.md](docs/reviews/SECURITY_REVIEW.md) (first pass), [docs/reviews/SECURITY_REVALIDATION.md](docs/reviews/SECURITY_REVALIDATION.md) (second pass) |

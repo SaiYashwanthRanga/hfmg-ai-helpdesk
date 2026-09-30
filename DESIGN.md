@@ -62,7 +62,7 @@ Primary theme is **dark**. Light mode is optional and secondary — designed as 
 | **Analytics page** | ✅ Built | Six real aggregation endpoints (Backend Tier 3) rendered as Recharts visualizations (Frontend Phase 6). "AI Resolution Rate" is correctly absent — no chart was built for a metric with no approved definition |
 | **AI Insights page** | 🔶 Partial, by design | `GET /ai-insights` (Backend Tier 4) returns real Category Breakdown data; Trending Issues, Repeated Problems, High Risk Alerts, and Recommendations are explicit blocked fields, not fabricated content (Frontend Phase 7). See `REMAINING_PRODUCT_DECISIONS.md` |
 | **Settings page** | 🔶 Built, read-only (correctly blocked from writing) | `GET /settings/status` (Backend Tier 1) + read-only UI (Frontend Phase 8), masked secrets, zero write-capable controls anywhere — verified by direct code grep in the final security review (`docs/reviews/SECURITY_REVIEW.md`). The write path remains correctly blocked on Phase 3 auth, exactly as this document originally specified |
-| **System Status widget** | ✅ Built | `GET /health/dependencies` (Backend Tier 1) reports OpenAI/Twilio/Database/Email, each cached 30s server-side; rendered in both the Header's `StatusBar` and Dashboard's `SystemHealthPanel` |
+| **System Status widget** | ✅ Built | `GET /health/dependencies` (Backend Tier 1) reports OpenAI/SIP/Database/Email, each cached 30s server-side; rendered in both the Header's `StatusBar` and Dashboard's `SystemHealthPanel` |
 | **Design system (colors, type, shadcn-style tokens, motion)** | ✅ Built | Tailwind v4 + CSS-variable tokens matching `docs/archive/DESIGN_SYSTEM.md` exactly, Lucide icons, Framer Motion for drawers/modals/toasts, Recharts for all charts |
 | **Dark mode** | ✅ Built | Dark is the default theme (`ThemeProvider`), light mode implemented as the documented secondary pass |
 | **Auth (referenced throughout Settings/RBAC)** | ⬜ Vision | Still correctly deferred to Phase 3 (`docs/archive/IMPLEMENTATION_PLAN.md`) — nothing in this engagement built auth, and Settings' write-path block depends on that remaining true |
@@ -111,9 +111,9 @@ Six top-level items, flat — no nested menus. If a seventh item becomes necessa
 **Purpose:** executive overview. This is the page principle §2.2 is written for — everything on it must be legible without hovering, clicking, or reading a legend.
 
 ### 6.1 System Status
-Four indicators: **OpenAI, Twilio, Database, Email Service.** Each shows a status (operational / degraded / down) and, on hover, when it was last checked.
+Four indicators: **OpenAI, SIP, Database, Email Service.** Each shows a status (operational / degraded / down) and, on hover, when it was last checked.
 
-**Data source, honestly:** no endpoint currently reports this. `GET /api/v1/health` is liveness-only and says nothing about the three external dependencies. Building this requires a small new endpoint that does what `OPERATIONS_RUNBOOK.md` §3.2's synthetic checks describe manually today — a lightweight reachability check per dependency, cached for a short interval so the dashboard doesn't trigger a live OpenAI/Twilio call on every page load.
+**Data source, honestly:** no endpoint currently reports this. `GET /api/v1/health` is liveness-only and says nothing about the three external dependencies. Building this requires a small new endpoint that does what `OPERATIONS_RUNBOOK.md` §3.2's synthetic checks describe manually today — a lightweight reachability check per dependency, cached for a short interval so the dashboard doesn't trigger a live OpenAI call on every page load.
 
 ### 6.2 KPI Cards
 - Open Tickets
@@ -163,14 +163,14 @@ Replaces `TicketDetailPage.tsx`'s full-page layout with a slide-over panel, so a
 | Column | Source |
 |---|---|
 | Caller | `voice_call_sessions.from_number`, or `collected.caller_name` once captured |
-| Call Duration | **Not currently stored.** `ended_at` exists; call start time doesn't (only `created_at` on the row, which is close but not identical to when Twilio's call actually started). Cheap to add if precision matters; `created_at`→`ended_at` is good enough for a first version |
+| Call Duration | **Not currently stored.** `ended_at` exists; call start time doesn't (only `created_at` on the row, which is close but not identical to when the call actually started). Cheap to add if precision matters; `created_at`→`ended_at` is good enough for a first version |
 | Issue | `collected.short_issue` / `collected.description` |
 | Priority | `collected.priority` |
 | Outcome | Derive from `state` + `escalated` + `escalation_reason`: completed-with-ticket, escalated-caller-requested, escalated-misunderstood, abandoned |
 
 **New backend work required:** a `GET /api/v1/voice-calls` (or similar) list endpoint with the same pagination/filter shape as `GET /api/v1/tickets`, plus a detail endpoint if this page needs a call-detail drawer showing the full transcript (likely, given the "Call Monitoring" framing in §1). Neither exists today. This is real, scoped backend work, not a frontend-only page.
 
-**Explicitly excluded from this page, and why:** live audio monitoring and call playback appear in §19 as future enhancements, not here. `TWILIO_ARCHITECTURE.md` §9 made a deliberate decision to keep call recording **off** pending compliance sign-off; a "Call Playback" feature is impossible without reopening that decision (and adding consent language to the greeting). Don't let this page's design imply audio exists when it explicitly doesn't.
+**Explicitly excluded from this page, and why:** live audio monitoring and call playback appear in §19 as future enhancements, not here. The SIP design keeps call recording **off** (audio never reaches the backend) pending compliance sign-off; a "Call Playback" feature is impossible without reopening that decision (and adding consent language to the greeting). Don't let this page's design imply audio exists when it explicitly doesn't.
 
 
 ## 10. Analytics Page
@@ -197,7 +197,7 @@ This is the least-specified page in the original brief, deliberately left that w
 
 ## 12. Settings
 
-**OpenAI Configuration, Twilio Configuration, Email Configuration, System Configuration.**
+**OpenAI Configuration, SIP Configuration, Email Configuration, System Configuration.**
 
 **This page cannot ship a write path yet, and that's not a design opinion — it's a direct consequence of a decision already made and documented.** `docs/archive/IMPLEMENTATION_PLAN.md`'s MVP Scope Decision and `DEPLOYMENT_GUIDE.md` §1 both state plainly: there is no authentication anywhere in this system today. A Settings page that can view or edit `OPENAI_API_KEY`, `TWILIO_AUTH_TOKEN`, or `SENDGRID_API_KEY` — the three secrets that authenticate this system to the outside world — with no login in front of it is not a rough edge to smooth over later; it is a live vulnerability the moment it exists, on a system explicitly documented as network-ACL-protected only (`DEPLOYMENT_GUIDE.md` §6).
 
@@ -276,7 +276,7 @@ This is a design document, not `docs/archive/IMPLEMENTATION_PLAN.md` — but a v
 
 Live Call Monitoring · Call Playback · AI Copilot · Knowledge Base · Real-Time Notifications · Role-Based Access Control · Multi-Tenant Support · Mobile Application
 
-Two of these have documented prerequisites elsewhere in this repo, noted here so nobody scopes them as smaller than they are: **Call Playback** requires reopening the call-recording-off decision in `TWILIO_ARCHITECTURE.md` §9 (consent, compliance sign-off, greeting changes) — it is a compliance decision wearing a feature-request costume. **Role-Based Access Control** is not a future enhancement adjacent to this product; it is `docs/archive/IMPLEMENTATION_PLAN.md`'s Phase 3, and several sections of *this* document (§12 Settings, arguably §9/§10's data sensitivity) are blocked on it rather than merely complemented by it.
+Two of these have documented prerequisites elsewhere in this repo, noted here so nobody scopes them as smaller than they are: **Call Playback** requires reopening the call-recording-off decision (consent, compliance sign-off, greeting changes) — it is a compliance decision wearing a feature-request costume. **Role-Based Access Control** is not a future enhancement adjacent to this product; it is `docs/archive/IMPLEMENTATION_PLAN.md`'s Phase 3, and several sections of *this* document (§12 Settings, arguably §9/§10's data sensitivity) are blocked on it rather than merely complemented by it.
 
 ## 20. Open Decisions
 

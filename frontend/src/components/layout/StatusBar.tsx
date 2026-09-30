@@ -3,7 +3,7 @@ import { fetchDependencyHealth } from "../../api/health";
 import { StatusIndicator } from "../ui/StatusIndicator";
 
 /**
- * The always-visible four-way OpenAI/Twilio/Database/Email health strip
+ * The always-visible four-way OpenAI/SIP/Database/Email health strip
  * (DESIGN.md §5/§6.1). Renders "unknown" for every dependency until the
  * backend's health-dependencies endpoint exists — see api/health.ts.
  */
@@ -23,9 +23,9 @@ export function StatusBar() {
         to="/ai-insights"
       />
       <StatusIndicator
-        status={data?.twilio.status ?? "unknown"}
-        label="Twilio"
-        lastChecked={data?.twilio.lastChecked}
+        status={data?.sip.status ?? "unknown"}
+        label="SIP"
+        lastChecked={data?.sip.lastChecked}
         to="/calls"
       />
       <StatusIndicator

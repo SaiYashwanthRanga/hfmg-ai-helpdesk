@@ -37,7 +37,7 @@ async def test_kpis_calls_and_escalations_are_ready_now_that_voice_calls_exist(c
 
     db_session.add(
         VoiceCallSession(
-            twilio_call_sid="CA-kpi-1",
+            call_id="CA-kpi-1",
             from_number="+18455550142",
             to_number="+18455559999",
             state=VoiceCallState.ESCALATED,
@@ -119,7 +119,7 @@ async def test_calls_by_day_zero_fills_the_window(client, db_session):
 
     db_session.add(
         VoiceCallSession(
-            twilio_call_sid="CA-day-1",
+            call_id="CA-day-1",
             from_number="+18455550142",
             to_number="+18455559999",
             state=VoiceCallState.COMPLETED,
@@ -142,7 +142,7 @@ async def test_escalation_rate_only_counts_terminal_calls(client, db_session):
     db_session.add_all(
         [
             VoiceCallSession(
-                twilio_call_sid="CA-rate-completed",
+                call_id="CA-rate-completed",
                 from_number="+18455550142",
                 to_number="+18455559999",
                 state=VoiceCallState.COMPLETED,
@@ -150,7 +150,7 @@ async def test_escalation_rate_only_counts_terminal_calls(client, db_session):
                 turns=[],
             ),
             VoiceCallSession(
-                twilio_call_sid="CA-rate-escalated",
+                call_id="CA-rate-escalated",
                 from_number="+18455550143",
                 to_number="+18455559999",
                 state=VoiceCallState.ESCALATED,
@@ -159,7 +159,7 @@ async def test_escalation_rate_only_counts_terminal_calls(client, db_session):
                 turns=[],
             ),
             VoiceCallSession(
-                twilio_call_sid="CA-rate-in-progress",
+                call_id="CA-rate-in-progress",
                 from_number="+18455550144",
                 to_number="+18455559999",
                 state=VoiceCallState.COLLECT_NAME,

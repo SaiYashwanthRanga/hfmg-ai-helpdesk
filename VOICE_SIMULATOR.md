@@ -4,7 +4,7 @@
 **Audience:** engineers, QA, and whoever enables it in a test environment.
 **Related:** [VOICE_SIMULATOR_DESIGN.md](VOICE_SIMULATOR_DESIGN.md) (design and the deviations made while building it), [security review](docs/reviews/VOICE_SIMULATOR_SECURITY_REVIEW.md), [performance report](docs/reviews/VOICE_SIMULATOR_PERFORMANCE.md), [completion report and readiness assessment](docs/reviews/VOICE_SIMULATOR_COMPLETION_REPORT.md).
 
-The simulator is a dashboard page, `/voice-simulator`, where you "phone" the help desk's voice agent from a browser. You talk into the microphone, or type, and the agent answers aloud. Every step is timed, and every turn can be inspected. No Twilio account or phone line is involved.
+The simulator is a dashboard page, `/voice-simulator`, where you "phone" the help desk's voice agent from a browser. You talk into the microphone, or type, and the agent answers aloud. Every step is timed, and every turn can be inspected. No phone line or SIP gateway is involved.
 
 It is **off by default** and **cannot be turned on in production**.
 
@@ -23,13 +23,13 @@ speaker ◀── mp3 (base64) ◀───────────────�
 latency panel ◀── GET /metrics, POST /client-metrics
 ```
 
-**One agent.** The simulator adds no conversation logic. It calls the same `orchestrator.handle_turn()` that answers Twilio webhooks, and turns the TwiML reply back into plain text (`twiml.spoken_text`). Classification, priority, escalation, retries, ticket creation and abandoned-call salvage all run the production code.
+**One agent.** The simulator adds no conversation logic. It calls the same `orchestrator.handle_turn()` that answers SIP calls; its reply is already plain lines (`TurnOutcome.text`, `TurnOutcome.hangup`). Classification, priority, escalation, retries, ticket creation and abandoned-call salvage all run the production code.
 
 **What is new:**
 
 | Piece | Where | Why |
 |---|---|---|
-| Speech-to-text / text-to-speech | `backend/app/speech/` | On the phone path Twilio does both, so nothing existed to reuse |
+| Speech-to-text / text-to-speech | `backend/app/speech/` | On the phone path the SIP gateway does both, so nothing existed to reuse |
 | Request-scoped trace | `backend/app/core/trace.py` | Captures every model call, its output, timing, and the ticket payload, without changing any production signature. It does nothing when no trace is active |
 | Simulator service and API | `backend/app/simulator/` | Session lifecycle, timing, idempotency, limits, mock callers, metrics |
 | Fake LLM provider | `backend/app/llm/fake_provider.py` | `LLM_PROVIDER=fake`, which answers with keyword rules. Used for load tests and demos; refused in production |

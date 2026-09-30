@@ -1,9 +1,9 @@
-"""Cached reachability checks for OpenAI, Twilio, Email (SendGrid), and the
+"""Cached reachability checks for OpenAI, SIP gateway, Email (SendGrid), and the
 database -- backs `GET /health/dependencies` and `GET /settings/status`.
 
 DESIGN.md §6.1 calls for "a lightweight reachability check per dependency,
 cached for a short interval so the dashboard doesn't trigger a live
-OpenAI/Twilio call on every page load." This module is that cache, plus the
+OpenAI call on every page load." This module is that cache, plus the
 checks themselves.
 
 Each `check_*` function is a standalone, monkeypatchable unit (same pattern
@@ -86,14 +86,10 @@ async def check_openai() -> DependencyCheck:
         return DependencyCheck(status="down", checked_at=_now())
 
 
-async def check_twilio() -> DependencyCheck:
-    # A real reachability call would need TWILIO_ACCOUNT_SID (Twilio's REST
-    # API authenticates with account_sid + auth_token via Basic Auth) --
-    # that setting doesn't exist in app/core/config.py today, and adding a
-    # new required secret just to back a status indicator is out of scope
-    # for this change (see BACKEND_GAP_ANALYSIS.md). This stands in with a
-    # configuration check: "is the credential we do have set at all."
-    status: DependencyStatusValue = "operational" if settings.twilio_auth_token else "down"
+async def check_sip() -> DependencyCheck:
+    # The gateway calls in rather than being called, so reachability can't be
+    # probed from here. This confirms the shared secret the gateway needs is set.
+    status: DependencyStatusValue = "operational" if settings.voice_sip_gateway_token else "down"
     return DependencyCheck(status=status, checked_at=_now())
 
 
@@ -121,7 +117,7 @@ async def check_email() -> DependencyCheck:
 async def get_dependency_health(db: AsyncSession) -> dict[str, DependencyCheck]:
     return {
         "openai": await _cached("openai", check_openai),
-        "twilio": await _cached("twilio", check_twilio),
+        "sip": await _cached("sip", check_sip),
         "database": await _cached("database", lambda: check_database(db)),
         "email": await _cached("email", check_email),
     }

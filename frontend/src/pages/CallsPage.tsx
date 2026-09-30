@@ -64,7 +64,7 @@ export function CallsPage() {
               <EmptyState
                 icon={Phone}
                 title="No calls yet"
-                description="Calls will appear here once the Twilio number receives calls."
+                description="Calls will appear here once the SIP gateway receives calls."
               />
             }
           />

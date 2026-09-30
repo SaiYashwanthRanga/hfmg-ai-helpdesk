@@ -24,7 +24,7 @@ export interface EnvironmentStatus {
 
 export interface SettingsStatusResponse {
   openai: ProviderStatus;
-  twilio: ProviderStatus;
+  sip: ProviderStatus;
   email: ProviderStatus;
   database: ProviderStatus;
   environment: EnvironmentStatus;

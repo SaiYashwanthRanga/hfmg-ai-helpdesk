@@ -7,7 +7,7 @@ export interface DependencyHealth {
 
 export interface DependencyHealthReport {
   openai: DependencyHealth;
-  twilio: DependencyHealth;
+  sip: DependencyHealth;
   database: DependencyHealth;
   email: DependencyHealth;
 }
@@ -21,7 +21,7 @@ interface RawDependencyStatus {
 
 interface RawDependencyHealthReport {
   openai: RawDependencyStatus;
-  twilio: RawDependencyStatus;
+  sip: RawDependencyStatus;
   database: RawDependencyStatus;
   email: RawDependencyStatus;
 }
@@ -39,9 +39,9 @@ export async function fetchDependencyHealth(): Promise<DependencyHealthReport> {
     // never a fabricated "operational" — this is the one place `unknown`
     // is still a real, reachable state rather than a permanent fallback.
     const unknown: DependencyHealth = { status: "unknown" };
-    return { openai: unknown, twilio: unknown, database: unknown, email: unknown };
+    return { openai: unknown, sip: unknown, database: unknown, email: unknown };
   }
   const body = (await response.json()) as RawDependencyHealthReport;
   const map = (d: RawDependencyStatus): DependencyHealth => ({ status: d.status, lastChecked: d.checked_at });
-  return { openai: map(body.openai), twilio: map(body.twilio), database: map(body.database), email: map(body.email) };
+  return { openai: map(body.openai), sip: map(body.sip), database: map(body.database), email: map(body.email) };
 }

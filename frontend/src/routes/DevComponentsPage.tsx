@@ -77,7 +77,7 @@ export function DevComponentsPage() {
         <h2 className="text-lg font-semibold text-foreground">Status Indicators</h2>
         <div className="flex flex-wrap gap-4">
           <StatusIndicator status="operational" label="OpenAI" />
-          <StatusIndicator status="degraded" label="Twilio" />
+          <StatusIndicator status="degraded" label="SIP" />
           <StatusIndicator status="down" label="Database" />
           <StatusIndicator status="unknown" label="Email" />
         </div>

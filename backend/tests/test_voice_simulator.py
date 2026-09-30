@@ -25,7 +25,7 @@ from app.db.models import (
 from app.llm.fake_provider import FakeProvider
 from app.simulator import mock_callers, service
 from app.speech.base import SpeechResult, SpeechStreamError, Transcription
-from app.voice import nlu, orchestrator, twiml
+from app.voice import nlu, orchestrator, reply
 from app.voice.nlu import VOICE_CATEGORIES
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
@@ -164,7 +164,7 @@ async def test_start_greets_and_creates_simulated_session(client, db_session, ca
 
     call = await db_session.get(VoiceCallSession, uuid.UUID(body["session"]["id"]))
     assert call.is_simulated is True
-    assert call.twilio_call_sid.startswith("SIM-")
+    assert call.call_id.startswith("SIM-")
 
 
 async def test_full_intake_creates_isolated_simulator_ticket(client, db_session, categories):
@@ -442,7 +442,7 @@ async def test_notifications_are_refused_unless_the_server_allows_them(client, c
 
 async def test_simulator_cannot_touch_a_real_call(client, db_session, categories):
     real = VoiceCallSession(
-        twilio_call_sid="CA-real-1", from_number="+18455550100", to_number="+18455559999",
+        call_id="CA-real-1", from_number="+18455550100", to_number="+18455559999",
         state="COLLECT_NAME", collected={}, turns=[],
     )
     db_session.add(real)
@@ -666,11 +666,13 @@ async def test_mock_caller_drives_a_full_call(client, categories):
 # --- building blocks ------------------------------------------------------
 
 
-async def test_spoken_text_unescapes_twiml():
-    body = twiml.say_and_hangup("Thanks, O'Brien & co. <3")
-    assert twiml.spoken_text(body) == "Thanks, O'Brien & co. <3"
-    assert twiml.ends_call(body)
-    assert not twiml.ends_call(twiml.ask("Name?"))
+async def test_reply_text_and_hangup():
+    done = reply.say_and_hangup("Thanks, O'Brien & co. <3", "")
+    assert done.text == "Thanks, O'Brien & co. <3"
+    assert done.hangup
+    assert not reply.ask("Name?").hangup
+    both = reply.say_then_ask("Got it.", "Name?")
+    assert both.lines == ["Got it.", "Name?"] and both.expect_reply
 
 
 async def test_trace_is_a_no_op_without_collect():

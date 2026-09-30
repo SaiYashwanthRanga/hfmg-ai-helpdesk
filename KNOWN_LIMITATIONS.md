@@ -7,7 +7,7 @@ Written for stakeholders and end users, not engineers — what you'll notice, an
 ## Security & Access
 
 - **There is no login.** Anyone who can reach the application on the network can view and act on every ticket, call, and (read-only) configuration status. This system is safe to run only on a trusted internal network, never exposed to the public internet, until authentication ships (a planned future phase).
-- **Settings cannot be edited from the app.** You can see whether OpenAI, Twilio, and email are configured and working, but changing any of those requires editing server configuration directly. This is deliberate: editing live credentials with no login in front of the page would be a security hole, not a convenience.
+- **Settings cannot be edited from the app.** You can see whether OpenAI, the SIP voice gateway, and email are configured and working, but changing any of those requires editing server configuration directly. This is deliberate: editing live credentials with no login in front of the page would be a security hole, not a convenience.
 
 ## Voice & Calls
 

@@ -8,7 +8,7 @@ export interface TranscriptViewerProps {
 /**
  * Renders the ordered `turns` transcript as a chat-style log
  * (WIREFRAMES.md §5/§6). No audio playback anywhere — text transcript is
- * the only call record; recording is off by design (TWILIO_ARCHITECTURE.md §9).
+ * the only call record; recording is off by design (CALL_FLOW.md).
  */
 export function TranscriptViewer({ turns }: TranscriptViewerProps) {
   if (turns.length === 0) {

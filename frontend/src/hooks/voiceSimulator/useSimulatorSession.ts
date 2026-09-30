@@ -19,7 +19,7 @@ export interface StartOptions {
   /**
    * "server": OpenAI TTS streamed from the backend (natural voice, ~1-2 s to
    * first audio). "browser": the browser's built-in voice (robotic, but
-   * starts almost instantly). Production uses neither -- Twilio speaks with Polly.
+   * starts almost instantly). Production uses neither -- the SIP gateway speaks with its own TTS.
    */
   voice: VoiceEngine;
   useMicrophone: boolean;
@@ -36,7 +36,7 @@ interface TurnClock {
   captureMs: number | null;
 }
 
-/** Twilio's <Gather> timeout (settings.voice_gather_timeout), for the optional phone-like silence rule. */
+/** The gather timeout (settings.voice_gather_timeout), for the optional phone-like silence rule. */
 const PHONE_SILENCE_TIMEOUT_MS = 6000;
 /** Shorter than this and a push-to-talk press is treated as an accidental tap. */
 const MIN_PTT_MS = 250;
@@ -330,7 +330,7 @@ export function useSimulatorSession() {
       if (heardSpeech.current) return;
       const idle = performance.now() - listeningSince;
       if (phoneSilenceTimeout && idle >= PHONE_SILENCE_TIMEOUT_MS) {
-        // Mirrors Twilio: a caller who says nothing is re-prompted, and it counts.
+        // Mirrors the gateway: a caller who says nothing is re-prompted, and it counts.
         window.clearInterval(timer);
         submitText("", "text");
       } else if (idle >= MAX_IDLE_RECORDING_MS && recorder.isRecording()) {

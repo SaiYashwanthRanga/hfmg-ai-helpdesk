@@ -19,7 +19,7 @@ class VoiceCallListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    twilio_call_sid: str
+    call_id: str
     from_number: str
     state: VoiceCallState
     escalated: bool

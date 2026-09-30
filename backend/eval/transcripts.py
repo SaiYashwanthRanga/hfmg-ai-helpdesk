@@ -63,7 +63,7 @@ PERSONAS = {
 
 async def replay(persona: dict) -> dict:
     from app.db.base import async_session_factory
-    from app.voice import orchestrator, twiml
+    from app.voice import orchestrator
     from app.voice.session import get_or_create_session
 
     answers = {state: deque(lines) for state, lines in persona.items()}
@@ -76,7 +76,7 @@ async def replay(persona: dict) -> dict:
         session.is_simulated = True
         outcome = await orchestrator.start_call(session)
         await db.commit()
-        turns.append({"state": "GREETING", "caller": None, "agent": twiml.spoken_text(outcome.twiml), "next": session.state.value})
+        turns.append({"state": "GREETING", "caller": None, "agent": outcome.text, "next": session.state.value})
         for _ in range(30):
             queue = answers.get(session.state.value)
             if not queue:
@@ -85,8 +85,8 @@ async def replay(persona: dict) -> dict:
             line = queue.popleft()
             outcome = await orchestrator.handle_turn(db, session, utterance=line)
             await db.commit()
-            turns.append({"state": state, "caller": line, "agent": twiml.spoken_text(outcome.twiml), "next": session.state.value})
-            if twiml.ends_call(outcome.twiml):
+            turns.append({"state": state, "caller": line, "agent": outcome.text, "next": session.state.value})
+            if outcome.hangup:
                 break
         ticket = None
         if session.ticket_id:

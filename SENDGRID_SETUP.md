@@ -8,7 +8,7 @@
 
 ## 1. How This App Sends Mail
 
-The notifier (`backend/app/notifications/`) calls **Twilio SendGrid's v3 Mail Send API directly over HTTPS** (`POST https://api.sendgrid.com/v3/mail/send`), via an async `httpx` client — not SMTP, and not the synchronous `sendgrid` Python SDK. A blocking SMTP or sync-SDK call inside a FastAPI `BackgroundTask` would stall the event loop for every concurrent request, including an in-progress Twilio voice webhook (which Twilio times out around 15s), so the implementation stays async end to end.
+The notifier (`backend/app/notifications/`) calls **Twilio SendGrid's v3 Mail Send API directly over HTTPS** (`POST https://api.sendgrid.com/v3/mail/send`), via an async `httpx` client — not SMTP, and not the synchronous `sendgrid` Python SDK. A blocking SMTP or sync-SDK call inside a FastAPI `BackgroundTask` would stall the event loop for every concurrent request, including an in-progress SIP voice turn (the gateway waits on each reply while the caller is on the line), so the implementation stays async end to end.
 
 SendGrid sits behind a small provider abstraction (`app/notifications/base.py`, `sendgrid_provider.py`, `factory.py` — the same pattern used for the LLM provider in `app/llm/`), so a different email provider can be substituted later by adding one module and changing `EMAIL_PROVIDER`, with no changes to ticket or notification logic.
 

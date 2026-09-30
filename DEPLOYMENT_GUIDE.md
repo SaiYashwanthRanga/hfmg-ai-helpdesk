@@ -1,8 +1,8 @@
 # HFMG AI Help Desk — Deployment Guide
 
 **Audience:** the engineer deploying this system to a server for the first time
-**Covers:** Phases 1–2 as built (web ticketing + Twilio voice agent)
-**Companion docs:** [TWILIO_SETUP.md](TWILIO_SETUP.md), [SENDGRID_SETUP.md](SENDGRID_SETUP.md), [OPERATIONS_RUNBOOK.md](OPERATIONS_RUNBOOK.md)
+**Covers:** Phases 1–2 as built (web ticketing + SIP voice agent)
+**Companion docs:** [SIP_SETUP.md](SIP_SETUP.md), [SENDGRID_SETUP.md](SENDGRID_SETUP.md), [OPERATIONS_RUNBOOK.md](OPERATIONS_RUNBOOK.md)
 
 ---
 
@@ -10,14 +10,14 @@
 
 Phase 1 deliberately deferred auth (`docs/archive/IMPLEMENTATION_PLAN.md`, MVP Scope Decision). **Every ticket endpoint is open to anyone who can reach it.** There is no login, no API key, no role check.
 
-That creates a specific tension for deployment, because the Twilio webhooks *must* be reachable from the public internet while everything else must not be:
+Voice calls arrive over SIP (Nextiva → SIPSorcery gateway), and the gateway calls the backend over the internal network, so **nothing needs to be reachable from the public internet**:
 
 | Path | Must be reachable from | Authentication |
 |---|---|---|
-| `/api/v1/webhooks/twilio/*` | Public internet (Twilio's servers) | Twilio request signature |
+| `/api/v1/voice/sip/*` | The SIP gateway host (internal network) | Bearer token (`VOICE_SIP_GATEWAY_TOKEN`) |
 | Everything else (`/api/v1/tickets`, `/api/v1/categories`, frontend) | HFMG internal network only | **None** |
 
-**This guide's reverse-proxy configuration (§6) enforces that split. Do not skip it.** Exposing `/api/v1/tickets` to the internet would let anyone read every ticket — including caller names, phone numbers, and free-text descriptions that may reference patients.
+**This guide's reverse-proxy configuration (§6) restricts everything to the internal network. Do not skip it.** Exposing `/api/v1/tickets` to the internet would let anyone read every ticket — including caller names, phone numbers, and free-text descriptions that may reference patients.
 
 If your organization cannot accept an internally-unauthenticated app even on a trusted network, stop here and implement Phase 3 auth first.
 
@@ -27,9 +27,9 @@ Three things, no containers:
 
 ```
                      ┌──────────────────────────────────┐
-  Internet (Twilio)──►│  Nginx :443  (TLS termination)   │
-  Internal network ──►│  - /api/v1/webhooks/* → public    │
-                      │  - everything else → internal ACL │
+  Internal network ──►│  Nginx :443  (TLS termination)   │
+  (incl. SIP gateway) │  - all routes → internal ACL      │
+                      │                                   │
                       └───────┬───────────────┬──────────┘
                               │               │
                     proxy_pass│               │ static files
@@ -57,11 +57,12 @@ Three things, no containers:
 | PostgreSQL | 16 (15 minimum) | Managed (RDS/Cloud SQL) strongly preferred — see §4 |
 | Node.js | 20+ | Build-time only; not needed at runtime |
 | Nginx | any current | TLS termination + access control |
-| DNS | A record for the app hostname | Twilio needs a real, publicly-resolvable HTTPS URL |
+| DNS | Internal A record for the app hostname | Reachable from staff machines and the SIP gateway host |
+| SIP gateway | .NET 8 + SIPSorcery, registered with Nextiva | Deployed separately; see [SIP_SETUP.md](SIP_SETUP.md) |
 
-Accounts needed: Twilio ([TWILIO_SETUP.md](TWILIO_SETUP.md)), Twilio SendGrid ([SENDGRID_SETUP.md](SENDGRID_SETUP.md)), OpenAI API key.
+Accounts needed: Nextiva SIP credentials (configured in the gateway, see [SIP_SETUP.md](SIP_SETUP.md)), Twilio SendGrid ([SENDGRID_SETUP.md](SENDGRID_SETUP.md)), OpenAI API key.
 
-**Sign BAAs with Twilio, SendGrid, and OpenAI before real calls reach the system.** Caller descriptions are PHI-adjacent and flow through all three.
+**Sign BAAs with your SIP carrier (Nextiva), SendGrid, and OpenAI before real calls reach the system.** Caller descriptions are PHI-adjacent and flow through them.
 
 ## 4. PostgreSQL — Production Configuration
 
@@ -140,14 +141,8 @@ Complete variable reference — every variable the app reads:
 | `OPENAI_MODEL` | `gpt-5-nano` | Swap models here; no code change needed |
 | `OPENAI_TEMPERATURE` | *(leave blank)* | Reasoning models reject it. Only set for a model that supports it |
 | `OPENAI_REASONING_EFFORT` | `minimal` (optional) | Lowest latency on reasoning models — matters on voice calls |
-| `TWILIO_AUTH_TOKEN` | from Twilio console | **Secret**. Webhook authentication |
-| `TWILIO_VALIDATE_SIGNATURE` | `true` | **Never `false` in production** |
-| `TWILIO_PUBLIC_BASE_URL` | `https://helpdesk.hfmg.net` | Required behind a proxy — see [TWILIO_SETUP.md](TWILIO_SETUP.md) §5 |
-| `VOICE_TTS_VOICE` | `Polly.Joanna-Neural` | |
-| `VOICE_LANGUAGE` | `en-US` | |
-| `VOICE_SPEECH_MODEL` | `experimental_conversations` | |
-| `VOICE_GATHER_TIMEOUT` | `6` | Seconds to wait for the caller to start speaking |
-| `VOICE_NLU_TIMEOUT_SECONDS` | `4.0` | Must stay well under Twilio's ~15s webhook timeout |
+| `VOICE_SIP_GATEWAY_TOKEN` | long random string | **Secret**. Must equal `Backend.GatewayToken` in the gateway. Empty disables the SIP endpoints |
+| `VOICE_NLU_TIMEOUT_SECONDS` | `4.0` | Keep short: the caller is waiting on the line for each reply |
 | `VOICE_MAX_MISUNDERSTANDINGS` | `3` | Escalation threshold |
 | `VOICE_MAX_EMAIL_ATTEMPTS` | `2` | |
 | `VOICE_NLU_MODEL` | `gpt-4.1-mini` | Model for understanding callers, separate from `OPENAI_MODEL` (summaries). Chosen by measurement: see [the latency/accuracy report](docs/reviews/VOICE_LATENCY_ACCURACY_REPORT.md) |
@@ -223,7 +218,7 @@ sudo apt install certbot python3-certbot-nginx
 sudo certbot --nginx -d helpdesk.hfmg.net
 ```
 
-Twilio **requires** a publicly-trusted certificate on a real domain. Self-signed certs and IP addresses will not work — Twilio refuses the webhook and the caller hears an error. Certbot installs a renewal timer; verify with `systemctl list-timers | grep certbot`.
+Staff browsers need a trusted certificate for the dashboard (use your internal CA if the host is not public). The SIP gateway calls the backend directly over the internal network and does not go through this TLS layer unless you route it there. Certbot installs a renewal timer; verify with `systemctl list-timers | grep certbot`.
 
 ### 6.2 Configuration
 
@@ -253,16 +248,9 @@ server {
     access_log /var/log/nginx/hfmg-access.log;
     error_log  /var/log/nginx/hfmg-error.log warn;
 
-    # --- PUBLIC: Twilio webhooks only ---
-    # Authenticated by X-Twilio-Signature inside the app, not by network ACL.
-    location /api/v1/webhooks/twilio/ {
-        limit_req zone=twilio burst=20 nodelay;
-        proxy_pass http://127.0.0.1:8000;
-        include /etc/nginx/proxy_params;
-        proxy_set_header X-Forwarded-Proto https;
-    }
-
-    # --- INTERNAL ONLY: everything else in the API ---
+    # --- INTERNAL ONLY: the whole API, including /api/v1/voice/sip/* ---
+    # The SIP gateway's host must be inside one of these ranges. The SIP
+    # routes are additionally protected by VOICE_SIP_GATEWAY_TOKEN.
     location /api/ {
         allow 10.0.0.0/8;        # replace with HFMG's actual internal ranges
         allow 172.16.0.0/12;
@@ -287,15 +275,7 @@ server {
 }
 ```
 
-Add to the `http` block in `/etc/nginx/nginx.conf`:
-
-```nginx
-limit_req_zone $binary_remote_addr zone=twilio:10m rate=30r/m;
-```
-
 **Verify the split actually works before going live** (§9). Getting this wrong is the single highest-consequence mistake available in this deployment.
-
-`proxy_set_header X-Forwarded-Proto https` matters: without it the app may reconstruct an `http://` URL when validating Twilio signatures, and every webhook fails with `403`. Setting `TWILIO_PUBLIC_BASE_URL` makes this robust regardless.
 
 ## 7. Database Migrations and Seed Data
 
@@ -342,10 +322,12 @@ curl -s https://helpdesk.hfmg.net/api/v1/categories | head -c 200
 curl -s -o /dev/null -w '%{http_code}\n' https://helpdesk.hfmg.net/api/v1/tickets
 #    Expect 403. If you get 200, STOP and fix the Nginx ACL before continuing.
 
-# 5. Twilio webhook path IS public but rejects unsigned requests (from off-network)
-curl -s -o /dev/null -w '%{http_code}\n' -X POST \
-  https://helpdesk.hfmg.net/api/v1/webhooks/twilio/voice -d "CallSid=CA-probe"
-#    Expect 403 (invalid signature). 200 means signature validation is off — fix it.
+# 5. SIP endpoints reject a missing token (from the gateway host or internal network)
+curl -s -o /dev/null -w '%{http_code}
+' -X POST \
+  https://helpdesk.hfmg.net/api/v1/voice/sip/start \
+  -H "Content-Type: application/json" -d '{"call_id":"probe"}'
+#    Expect 401 (403 if VOICE_SIP_GATEWAY_TOKEN is unset). 200 means auth is broken - fix it.
 
 # 6. Database connectivity and schema
 sudo -u hfmg /home/hfmg/app/backend/.venv/bin/alembic current   # shows head revision
@@ -357,7 +339,7 @@ Then the functional checks:
 - [ ] Submitting a ticket through the form succeeds and it appears in the list
 - [ ] A notification email arrives at `helpdesk@hfmg.net` within ~1 minute
 - [ ] The ticket's AI summary populates within ~30 seconds (if `ENABLE_AI_SUMMARY=true`)
-- [ ] A real test call produces a ticket — full checklist in [TWILIO_SETUP.md](TWILIO_SETUP.md) §7
+- [ ] A real test call produces a ticket — see [SIP_SETUP.md](SIP_SETUP.md) §5
 
 ## 10. Deploys and Restarts
 

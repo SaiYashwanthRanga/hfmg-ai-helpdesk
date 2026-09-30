@@ -35,7 +35,7 @@ export function SettingsPage() {
       ) : data ? (
         <ReadOnlyConfigPanel>
           <ProviderStatusCard icon={Bot} label="OpenAI" data={data.openai} />
-          <ProviderStatusCard icon={Phone} label="Twilio" data={data.twilio} />
+          <ProviderStatusCard icon={Phone} label="SIP Gateway" data={data.sip} />
           <ProviderStatusCard icon={Mail} label="Email (SendGrid)" data={data.email} />
           <ProviderStatusCard icon={Database} label="Database" data={data.database} />
           <EnvironmentStatusCard data={data.environment} />

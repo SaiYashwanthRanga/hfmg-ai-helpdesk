@@ -218,7 +218,7 @@ export function CallControlPanel({ sim, config, startOptions, onStartOptionsChan
                   </span>
                 </label>
               ))}
-              <span className="text-[11px] text-stone-500">Real phone calls use Twilio's voice, not either of these.</span>
+              <span className="text-[11px] text-stone-500">Real phone calls use the SIP gateway's voice, not either of these.</span>
             </div>
           ) : null}
         </fieldset>

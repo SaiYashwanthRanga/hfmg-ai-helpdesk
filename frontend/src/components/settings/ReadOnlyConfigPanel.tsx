@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 /**
  * Structural guard, not just a layout wrapper. DESIGN.md §12: this system
  * has no authentication in front of it, so a Settings page that can edit
- * OPENAI_API_KEY/TWILIO_AUTH_TOKEN/SENDGRID_API_KEY is a live vulnerability,
+ * OPENAI_API_KEY/VOICE_SIP_GATEWAY_TOKEN/SENDGRID_API_KEY is a live vulnerability,
  * not a missing feature. No component rendered inside this panel may
  * contain an `<input>`, a `<form>`, a save/submit button, or any call to a
  * settings-mutation endpoint — there isn't one to call (see api/settings.ts).

@@ -34,13 +34,13 @@ async def health_ready(db: AsyncSession = Depends(get_db)) -> dict[str, str]:
 
 @router.get("/health/dependencies", response_model=DependencyHealthReport)
 async def health_dependencies(db: AsyncSession = Depends(get_db)) -> DependencyHealthReport:
-    """OpenAI/Twilio/Database/Email status strip (DESIGN.md §6.1). Each
+    """OpenAI/SIP/Database/Email status strip (DESIGN.md §6.1). Each
     check is cached for a short interval -- see app/services/dependency_health.py.
     """
     checks = await get_dependency_health(db)
     return DependencyHealthReport(
         openai=DependencyStatus(status=checks["openai"].status, checked_at=checks["openai"].checked_at),
-        twilio=DependencyStatus(status=checks["twilio"].status, checked_at=checks["twilio"].checked_at),
+        sip=DependencyStatus(status=checks["sip"].status, checked_at=checks["sip"].checked_at),
         database=DependencyStatus(status=checks["database"].status, checked_at=checks["database"].checked_at),
         email=DependencyStatus(status=checks["email"].status, checked_at=checks["email"].checked_at),
     )

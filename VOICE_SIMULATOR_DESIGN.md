@@ -1,5 +1,7 @@
 # AI Call Simulator — Design
 
+> **Note (SIP migration):** Twilio has since been removed. Where this document says TwiML or Twilio, the orchestrator now returns plain `TurnOutcome.lines` / `.text` / `.hangup` and the phone path is the SIP gateway; `twilio_call_sid` is now `call_id`. Read the TwiML passages as history.
+
 **Status:** Implemented on `feature/voice-simulator` (2026-09-28). This document is the design as approved; **§11 lists every place the build departed from it and why.** For how to run, operate and test it, see [VOICE_SIMULATOR.md](VOICE_SIMULATOR.md).
 **Audience:** engineers building the simulator, QA, and the reviewers approving it.
 **Read first:** [CALL_FLOW.md](CALL_FLOW.md) (the state machine) and [VOICE_AGENT_DESIGN.md](VOICE_AGENT_DESIGN.md) (NLU and prompts). This document assumes both.

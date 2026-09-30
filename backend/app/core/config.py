@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+asyncpg://hfmg:hfmg_dev_local@localhost:5432/hfmg_helpdesk"
-    # SQLAlchemy's defaults. A voice turn (Twilio or simulator) holds a pooled
+    # SQLAlchemy's defaults. A voice turn (SIP or simulator) holds a pooled
     # connection for its whole NLU round trip, so concurrent calls beyond
     # pool_size + max_overflow queue for a connection. See
     # docs/reviews/VOICE_SIMULATOR_PERFORMANCE.md before raising these.
@@ -61,21 +61,13 @@ class Settings(BaseSettings):
     openai_temperature: float | None = None
     openai_reasoning_effort: str = ""
 
-    # --- Twilio voice agent (Phase 2) ---
-    twilio_auth_token: str = ""
-    # Signature validation is mandatory in production; disabling it is only for
-    # local testing without a real Twilio account.
-    twilio_validate_signature: bool = True
-    # Set when running behind a tunnel/proxy so the signature is checked against
-    # the URL Twilio actually called, not the internal one.
-    twilio_public_base_url: str = ""
-    voice_tts_voice: str = "Polly.Joanna-Neural"
+    # --- Voice agent (SIP: Nextiva -> SIPSorcery gateway -> this backend) ---
     voice_language: str = "en-US"
-    voice_speech_model: str = "experimental_conversations"
+    # Seconds the simulator waits for the caller to start speaking.
     voice_gather_timeout: int = 6
     voice_nlu_timeout_seconds: float = 4.0
     # Retries share the timeout above, since a caller is waiting on the line.
-    # Keep low: Twilio abandons the webhook at roughly 15 seconds.
+    # Keep low: the gateway waits on this response while the caller is on the line.
     voice_nlu_max_retries: int = 1
     voice_max_misunderstandings: int = 3
     voice_max_email_attempts: int = 2
@@ -117,7 +109,7 @@ class Settings(BaseSettings):
     # send the help desk inbox one email per simulated ticket.
     simulator_allow_notifications: bool = False
 
-    # --- Speech (simulator only; the phone path uses Twilio's STT and Polly) ---
+    # --- Speech (simulator only; on the phone path the SIP gateway does its own STT/TTS) ---
     speech_provider: str = "openai"
     speech_stt_model: str = "gpt-4o-mini-transcribe"
     # tts-1, not gpt-4o-mini-tts: measured first-audio p95 1.9 s vs 34-161 s

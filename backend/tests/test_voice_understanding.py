@@ -192,8 +192,8 @@ async def test_greeting_invites_the_problem_without_counting_a_failure(db_sessio
     out = await orchestrator.handle_turn(db_session, session, utterance="Hi.")
     assert session.state == VoiceCallState.COLLECT_DESCRIPTION
     assert session.misunderstanding_count == 0
-    assert scripts.DESCRIPTION_ASK in out.twiml
-    assert "Greeting" not in out.twiml
+    assert scripts.DESCRIPTION_ASK in out.text
+    assert "Greeting" not in out.text
 
 
 async def test_callback_request_keeps_the_problem_and_asks_for_a_number(db_session, monkeypatch):
@@ -208,14 +208,14 @@ async def test_callback_request_keeps_the_problem_and_asks_for_a_number(db_sessi
 
     # No caller ID: ask for a number before promising a callback.
     assert session.state == VoiceCallState.COLLECT_PHONE
-    assert scripts.ESCALATION_PHONE_ASK in out.twiml
+    assert scripts.ESCALATION_PHONE_ASK in out.text
     assert session.collected["description"].startswith("Outlook password")
 
     out = await orchestrator.handle_turn(db_session, session, utterance="two one four, eight eight five, nine zero eight nine")
     await db_session.commit()
     assert session.state == VoiceCallState.ESCALATED
-    assert "call you back at 2 1 4" in out.twiml
-    assert "trouble understanding" not in out.twiml
+    assert "call you back at 2 1 4" in out.text
+    assert "trouble understanding" not in out.text
     ticket = await db_session.get(Ticket, session.ticket_id)
     assert ticket.phone_number == "+12148859089"
     assert "Outlook password was reset" in ticket.description
@@ -230,8 +230,8 @@ async def test_callback_request_without_a_usable_number_still_escalates_politely
     out = await orchestrator.handle_turn(db_session, session, utterance="mumble")
     assert session.state == VoiceCallState.ESCALATED
     assert session.misunderstanding_count == 0  # asked once, never retried
-    assert scripts.ESCALATION_CALLER_REQUESTED_NO_NUMBER in out.twiml
-    assert "trouble understanding" not in out.twiml
+    assert scripts.ESCALATION_CALLER_REQUESTED_NO_NUMBER in out.text
+    assert "trouble understanding" not in out.text
 
 
 async def test_caller_id_means_no_number_question_on_escalation(db_session, monkeypatch):
@@ -240,7 +240,7 @@ async def test_caller_id_means_no_number_question_on_escalation(db_session, monk
     monkeypatch.setattr(nlu, "interpret_description", _async(nlu.TurnResult(escalation_requested=True)))
     out = await orchestrator.handle_turn(db_session, session, utterance="real person please")
     assert session.state == VoiceCallState.ESCALATED
-    assert "call you back at 8 4 5" in out.twiml
+    assert "call you back at 8 4 5" in out.text
 
 
 async def test_other_category_is_never_confirmed(db_session, monkeypatch):
@@ -255,8 +255,8 @@ async def test_other_category_is_never_confirmed(db_session, monkeypatch):
     await orchestrator.handle_turn(db_session, session, utterance="Yash, IT")
     out = await orchestrator.handle_turn(db_session, session, utterance="I don't want any email updates.")
     assert session.state == VoiceCallState.ANYTHING_ELSE
-    assert "is this about" not in out.twiml.lower()
-    assert "Your ticket number is" in out.twiml
+    assert "is this about" not in out.text.lower()
+    assert "Your ticket number is" in out.text
 
 
 # --- hedged model calls ------------------------------------------------------------
@@ -323,13 +323,6 @@ async def test_transcription_prompt_is_state_aware():
     assert "ten-digit" in context.transcription_prompt("COLLECT_PHONE")
 
 
-async def test_twilio_gather_gets_hints_for_the_expected_answer(db_session):
-    session = await _session(db_session, call_sid="CA-hints")
-    session.state = VoiceCallState.COLLECT_EMAIL
-    body = orchestrator._ask(session, "What email?")
-    assert 'hints="at hfmg dot net' in body
-
-
 # --- conversation flow ------------------------------------------------------------
 
 
@@ -373,8 +366,8 @@ async def test_details_are_asked_once_when_not_volunteered(db_session, monkeypat
     out = await orchestrator.handle_turn(db_session, session, utterance="outlook won't open")
 
     assert session.state == VoiceCallState.COLLECT_DETAILS
-    assert any(o in out.twiml for o in scripts.DETAILS_ASK_OPTIONS)
-    assert "Outlook" in out.twiml and "having an issue" not in out.twiml
+    assert any(o in out.text for o in scripts.DETAILS_ASK_OPTIONS)
+    assert "Outlook" in out.text and "having an issue" not in out.text
 
     monkeypatch.setattr(
         nlu, "interpret_details",
@@ -386,7 +379,7 @@ async def test_details_are_asked_once_when_not_volunteered(db_session, monkeypat
     # Can't work at all -> at least High, even though the model said Medium.
     assert session.collected["priority"] == Priority.HIGH.value
     assert session.state == VoiceCallState.COLLECT_NAME
-    assert any(o in out.twiml for o in scripts.NAME_ASK_OPTIONS)
+    assert any(o in out.text for o in scripts.NAME_ASK_OPTIONS)
 
 
 async def test_single_user_who_can_work_is_capped_at_medium(db_session, monkeypatch):
@@ -439,7 +432,7 @@ async def test_volunteered_name_and_department_are_not_asked_again(db_session, m
     out = await orchestrator.handle_turn(db_session, session, utterance="this is James from the front desk ...")
     # Everything volunteered and caller ID present: straight to email.
     assert session.state == VoiceCallState.COLLECT_EMAIL
-    assert "Thanks, James" in out.twiml
+    assert "Thanks, James" in out.text
     assert session.collected["department"] == "Front Desk"
 
 
@@ -451,7 +444,7 @@ async def test_department_is_asked_once_when_only_the_name_was_given(db_session,
     )
     out = await orchestrator.handle_turn(db_session, session, utterance="Maria here, outlook is broken")
     assert session.state == VoiceCallState.COLLECT_NAME
-    assert "which department" in out.twiml
+    assert "which department" in out.text
 
     monkeypatch.setattr(nlu, "interpret_name", _async(nlu.TurnResult(unable_to_determine=True)))
     await orchestrator.handle_turn(db_session, session, utterance="mumble")

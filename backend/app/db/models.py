@@ -149,7 +149,7 @@ class Ticket(Base):
 
 
 class VoiceCallSession(Base):
-    """Per-call conversation state for the Twilio voice agent.
+    """Per-call conversation state for the SIP voice agent.
 
     Lives in Postgres rather than memory because each webhook turn is an
     independent request that may land on any API replica.
@@ -163,7 +163,7 @@ class VoiceCallSession(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    twilio_call_sid: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    call_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     from_number: Mapped[str] = mapped_column(String(32), nullable=False)
     to_number: Mapped[str] = mapped_column(String(32), nullable=False)
 
@@ -203,7 +203,7 @@ class VoiceCallSession(Base):
 class VoiceSimulatorSession(Base):
     """Simulator-only options for a simulated VoiceCallSession.
 
-    Kept out of voice_call_sessions so the Twilio path's table carries no
+    Kept out of voice_call_sessions so the phone path's table carries no
     simulator columns beyond the is_simulated flag.
     """
 

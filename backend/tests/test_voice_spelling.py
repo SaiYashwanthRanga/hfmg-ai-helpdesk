@@ -182,7 +182,7 @@ async def _at_name_confirmation(db, monkeypatch, name="Yashwandh", call_sid=None
 async def test_unfamiliar_name_is_read_back_spelled(db_session, monkeypatch, confirm_names):
     session, out = await _at_name_confirmation(db_session, monkeypatch, name="Chindun Natakarani")
     assert session.state == VoiceCallState.CONFIRM_NAME
-    assert "C H I N D U N, N A T A K A R A N I" in out.twiml
+    assert "C H I N D U N, N A T A K A R A N I" in out.text
     assert session.collected["name_confidence"] == "low"
 
     await orchestrator.handle_turn(db_session, session, utterance="Yes, that's right.")
@@ -195,7 +195,7 @@ async def test_common_name_is_not_read_back(db_session, monkeypatch, confirm_nam
     session, out = await _at_name_confirmation(db_session, monkeypatch, name="Maria Lopez")
     assert session.state == VoiceCallState.COLLECT_EMAIL
     assert session.collected["name_confidence"] == "high"
-    assert "M A R I A" not in out.twiml
+    assert "M A R I A" not in out.text
 
 
 async def test_low_recognizer_confidence_forces_a_read_back(db_session, monkeypatch, confirm_names):
@@ -223,14 +223,14 @@ async def test_wrong_name_is_corrected_by_spelling_then_read_back(db_session, mo
     session, _ = await _at_name_confirmation(db_session, monkeypatch, name="Yashwandh Ranga")
     out = await orchestrator.handle_turn(db_session, session, utterance="No.")
     assert session.state == VoiceCallState.CONFIRM_NAME
-    assert scripts.NAME_SPELL_FIRST in out.twiml
+    assert scripts.NAME_SPELL_FIRST in out.text
 
     out = await orchestrator.handle_turn(db_session, session, utterance="Y-A-S-H-W-A-N-T-H")
-    assert scripts.NAME_SPELL_LAST in out.twiml
+    assert scripts.NAME_SPELL_LAST in out.text
     out = await orchestrator.handle_turn(db_session, session, utterance="R A N G A")
     # The corrected name is read back before it is trusted.
     assert session.state == VoiceCallState.CONFIRM_NAME
-    assert "So that's Y A S H W A N T H, R A N G A" in out.twiml
+    assert "So that's Y A S H W A N T H, R A N G A" in out.text
     assert session.collected["caller_name"] == "Yashwanth Ranga"
 
     await orchestrator.handle_turn(db_session, session, utterance="Yes, that's right.")
@@ -243,7 +243,7 @@ async def test_correction_spelled_in_the_same_breath_is_read_back(db_session, mo
     out = await orchestrator.handle_turn(db_session, session, utterance="No, it's Y A S H W A N T H.")
     assert session.collected["caller_name"] == "Yashwanth Ranga"
     assert session.state == VoiceCallState.CONFIRM_NAME
-    assert "So that's Y A S H W A N T H, R A N G A" in out.twiml
+    assert "So that's Y A S H W A N T H, R A N G A" in out.text
     await orchestrator.handle_turn(db_session, session, utterance="Yes.")
     assert session.state == VoiceCallState.COLLECT_EMAIL
 
@@ -256,7 +256,7 @@ async def test_edit_instruction_is_applied_and_read_back(db_session, monkeypatch
     )
     out = await orchestrator.handle_turn(db_session, session, utterance="Can you add H in the last?")
     assert session.collected["caller_name"] == "Yashwanth"
-    assert "So that's Y A S H W A N T H" in out.twiml
+    assert "So that's Y A S H W A N T H" in out.text
     await orchestrator.handle_turn(db_session, session, utterance="Yes.")
     assert session.state == VoiceCallState.COLLECT_EMAIL
 
@@ -266,7 +266,7 @@ async def test_unclear_edit_instruction_falls_back_to_spelling(db_session, monke
     monkeypatch.setattr(nlu, "interpret_name_correction", _async(nlu.TurnResult()))
     monkeypatch.setattr(nlu, "interpret_yes_no", _async(nlu.TurnResult()))
     out = await orchestrator.handle_turn(db_session, session, utterance="it has some other letter in the middle somewhere")
-    assert scripts.NAME_SPELL_FIRST in out.twiml
+    assert scripts.NAME_SPELL_FIRST in out.text
     assert session.collected["caller_name"] == "Chindun Natakarani"  # nothing guessed
 
 
@@ -280,7 +280,7 @@ async def test_second_wrong_spelling_is_accepted_and_flagged(db_session, monkeyp
     out = await orchestrator.handle_turn(db_session, session, utterance="No.")
     assert session.collected["name_unverified"] is True
     assert session.collected["caller_name"] == "Yashwanth"
-    assert scripts.NAME_ACCEPT_AS_SPOKEN in out.twiml
+    assert scripts.NAME_ACCEPT_AS_SPOKEN in out.text
     assert session.state == VoiceCallState.COLLECT_EMAIL
 
 
@@ -295,7 +295,7 @@ async def test_spelled_email_end_to_end(db_session, monkeypatch, confirm_names):
     await orchestrator.handle_turn(db_session, session, utterance="Yes.")
     out = await orchestrator.handle_turn(db_session, session, utterance="R A N G A dot S A I Y A S H W A N T H")
     assert session.collected["email"] == "ranga.saiyashwanth@hfmg.net"
-    assert "r a n g a . s a i y a s h w a n t h at h f m g dot net" in out.twiml
+    assert "r a n g a . s a i y a s h w a n t h at h f m g dot net" in out.text
     await orchestrator.handle_turn(db_session, session, utterance="Yes, correct.")
     await db_session.commit()
     ticket = await db_session.get(Ticket, session.ticket_id)

@@ -28,7 +28,7 @@ class EnvironmentStatus(BaseModel):
 
 class SettingsStatusResponse(BaseModel):
     openai: ProviderStatus
-    twilio: ProviderStatus
+    sip: ProviderStatus
     email: ProviderStatus
     database: ProviderStatus
     environment: EnvironmentStatus

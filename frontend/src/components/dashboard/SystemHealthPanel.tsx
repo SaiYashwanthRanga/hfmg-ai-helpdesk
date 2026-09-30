@@ -59,10 +59,10 @@ export function SystemHealthPanel() {
       to: "/ai-insights",
     },
     {
-      name: "Twilio Telephony",
+      name: "SIP Telephony",
       icon: Phone,
-      status: (data?.twilio.status ?? "unknown") as DependencyStatus,
-      lastChecked: data?.twilio.lastChecked,
+      status: (data?.sip.status ?? "unknown") as DependencyStatus,
+      lastChecked: data?.sip.lastChecked,
       role: "Inbound Telephony Trunk",
       to: "/calls",
     },

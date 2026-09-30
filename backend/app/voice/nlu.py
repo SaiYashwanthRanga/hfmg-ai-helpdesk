@@ -481,7 +481,7 @@ async def _call_structured(system: str, user: str, name: str, properties: dict) 
     """Run one bounded extraction turn. Returns None on any failure.
 
     The timeout is the voice budget, not the provider default: a caller is
-    waiting on the line and Twilio abandons the webhook at roughly 15s.
+    waiting on the line and the gateway is holding the call.
 
     Hedged: if the model hasn't answered within VOICE_NLU_HEDGE_AFTER_SECONDS,
     an identical second request is sent and the first usable answer wins.

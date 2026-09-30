@@ -12,6 +12,6 @@ class DependencyStatus(BaseModel):
 
 class DependencyHealthReport(BaseModel):
     openai: DependencyStatus
-    twilio: DependencyStatus
+    sip: DependencyStatus
     database: DependencyStatus
     email: DependencyStatus

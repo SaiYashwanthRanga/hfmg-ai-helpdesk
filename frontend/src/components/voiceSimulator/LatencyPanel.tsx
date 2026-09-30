@@ -79,7 +79,7 @@ export function LatencyPanel({ turns, selectedTurnIndex, isLoading }: LatencyPan
         <h2 className="text-sm font-semibold text-stone-900">Latency</h2>
         <p className="flex items-center gap-1 text-[11px] text-stone-500">
           <Info className="size-3" aria-hidden="true" />
-          STT and TTS here use OpenAI audio models; production uses Twilio and Polly, so treat those two as indicative only.
+          STT and TTS here use OpenAI audio models; production uses the SIP gateway (Whisper and OpenAI TTS), so treat those two as indicative only.
         </p>
       </div>
 

@@ -1,7 +1,7 @@
 import type { Priority } from "./ticket";
 
 // Matches backend/app/db/models.py's VoiceCallState exactly — 12 values.
-// CALL_FLOW.md/TWILIO_ARCHITECTURE.md previously documented 13 (including
+// CALL_FLOW.md previously documented 13 (including
 // CREATING_TICKET/READ_BACK); those were corrected in Backend Tier 5 — they
 // are narrative steps inline within another transition, never a distinct
 // persisted state, and the API will never return them. COLLECT_DETAILS
@@ -33,7 +33,7 @@ export interface VoiceCallTurn {
 
 export interface VoiceCallListItem {
   id: string;
-  twilio_call_sid: string;
+  call_id: string;
   from_number: string;
   state: VoiceCallState;
   escalated: boolean;

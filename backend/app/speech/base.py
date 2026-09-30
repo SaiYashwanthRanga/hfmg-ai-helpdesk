@@ -1,7 +1,7 @@
 """Provider-agnostic speech-to-text and text-to-speech.
 
 Used only by the AI Call Simulator. The production phone path gets STT from
-Twilio's <Gather> and TTS from Polly, so nothing here is on that path.
+the SIP gateway's own STT/TTS, so nothing here is on that path.
 
 Like LLMProvider, failures return None rather than raising: an unheard
 utterance is a normal conversational event (the orchestrator re-prompts),

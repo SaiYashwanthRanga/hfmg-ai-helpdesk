@@ -1,6 +1,6 @@
 """Voice agent state machine tests.
 
-The NLU layer is mocked throughout, so these run without a Twilio account or
+The NLU layer is mocked throughout, so these run without a SIP gateway or
 an LLM API key and assert conversation logic rather than model quality.
 """
 
@@ -78,13 +78,13 @@ async def test_happy_path_skips_phone_question_when_caller_id_present(db_session
     monkeypatch.setattr(nlu, "interpret_description", lambda u: _async(described()))
     out = await orchestrator.handle_turn(db_session, session, utterance="eCW won't load")
     assert session.state == VoiceCallState.COLLECT_NAME
-    assert any(o in out.twiml for o in scripts.NAME_ASK_OPTIONS)
+    assert any(o in out.text for o in scripts.NAME_ASK_OPTIONS)
 
     # Caller ID was usable, so phone is never asked -- straight to email.
     monkeypatch.setattr(nlu, "interpret_name", lambda u, **k: _async(extracted("Maria Lopez")))
     out = await orchestrator.handle_turn(db_session, session, utterance="Maria Lopez")
     assert session.state == VoiceCallState.COLLECT_EMAIL
-    assert "spell the part before the at sign" in out.twiml
+    assert "spell the part before the at sign" in out.text
     assert session.collected["phone_number"] == CALLER_ID
 
     monkeypatch.setattr(nlu, "interpret_email", lambda u: _async(extracted("mlopez@hfmg.net")))
@@ -106,7 +106,7 @@ async def test_happy_path_skips_phone_question_when_caller_id_present(db_session
     assert ticket.priority == Priority.HIGH
     assert "Call transcript" in ticket.description
     # Ticket number is read back spelled out, not as a cardinal number.
-    assert "H F M G" in out.twiml
+    assert "H F M G" in out.text
 
 
 async def test_phone_is_asked_when_caller_id_unavailable(db_session, monkeypatch):
@@ -120,7 +120,7 @@ async def test_phone_is_asked_when_caller_id_unavailable(db_session, monkeypatch
     out = await orchestrator.handle_turn(db_session, session, utterance="Maria Lopez")
 
     assert session.state == VoiceCallState.COLLECT_PHONE
-    assert scripts.PHONE_ASK in out.twiml
+    assert scripts.PHONE_ASK in out.text
 
     monkeypatch.setattr(nlu, "interpret_phone", lambda u: _async(extracted("+18455550143")))
     await orchestrator.handle_turn(db_session, session, utterance="845 555 0143")
@@ -146,8 +146,8 @@ async def test_caller_requesting_human_escalates_immediately(db_session, monkeyp
     assert "CALLBACK REQUESTED" in ticket.description
     # Escalated callers never sit in a normal-priority queue.
     assert ticket.priority in (Priority.HIGH, Priority.URGENT)
-    assert "call you back" in out.twiml
-    assert "<Hangup" in out.twiml
+    assert "call you back" in out.text
+    assert out.hangup
 
 
 async def test_three_failures_escalate(db_session, monkeypatch):
@@ -163,7 +163,7 @@ async def test_three_failures_escalate(db_session, monkeypatch):
     out2 = await orchestrator.handle_turn(db_session, session, utterance="mumble")
     assert session.misunderstanding_count == 2
     # Re-prompts must be reworded, never repeated verbatim.
-    assert out1.twiml != out2.twiml
+    assert out1.text != out2.text
 
     await orchestrator.handle_turn(db_session, session, utterance="mumble")
     await db_session.commit()
@@ -221,7 +221,7 @@ async def test_low_confidence_category_triggers_confirmation(db_session, monkeyp
     out = await orchestrator.handle_turn(db_session, session, utterance="yes")
 
     assert session.state == VoiceCallState.CONFIRM_CATEGORY
-    assert "is this about" in out.twiml.lower()
+    assert "is this about" in out.text.lower()
 
     # Saying no falls back to Other rather than starting a guessing game.
     monkeypatch.setattr(nlu, "interpret_yes_no", lambda q, u: _async(yes_no(False)))
@@ -252,7 +252,7 @@ async def test_ticket_creation_is_idempotent_on_replay(db_session, monkeypatch):
 
     before = (await db_session.execute(select(Ticket))).scalars().all()
 
-    # Replay the same completed turn, as a Twilio retry would.
+    # Replay the same completed turn, as a gateway retry would.
     await orchestrator._create_ticket_and_read_back(db_session, session)
     await db_session.commit()
 

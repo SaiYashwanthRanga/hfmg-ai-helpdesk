@@ -9,7 +9,7 @@
 
 ### Backend (Tiers 0–5)
 - Ticket API: full CRUD-minus-delete, status transitions with validated state machine, AI summary regeneration, search (`q`), and filtering by status/category/priority/source
-- Dependency health monitoring: cached, real reachability checks for OpenAI, Twilio, Database, Email
+- Dependency health monitoring: cached, real reachability checks for OpenAI, Database, Email (SIP is configuration-only)
 - Settings visibility: read-only, masked-secret configuration status
 - Analytics: 8 endpoints — KPIs, recent activity, tickets by category/priority/source, calls by day, escalation rate, AI summary usage
 - Voice Calls: read access to call sessions — list, detail (full transcript), summary counts
@@ -52,9 +52,9 @@ Two lower-stakes, disclosed (not blocking) assumptions also await product confir
 | Risk | Severity | Mitigation in place |
 |---|---|---|
 | No authentication anywhere | Critical if exposed beyond a trusted network | Network ACL isolation (`DEPLOYMENT_GUIDE.md`); must be verified per-deployment, not assumed |
-| No rate limiting on public-ish endpoints (`POST /tickets`) | High if internet-facing | Twilio webhooks separately protected by signature validation; ticket creation relies on network isolation |
+| No rate limiting on public-ish endpoints (`POST /tickets`) | High if internet-facing | SIP endpoints separately protected by a bearer token; ticket creation relies on network isolation |
 | Missing 6 of 7 documented `tickets` indexes | Low today, grows with data volume | Acceptable at current documented volume (`TECHNICAL_DEBT.md`); has a stated trigger for revisiting |
-| Twilio health check is configuration-only, not a live reachability probe | Low | Documented; would need a new config field (`TWILIO_ACCOUNT_SID`) to upgrade |
+| SIP health check is configuration-only, not a live gateway probe | Low | Documented; would need a gateway heartbeat to upgrade |
 | Two Analytics metrics use unconfirmed (but disclosed) window definitions | Low | Clearly flagged in UI tooltips and in `REMAINING_PRODUCT_DECISIONS.md` |
 
 No Critical or High risk was found to be silently unmitigated — every one above has either a working control or an explicit, documented acceptance.
@@ -83,7 +83,7 @@ Full detail in `docs/reviews/SECURITY_REVIEW.md`. **No critical or high-severity
 
 ## 7. Production Readiness Assessment
 
-**Not yet ready for internet-facing deployment** — by design, not oversight: no authentication exists, which is a documented, deliberate MVP scope decision, not an incomplete feature. **Ready for deployment on a trusted, network-isolated environment** (the originally intended deployment model), contingent on the Critical items in `RELEASE_CHECKLIST.md` (network isolation confirmed, `CORS_ORIGINS` set correctly, Twilio signature validation confirmed on) being verified per-environment before go-live.
+**Not yet ready for internet-facing deployment** — by design, not oversight: no authentication exists, which is a documented, deliberate MVP scope decision, not an incomplete feature. **Ready for deployment on a trusted, network-isolated environment** (the originally intended deployment model), contingent on the Critical items in `RELEASE_CHECKLIST.md` (network isolation confirmed, `CORS_ORIGINS` set correctly, `VOICE_SIP_GATEWAY_TOKEN` set and matching the gateway) being verified per-environment before go-live.
 
 Functionally, the application is complete and correct against everything it claims to do: all backend tests pass, all frontend builds/lints/type-checks pass, and every page in the product renders real data verified live against a running backend — with every gap in that data honestly disclosed rather than papered over.
 

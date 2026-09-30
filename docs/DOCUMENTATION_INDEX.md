@@ -62,25 +62,24 @@ The complete map of this repository's documentation. Paths are relative to this 
 | [../OPERATIONS_RUNBOOK.md](../OPERATIONS_RUNBOOK.md) | Monitoring, backup and recovery, troubleshooting |
 | [../EMAIL_INTEGRATION.md](../EMAIL_INTEGRATION.md) | How notification email works, and switching between SendGrid and the HFMG internal mail API |
 | [../SENDGRID_SETUP.md](../SENDGRID_SETUP.md) | SendGrid account and key configuration |
-| [../TWILIO_SETUP.md](../TWILIO_SETUP.md) | Phone number and webhook configuration |
+| [../SIP_SETUP.md](../SIP_SETUP.md) | SIP gateway (Nextiva / SIPSorcery) configuration and the gateway-to-backend contract |
 | [integrations/OPENAI_INTEGRATION_REPORT.md](integrations/OPENAI_INTEGRATION_REPORT.md) | How OpenAI configuration and summarization were verified (point-in-time; see the note at its top) |
 
 ## 6. Voice Agent Documentation
 
 **Purpose:** how phone calls are answered, understood, escalated, and turned into tickets.
-**Primary audience:** engineers changing voice behavior; whoever will bring the Twilio number live.
+**Primary audience:** engineers changing voice behavior; whoever operates the SIP gateway.
 **When to read it:** before touching `backend/app/voice/`, when debugging a call, and before go-live.
 
 | Document | What it gives you |
 |---|---|
-| [../TWILIO_ARCHITECTURE.md](../TWILIO_ARCHITECTURE.md) | Voice integration architecture and webhook flow |
+| [../SIP_SETUP.md](../SIP_SETUP.md) | Voice integration architecture (Nextiva, SIPSorcery gateway, backend) and the endpoint contract |
 | [../CALL_FLOW.md](../CALL_FLOW.md) | The conversation state machine |
 | [../VOICE_AGENT_DESIGN.md](../VOICE_AGENT_DESIGN.md) | Prompts, understanding, classification |
-| [../TWILIO_SETUP.md](../TWILIO_SETUP.md) | Configuration steps when credentials arrive |
 | [../VOICE_SIMULATOR.md](../VOICE_SIMULATOR.md) | AI Call Simulator (test environments only): architecture, API, deployment, testing, operations, troubleshooting |
 | [../VOICE_SIMULATOR_DESIGN.md](../VOICE_SIMULATOR_DESIGN.md) | The simulator's design, and the deviations made while building it (§11) |
-| [reviews/TWILIO_READINESS_CHECK.md](reviews/TWILIO_READINESS_CHECK.md) | What is ready, what needs credentials, configuration, or live testing (latest) |
-| [reviews/TWILIO_READINESS_REPORT.md](reviews/TWILIO_READINESS_REPORT.md) | Earlier readiness report with the go-live checklist |
+| [reviews/TWILIO_READINESS_CHECK.md](reviews/TWILIO_READINESS_CHECK.md) | Historical (Twilio-era): superseded by the SIP migration |
+| [reviews/TWILIO_READINESS_REPORT.md](reviews/TWILIO_READINESS_REPORT.md) | Historical (Twilio-era) readiness report |
 
 ## 7. Product Decisions
 

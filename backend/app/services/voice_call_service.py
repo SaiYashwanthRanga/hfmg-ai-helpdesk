@@ -29,7 +29,7 @@ def _to_list_item(session: VoiceCallSession) -> VoiceCallListItem:
     collected = session.collected or {}
     return VoiceCallListItem(
         id=session.id,
-        twilio_call_sid=session.twilio_call_sid,
+        call_id=session.call_id,
         from_number=session.from_number,
         state=session.state,
         escalated=session.escalated,

@@ -21,7 +21,7 @@ export interface CallDrawerProps {
  * Call detail slide-over (WIREFRAMES.md §5/§9's Ticket-Drawer-equivalent
  * for calls). Opened/closed via the `?call=` URL param on CallsPage, same
  * pattern as TicketDrawer's `?ticket=`. No audio player anywhere — text
- * transcript only (TWILIO_ARCHITECTURE.md §9).
+ * transcript only (CALL_FLOW.md).
  */
 export function CallDrawer({ callId, onClose }: CallDrawerProps) {
   const { data: call, isLoading, isError, error, refetch } = useVoiceCallQuery(callId);

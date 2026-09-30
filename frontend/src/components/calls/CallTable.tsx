@@ -53,7 +53,7 @@ const COLUMNS: ColumnDef<VoiceCallListItem>[] = [
 
 /** Voice Operations Center call table (WIREFRAMES.md §5). No audio player,
  * playback control, or recording UI anywhere — recording is off by design
- * (TWILIO_ARCHITECTURE.md §9). */
+ * (CALL_FLOW.md). */
 export function CallTable({ calls, isLoading, onRowClick, emptyState }: CallTableProps) {
   if (isLoading) {
     return <LoadingState variant="table-rows" count={8} />;

@@ -1,6 +1,6 @@
 """The conversation state machine.
 
-Deliberately free of FastAPI and Twilio SDK imports beyond TwiML rendering, so
+Deliberately free of FastAPI and telephony imports, so
 every transition can be unit tested by calling handle_turn directly.
 See CALL_FLOW.md for the state diagram.
 
@@ -34,8 +34,7 @@ from app.db.models import (
 )
 from app.schemas.ticket import TicketCreate
 from app.services import ticket_service
-from app.speech import context as speech_context
-from app.voice import departments, names, nlu, scripts, twiml
+from app.voice import departments, names, nlu, reply, scripts
 from app.voice import priority as priority_rules
 from app.voice.session import caller_id_is_usable, record_turn, transcript_text, update_collected
 
@@ -52,9 +51,18 @@ MAX_NAME_ROUNDS = 2
 class TurnOutcome:
     """What the caller hears next, plus any ticket work the route must finish."""
 
-    def __init__(self, twiml_body: str, ticket_id: uuid.UUID | None = None):
-        self.twiml = twiml_body
+    def __init__(self, reply_: reply.Reply, ticket_id: uuid.UUID | None = None):
+        self.lines = reply_.lines
+        self.expect_reply = reply_.expect_reply
         self.ticket_id = ticket_id
+
+    @property
+    def hangup(self) -> bool:
+        return not self.expect_reply
+
+    @property
+    def text(self) -> str:
+        return " ".join(self.lines).strip()
 
 
 async def start_call(session: VoiceCallSession) -> TurnOutcome:
@@ -90,9 +98,9 @@ async def handle_turn(
     record_turn(session, role="caller", text=utterance, confidence=confidence)
 
     if session.state in (VoiceCallState.ESCALATED, VoiceCallState.COMPLETED):
-        # Replay of an already-terminal turn (Twilio retry). Say goodbye again
+        # Replay of an already-terminal turn (gateway retry). Say goodbye again
         # rather than re-running any of the work.
-        return TurnOutcome(_speak(session, twiml.say_and_hangup(scripts.GOODBYE)))
+        return TurnOutcome(_speak(session, reply.say_and_hangup(scripts.GOODBYE)))
 
     if not utterance:
         if session.collected.get("escalation_pending"):
@@ -128,7 +136,7 @@ async def handle_turn(
     }
     handler = handlers.get(session.state)
     if handler is None:
-        logger.error("No handler for state %s on call %s", session.state, session.twilio_call_sid)
+        logger.error("No handler for state %s on call %s", session.state, session.call_id)
         return await escalate(db, session, EscalationReason.SYSTEM_ERROR)
 
     return await handler(db, session, utterance)
@@ -139,7 +147,7 @@ async def handle_turn(
 
 def _last_caller_confidence(session: VoiceCallSession) -> float | None:
     """Recognizer confidence for the caller's latest utterance, when the speech
-    provider reports one (Twilio always does; the simulator when logprobs exist)."""
+    provider reports one (the SIP gateway does; the simulator when logprobs exist)."""
     for turn in reversed(session.turns or []):
         if turn.get("role") == "caller":
             value = turn.get("confidence")
@@ -793,7 +801,7 @@ async def _handle_anything_else(
         return TurnOutcome(_speak(session, _ask(session, scripts.DESCRIPTION_ASK)))
 
     session.state = VoiceCallState.COMPLETED
-    return TurnOutcome(_speak(session, twiml.say_and_hangup(scripts.GOODBYE)))
+    return TurnOutcome(_speak(session, reply.say_and_hangup(scripts.GOODBYE)))
 
 
 async def _caller_leaving(db: AsyncSession, session: VoiceCallSession) -> TurnOutcome:
@@ -808,7 +816,7 @@ async def _caller_leaving(db: AsyncSession, session: VoiceCallSession) -> TurnOu
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
     if session.ticket_id is not None:
         session.state = VoiceCallState.COMPLETED
-        return TurnOutcome(_speak(session, twiml.say_and_hangup(scripts.GOODBYE)))
+        return TurnOutcome(_speak(session, reply.say_and_hangup(scripts.GOODBYE)))
 
     reachable = bool(collected.get("phone_number")) or caller_id_is_usable(session.from_number)
     if collected.get("description") and reachable:
@@ -828,10 +836,10 @@ async def _caller_leaving(db: AsyncSession, session: VoiceCallSession) -> TurnOu
         session.ticket_id = ticket.id
         session.state = VoiceCallState.COMPLETED
         line = scripts.LEAVING_WITH_TICKET.format(ticket_number=scripts.spoken_ticket_number(ticket.ticket_number))
-        return TurnOutcome(_speak(session, twiml.say_and_hangup(line)), ticket.id)
+        return TurnOutcome(_speak(session, reply.say_and_hangup(line)), ticket.id)
 
     session.state = VoiceCallState.ABANDONED
-    return TurnOutcome(_speak(session, twiml.say_and_hangup(scripts.LEAVING_NO_TICKET)))
+    return TurnOutcome(_speak(session, reply.say_and_hangup(scripts.LEAVING_NO_TICKET)))
 
 
 # --- ticket creation ------------------------------------------------------
@@ -841,7 +849,7 @@ async def _create_ticket_and_read_back(
     db: AsyncSession, session: VoiceCallSession, *, preamble: str | None = None
 ) -> TurnOutcome:
     if session.ticket_id is not None:
-        # Twilio replayed the turn; don't create a second ticket.
+        # The gateway replayed the turn; don't create a second ticket.
         ticket = await db.get(Ticket, session.ticket_id)
         read_back = scripts.READ_BACK.format(
             ticket_number=scripts.spoken_ticket_number(ticket.ticket_number)
@@ -1050,7 +1058,7 @@ async def escalate(
         ticket_number=scripts.spoken_ticket_number(ticket.ticket_number)
     )
     return TurnOutcome(
-        _speak(session, twiml.say_and_hangup(opener, read_back, scripts.GOODBYE)), ticket.id
+        _speak(session, reply.say_and_hangup(opener, read_back, scripts.GOODBYE)), ticket.id
     )
 
 
@@ -1067,16 +1075,15 @@ def _wants_human(utterance: str, result: nlu.TurnResult) -> bool:
     return result.failed and nlu.mentions_escalation(utterance)
 
 
-def _ask(session: VoiceCallSession, prompt: str) -> str:
-    """twiml.ask with recognition hints for the answer the current state expects."""
-    return twiml.ask(prompt, hints=speech_context.gather_hints(session.state.value))
+def _ask(session: VoiceCallSession, prompt: str) -> reply.Reply:
+    return reply.ask(prompt)
 
 
-def _say_then_ask(session: VoiceCallSession, statement: str, prompt: str) -> str:
-    return twiml.say_then_ask(statement, prompt, hints=speech_context.gather_hints(session.state.value))
+def _say_then_ask(session: VoiceCallSession, statement: str, prompt: str) -> reply.Reply:
+    return reply.say_then_ask(statement, prompt)
 
 
-def _speak(session: VoiceCallSession, twiml_body: str) -> str:
+def _speak(session: VoiceCallSession, reply_: reply.Reply) -> reply.Reply:
     """Record what the agent said, for the transcript on the ticket."""
-    record_turn(session, role="agent", text=twiml.spoken_text(twiml_body))
-    return twiml_body
+    record_turn(session, role="agent", text=reply_.text)
+    return reply_

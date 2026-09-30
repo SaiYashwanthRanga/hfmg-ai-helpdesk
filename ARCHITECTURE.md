@@ -1,14 +1,14 @@
 # HFMG AI Help Desk — Architecture
 
 **System:** AI-powered IT Help Desk for Horizon Family Medical Group (HFMG)
-**Status:** Target production design — **partially implemented**, not pre-implementation. The MVP stack this document's §7/§11 describe as "future" (auth, Redis/Celery, Docker/containers) is still not built and remains accurately described as target-only. Everything else in this document — the FastAPI/PostgreSQL/React core, the ticket pipeline, the Twilio voice integration, and a substantial analytics/insights API surface beyond what this document originally scoped — is real and running. See `FINAL_PROJECT_STATUS.md` for the current, verified breakdown and `docs/archive/IMPLEMENTATION_PLAN.md`/`docs/archive/BACKEND_GAP_ANALYSIS.md` for what shipped in what order.
+**Status:** Target production design — **partially implemented**, not pre-implementation. The MVP stack this document's §7/§11 describe as "future" (auth, Redis/Celery, Docker/containers) is still not built and remains accurately described as target-only. Everything else in this document — the FastAPI/PostgreSQL/React core, the ticket pipeline, the SIP voice integration, and a substantial analytics/insights API surface beyond what this document originally scoped — is real and running. See `FINAL_PROJECT_STATUS.md` for the current, verified breakdown and `docs/archive/IMPLEMENTATION_PLAN.md`/`docs/archive/BACKEND_GAP_ANALYSIS.md` for what shipped in what order.
 **Audience:** Engineering team building and operating the system
 
 ---
 
 ## 1. Purpose & Scope
 
-An internal IT help desk system for HFMG staff to report and track IT issues (network, EHR access, hardware, phones, printers, credentials, etc.). Tickets are created via a web form (Phase 1) and, in the future, by phone through a Twilio voice/IVR integration (Phase 2+). Every ticket gets an AI-generated summary to help IT staff triage quickly, and the shared inbox `helpdesk@hfmg.net` receives email notifications on ticket lifecycle events.
+An internal IT help desk system for HFMG staff to report and track IT issues (network, EHR access, hardware, phones, printers, credentials, etc.). Tickets are created via a web form (Phase 1) and, in the future, by phone through a SIP voice integration (Nextiva + SIPSorcery, Phase 2). Every ticket gets an AI-generated summary to help IT staff triage quickly, and the shared inbox `helpdesk@hfmg.net` receives email notifications on ticket lifecycle events.
 
 Because HFMG is a healthcare organization, this system is treated as **HIPAA-adjacent** even though it is an internal IT tool: callers may reference patient scheduling systems, EHR issues, or describe context that touches PHI in free-text descriptions. The architecture is designed so PHI is minimized, access is controlled and audited, and third-party processors (AI, email, telephony) are used in a compliant configuration.
 
@@ -17,7 +17,7 @@ Because HFMG is a healthcare organization, this system is treated as **HIPAA-adj
 - **Production-grade from day one**: authentication, authorization, audit logging, input validation, observability.
 - **Decoupled AI and notification work**: ticket creation must never block on an LLM call or an SMTP round trip.
 - **HIPAA-aware**: encryption in transit and at rest, least-privilege access, audit trails, BAAs with any vendor that can see PHI-adjacent text (AI provider, email provider).
-- **Extensible for voice**: the ticket-intake path is provider-agnostic (web form today, Twilio webhook tomorrow) so voice intake reuses the same domain logic.
+- **Extensible for voice**: the ticket-intake path is provider-agnostic (web form and SIP voice gateway) so voice intake reuses the same domain logic.
 - **Operable by a small team**: managed services over self-hosted infrastructure where it reduces operational burden, without giving up control over PHI-adjacent data.
 
 ## 3. High-Level System Context
@@ -56,8 +56,8 @@ Because HFMG is a healthcare organization, this system is treated as **HIPAA-adj
                                         ▲
                                         │ (Phase 2+)
                                ┌────────┴─────────┐
-                               │  Twilio Voice /   │
-                               │  IVR Webhooks      │
+                               │ Nextiva SIP trunk │
+                               │ + SIPSorcery gw    │
                                └────────────────────┘
 ```
 
@@ -71,7 +71,7 @@ Because HFMG is a healthcare organization, this system is treated as **HIPAA-adj
 | Redis + worker (Celery or RQ) | Async job execution: AI summarization, email delivery, future call-transcript processing. Decouples slow/unreliable external calls from the request path. |
 | OpenAI API | Generates a structured summary of each ticket's description for agent triage. |
 | Email provider (Amazon SES or SendGrid, via SMTP/API) | Delivers notifications to `helpdesk@hfmg.net` and optionally to the caller. |
-| Twilio (future) | Inbound voice/IVR; call recording + transcription feeds ticket creation via a webhook into the same ticket pipeline. |
+| Nextiva + SIPSorcery gateway | Inbound voice. Nextiva delivers calls over SIP; the .NET gateway handles audio, speech-to-text and text-to-speech, and calls the backend's `/api/v1/voice/sip/*` endpoints turn by turn. See `SIP_SETUP.md`. |
 
 ## 4. Why This Stack
 
@@ -79,7 +79,7 @@ Because HFMG is a healthcare organization, this system is treated as **HIPAA-adj
 - **PostgreSQL**: relational integrity for tickets/users/audit trail, native `ENUM`/`JSONB` support (used for status/priority and for storing raw AI response metadata), mature encryption-at-rest and row-level security options, easy to run on managed services (RDS/Cloud SQL) with HIPAA-eligible configurations.
 - **React + Vite**: fast dev/build cycle, SPA suits an internal dashboard-style tool, easy to statically host and serve behind the same TLS boundary as the API.
 - **Async job queue (Redis + Celery/RQ)**: AI calls and outbound email are the two least reliable, highest-latency dependencies in the system. They must not sit in the HTTP request/response cycle for ticket creation. A ticket is created synchronously and returns immediately; summarization and notification happen asynchronously and update the ticket when done.
-- **Twilio (future)**: industry-standard for programmable voice/IVR; webhook model maps cleanly onto "create ticket from external event," so it can reuse the same `TicketService` used by the web form.
+- **SIP gateway (Nextiva + SIPSorcery)**: keeps audio handling out of the Python backend; the gateway-to-backend JSON contract maps cleanly onto "create ticket from external event," so it reuses the same `TicketService` used by the web form.
 
 ## 5. Backend Architecture (FastAPI)
 
@@ -92,8 +92,8 @@ app/
       tickets.py
       auth.py
       users.py
-      webhooks/
-        twilio.py        # future
+      voice/
+        sip_routes.py    # SIP gateway endpoints
   core/           # config, security, settings, logging
   domain/         # business logic, framework-agnostic
     tickets/
@@ -117,7 +117,7 @@ Rationale: `api/` stays thin (HTTP concerns only); `domain/` holds logic that is
 
 1. Client `POST /api/v1/tickets` with ticket payload.
 2. FastAPI validates payload via Pydantic schema.
-3. Auth dependency resolves the authenticated user (or validates a service token for the future Twilio webhook).
+3. Auth dependency resolves the authenticated user (or validates a service token for the SIP gateway).
 4. `TicketService.create_ticket()` persists the ticket (`status=NEW`), generates the human-readable ticket number (see `DATABASE_DESIGN.md` §3.1), and writes an audit log entry — all in one DB transaction.
 5. API enqueues two async jobs: `generate_ai_summary(ticket_id)` and `send_ticket_notification(ticket_id, event="created")`.
 6. API returns `201 Created` with the ticket resource (AI summary field is `null`/pending at this point).
@@ -138,12 +138,11 @@ Rationale: `api/` stays thin (HTTP concerns only); `domain/` holds logic that is
 4. Delivery result is logged to `notification_log` (see `DATABASE_DESIGN.md`) for auditability and retry-on-failure.
 5. Retries with backoff on transient provider errors; permanent failures are surfaced to an ops alert channel.
 
-### 5.5 Future — Twilio Voice Intake
+### 5.5 Voice Intake (SIP)
 
-- Inbound call hits a Twilio number → Twilio IVR (or Twilio Studio flow) collects/records caller info and issue description.
-- Twilio posts a webhook to `POST /api/v1/webhooks/twilio/call-completed` with call metadata + recording URL.
-- Endpoint validates the Twilio request signature (`X-Twilio-Signature`), enqueues `process_voice_ticket(call_sid)`.
-- Worker fetches the recording, transcribes it (Twilio's own transcription or a dedicated speech-to-text step), maps the transcript into the same `TicketCreate` schema used by the web form, and calls the same `TicketService.create_ticket()` — guaranteeing voice-originated tickets flow through identical validation, AI summarization, and notification logic.
+- Inbound call reaches the Nextiva number → Nextiva SIP trunk → SIPSorcery gateway, which answers and handles audio.
+- The gateway calls `POST /api/v1/voice/sip/start`, then `/turn` once per caller utterance (already transcribed), and `/status` at the end, authenticated with `VOICE_SIP_GATEWAY_TOKEN`.
+- The backend runs the conversation state machine, maps the answers into the same `TicketCreate` schema used by the web form, and calls the same `TicketService.create_ticket()` — guaranteeing voice-originated tickets flow through identical validation, AI summarization, and notification logic.
 - This is why the domain layer must not import anything from `api/` — the webhook router is just another caller of `TicketService`, same as the tickets router.
 
 ## 6. Frontend Architecture (React + Vite)
@@ -171,7 +170,7 @@ src/
 
 ### 7.1 Environments
 
-`dev` → `staging` → `production`, each with isolated database, isolated secrets, and separate OpenAI/Twilio/email credentials where the provider supports it (never share production PHI-adjacent data into lower environments; use synthetic seed data in dev/staging).
+`dev` → `staging` → `production`, each with isolated database, isolated secrets, and separate OpenAI/SIP/email credentials where the provider supports it (never share production PHI-adjacent data into lower environments; use synthetic seed data in dev/staging).
 
 ### 7.2 Topology (production)
 
@@ -200,12 +199,12 @@ Internet ── TLS ───► │  Load Balancer / Reverse   │
 
 - API and worker containers run in private subnets; only the load balancer is internet-facing.
 - Database and Redis are not publicly reachable; access only from the API/worker security group.
-- All external calls (OpenAI, email provider, Twilio) go outbound through a NAT gateway; inbound Twilio webhooks terminate at the load balancer like any other API route, with signature validation at the application layer.
+- All external calls (OpenAI, email provider) go outbound through a NAT gateway; the SIP gateway reaches the backend over the internal network only, with bearer-token validation at the application layer.
 - Container images built in CI, pushed to a private registry, deployed via rolling update (zero-downtime).
 
 ### 7.3 Configuration & Secrets
 
-- All secrets (DB credentials, OpenAI API key, email provider API key/SMTP credentials, Twilio auth token, JWT signing key) come from a managed secrets store (AWS Secrets Manager / GCP Secret Manager / Vault) — never committed, never in plain environment files in the repo.
+- All secrets (DB credentials, OpenAI API key, email provider API key/SMTP credentials, SIP gateway token, JWT signing key) come from a managed secrets store (AWS Secrets Manager / GCP Secret Manager / Vault) — never committed, never in plain environment files in the repo.
 - Per-environment config via 12-factor environment variables, loaded through a typed settings module (`pydantic-settings`).
 
 ## 8. Security & Compliance
@@ -214,7 +213,7 @@ Internet ── TLS ───► │  Load Balancer / Reverse   │
 
 Treat `caller_name`, `phone_number`, `email`, and free-text `description`/`ai_summary` fields as sensitive/PHI-adjacent. This drives:
 - Encryption at rest for the database (managed disk encryption) and in transit (TLS everywhere, including DB connections).
-- BAAs (Business Associate Agreements) required with: the AI provider (OpenAI, under a BAA on an eligible plan), the email provider, and Twilio, before any production PHI-adjacent traffic flows through them.
+- BAAs (Business Associate Agreements) required with: the AI provider (OpenAI, under a BAA on an eligible plan), and the email provider, before any production PHI-adjacent traffic flows through them.
 - No PHI-adjacent data in application logs; structured logging must redact/exclude ticket free-text fields (log ticket ID/status transitions, not descriptions).
 
 ### 8.2 AuthN/AuthZ
@@ -222,13 +221,13 @@ Treat `caller_name`, `phone_number`, `email`, and free-text `description`/`ai_su
 - Staff authenticate via the SPA against `POST /api/v1/auth/login` (username/password against internal directory, or SSO/OIDC against HFMG's identity provider if available — recommended for a healthcare org to keep a single credential source).
 - JWT access token (short-lived, ~15 min) + refresh token (httpOnly, secure cookie, longer-lived, rotated on use).
 - Roles: `requester` (submit/view own tickets), `agent` (view/assign/update all tickets), `admin` (manage users/categories, view audit log). Enforced via FastAPI dependencies checking role claims on every protected route.
-- Twilio webhook route is authenticated via Twilio request-signature validation, not JWT (it's a machine-to-machine callback).
+- SIP gateway routes are authenticated via a shared bearer token (`VOICE_SIP_GATEWAY_TOKEN`), not JWT (machine-to-machine).
 
 ### 8.3 Audit & Compliance
 
 - Every ticket status change, assignment, and field edit is written to an append-only `audit_log` table (actor, action, before/after, timestamp).
 - Access logs retained per HFMG's compliance retention policy.
-- Rate limiting and basic WAF rules at the load balancer to reduce abuse of public-facing endpoints (ticket submission form, Twilio webhook).
+- Rate limiting and basic WAF rules at the load balancer to reduce abuse of public-facing endpoints (ticket submission form).
 
 ## 9. Observability
 

@@ -7,7 +7,7 @@ pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 async def _make_session(db, **overrides) -> VoiceCallSession:
     defaults = dict(
-        twilio_call_sid=f"CA-{overrides.get('twilio_call_sid', 'test')}",
+        call_id=f"CA-{overrides.get('call_id', 'test')}",
         from_number="+18455550142",
         to_number="+18455559999",
         state=VoiceCallState.COMPLETED,
@@ -23,7 +23,7 @@ async def _make_session(db, **overrides) -> VoiceCallSession:
 
 
 async def test_list_voice_calls_returns_denormalized_fields(client, db_session):
-    await _make_session(db_session, twilio_call_sid="list-1")
+    await _make_session(db_session, call_id="list-1")
 
     response = await client.get("/api/v1/voice-calls")
     assert response.status_code == 200
@@ -38,10 +38,10 @@ async def test_list_voice_calls_returns_denormalized_fields(client, db_session):
 
 
 async def test_list_voice_calls_filters_by_state_and_escalated(client, db_session):
-    await _make_session(db_session, twilio_call_sid="active-1", state=VoiceCallState.COLLECT_NAME)
+    await _make_session(db_session, call_id="active-1", state=VoiceCallState.COLLECT_NAME)
     await _make_session(
         db_session,
-        twilio_call_sid="escalated-1",
+        call_id="escalated-1",
         state=VoiceCallState.ESCALATED,
         escalated=True,
         escalation_reason=EscalationReason.CALLER_REQUESTED,
@@ -61,7 +61,7 @@ async def test_list_voice_calls_filters_by_state_and_escalated(client, db_sessio
 async def test_voice_call_detail_includes_full_transcript(client, db_session):
     session = await _make_session(
         db_session,
-        twilio_call_sid="detail-1",
+        call_id="detail-1",
         turns=[
             {"role": "agent", "text": "How can I help?", "confidence": None, "at": "2026-01-01T00:00:00Z"},
             {"role": "caller", "text": "eCW is down", "confidence": 0.91, "at": "2026-01-01T00:00:05Z"},
@@ -86,11 +86,11 @@ async def test_voice_call_detail_404_for_unknown_id(client):
 
 
 async def test_voice_call_summary_counts_by_state(client, db_session):
-    await _make_session(db_session, twilio_call_sid="s1", state=VoiceCallState.COLLECT_NAME)
-    await _make_session(db_session, twilio_call_sid="s2", state=VoiceCallState.COMPLETED)
-    await _make_session(db_session, twilio_call_sid="s3", state=VoiceCallState.COMPLETED)
-    await _make_session(db_session, twilio_call_sid="s4", state=VoiceCallState.ESCALATED, escalated=True)
-    await _make_session(db_session, twilio_call_sid="s5", state=VoiceCallState.ABANDONED)
+    await _make_session(db_session, call_id="s1", state=VoiceCallState.COLLECT_NAME)
+    await _make_session(db_session, call_id="s2", state=VoiceCallState.COMPLETED)
+    await _make_session(db_session, call_id="s3", state=VoiceCallState.COMPLETED)
+    await _make_session(db_session, call_id="s4", state=VoiceCallState.ESCALATED, escalated=True)
+    await _make_session(db_session, call_id="s5", state=VoiceCallState.ABANDONED)
 
     response = await client.get("/api/v1/voice-calls/summary")
     assert response.status_code == 200

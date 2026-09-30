@@ -42,7 +42,7 @@ async def settings_status(db: AsyncSession = Depends(get_db)) -> SettingsStatusR
     """Read-only configuration visibility (DESIGN.md §12).
 
     No write path exists here, and none should be added until Phase 3
-    authentication ships -- editing OPENAI_API_KEY/TWILIO_AUTH_TOKEN/
+    authentication ships -- editing OPENAI_API_KEY/VOICE_SIP_GATEWAY_TOKEN/
     SENDGRID_API_KEY with no auth in front of this API is a live
     vulnerability, not a rough edge (IMPLEMENTATION_PLAN.md MVP Scope
     Decision). Every secret below is masked; the raw values never leave
@@ -58,12 +58,12 @@ async def settings_status(db: AsyncSession = Depends(get_db)) -> SettingsStatusR
             detail=f"Model: {settings.openai_model}" if settings.openai_api_key else None,
             last_verified=checks["openai"].checked_at,
         ),
-        twilio=ProviderStatus(
-            configured=bool(settings.twilio_auth_token),
-            status=checks["twilio"].status,
-            masked_key=mask_secret(settings.twilio_auth_token),
+        sip=ProviderStatus(
+            configured=bool(settings.voice_sip_gateway_token),
+            status=checks["sip"].status,
+            masked_key=mask_secret(settings.voice_sip_gateway_token),
             detail=None,
-            last_verified=checks["twilio"].checked_at,
+            last_verified=checks["sip"].checked_at,
         ),
         email=_email_status(checks["email"]),
         database=ProviderStatus(

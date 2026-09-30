@@ -1,7 +1,7 @@
 # HFMG AI Help Desk — Voice Agent Design (Phase 2)
 
 **Status:** Approved 2026-09-19 — implemented in Phase 2
-**Companion docs:** [TWILIO_ARCHITECTURE.md](TWILIO_ARCHITECTURE.md) (infrastructure), [CALL_FLOW.md](CALL_FLOW.md) (state machine)
+**Companion docs:** [SIP_SETUP.md](SIP_SETUP.md) (infrastructure), [CALL_FLOW.md](CALL_FLOW.md) (state machine)
 
 This document covers the AI itself: how the agent sounds, how it understands callers, how it classifies and prioritizes, and how it fails safely.
 
@@ -37,7 +37,7 @@ All caller-facing copy lives in one module (`app/voice/scripts.py`) so it can be
 - Retry: *"Sorry, could you say your first and last name again?"*
 
 ### Phone
-- Caller ID present: **nothing is said.** The number is captured silently from Twilio's `From` parameter.
+- Caller ID present: **nothing is said.** The number is captured silently from the `from_number` the gateway sends on `/start`.
 - Ask (caller ID blocked/anonymous only): *"What's the best phone number for us to reach you?"*
 - Retry: *"Could you say that number again, one digit at a time?"*
 
@@ -114,13 +114,13 @@ Caller speech is untrusted input flowing into a prompt. A caller saying *"ignore
 1. The model's only output channel is a fixed tool schema — there is no field in which "become a different agent" can be expressed.
 2. Enumerated fields are validated against server-side allowlists, so an injected category/priority is discarded.
 3. The system prompt explicitly frames the utterance as caller speech to be interpreted, never as instructions to follow.
-4. This exact case is a required test fixture (`TWILIO_ARCHITECTURE.md` §13).
+4. This exact case is a required test fixture (see `backend/tests/test_voice_agent.py`).
 
 Worst case, an injection attempt becomes a weird ticket description — which a human reads.
 
 ## 4. Category Classification
 
-Six categories, fixed vocabulary. This allowlist lives in the classifier, not the database — the `categories` table keeps its full set for web intake, and the voice agent assigns only from these six (`TWILIO_ARCHITECTURE.md` §7.1):
+Six categories, fixed vocabulary. This allowlist lives in the classifier, not the database — the `categories` table keeps its full set for web intake, and the voice agent assigns only from these six (see `backend/app/voice/nlu.py`):
 
 | Category | Covers | Typical utterances |
 |---|---|---|
@@ -156,7 +156,7 @@ The caller is **never asked** what priority their issue is. Callers are not cali
 | Single user, workaround exists | ↓ | "my printer's out but I can use the one upstairs" |
 | Convenience / non-urgent request | ↓↓ | "I'd like a second monitor sometime" |
 
-**Resulting levels** (spoken word → stored enum, per `TWILIO_ARCHITECTURE.md` §7.2):
+**Resulting levels** (spoken word → stored enum):
 
 | Spoken | Stored | Meaning |
 |---|---|---|
@@ -183,7 +183,7 @@ Two layers:
 
 ## 7. Confidence Handling and Re-prompting
 
-Two independent confidence sources: Twilio's STT `Confidence` score on the transcript, and the model's self-reported extraction confidence.
+Two independent confidence sources: the gateway's STT `confidence` score on the transcript, and the model's self-reported extraction confidence.
 
 | STT | NLU | Action |
 |---|---|---|
@@ -213,7 +213,7 @@ Two independent confidence sources: Twilio's STT `Confidence` score on the trans
 
 ## 9. Evaluating Agent Quality
 
-Correctness here isn't binary, so it needs its own test approach beyond the unit/integration tests in `TWILIO_ARCHITECTURE.md` §13:
+Correctness here isn't binary, so it needs its own test approach beyond the unit/integration tests in `backend/tests/`:
 
 - **Labeled utterance set** — 50–100 realistic transcripts (including messy, noisy, and multi-issue ones) with expected category and priority. Run on every change to a prompt or the model version; track classification accuracy as a regression gate. Cheap to build and the highest-value artifact in this phase.
 - **Category confusion matrix** — reveals systematic misrouting (the likely one: Password vs. eClinicalWorks/Microsoft 365, hence the explicit overlap rule in §4).

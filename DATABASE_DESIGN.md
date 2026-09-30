@@ -58,7 +58,7 @@ The core entity. Maps directly to the required ticket fields, extended with fiel
 | `ai_summary_generated_at` | `TIMESTAMPTZ` | NULL | When the AI summary completed. |
 | `ai_model` | `TEXT` | NULL | Model identifier used (e.g., `gpt-5-nano`), for auditability/reproducibility. Not implemented in the MVP schema. |
 | `status` | `ticket_status_enum` | NOT NULL, default `NEW` | **Status**. `NEW`, `OPEN`, `IN_PROGRESS`, `ON_HOLD`, `RESOLVED`, `CLOSED`, `CANCELLED`. |
-| `source` | `ticket_source_enum` | NOT NULL, default `WEB` | `WEB`, `PHONE`, `EMAIL`, `WALK_IN`. Supports future Twilio intake without schema change. |
+| `source` | `ticket_source_enum` | NOT NULL, default `WEB` | `WEB`, `PHONE`, `EMAIL`, `WALK_IN`. Supports voice (SIP) intake without schema change. |
 | `requester_user_id` | `UUID` | FK → `users.id`, NULL | Set if the caller is an authenticated staff member submitting via the portal. |
 | `assigned_agent_id` | `UUID` | FK → `users.id`, NULL | IT staff member currently owning the ticket. |
 | `resolved_at` | `TIMESTAMPTZ` | NULL | Set when status transitions to `RESOLVED`. |
@@ -228,12 +228,12 @@ No `UPDATE`/`DELETE` grants on this table for the application role — insert-on
 
 ### 3.8 `voice_call_sessions` (Phase 2 — implemented)
 
-Per-call conversation state for the Twilio voice agent, plus the link to the ticket the call produced. This **replaces** the `voice_calls` sketch in earlier drafts, which assumed a record-then-transcribe design; the implemented agent is a multi-turn conversation, so it needs live state rather than a post-call recording reference.
+Per-call conversation state for the SIP voice agent, plus the link to the ticket the call produced. This **replaces** the `voice_calls` sketch in earlier drafts, which assumed a record-then-transcribe design; the implemented agent is a multi-turn conversation, so it needs live state rather than a post-call recording reference.
 
 | Column | Type | Constraints |
 |---|---|---|
 | `id` | `UUID` | PK |
-| `twilio_call_sid` | `TEXT` | UNIQUE, NOT NULL — natural idempotency key for webhook retries |
+| `call_id` | `TEXT` | UNIQUE, NOT NULL — the gateway's call identifier; natural idempotency key for retried requests (renamed from `twilio_call_sid`) |
 | `from_number` | `TEXT` | NOT NULL — caller ID; may be `anonymous`/blocked |
 | `to_number` | `TEXT` | NOT NULL |
 | `state` | `voice_call_state_enum` | NOT NULL — position in the state machine (`CALL_FLOW.md` §2) |
@@ -249,7 +249,7 @@ Per-call conversation state for the Twilio voice agent, plus the link to the tic
 
 State lives in Postgres rather than process memory because each webhook turn is an independent request that may land on any API replica, and the app may restart mid-call.
 
-No call recordings are stored — recording stays off pending compliance sign-off (`TWILIO_ARCHITECTURE.md` §9). The `turns` transcript is PHI-adjacent and carries the same handling rules as `tickets.description`.
+No call recordings are stored — recording stays off pending compliance sign-off (the SIP gateway does not forward audio to the backend). The `turns` transcript is PHI-adjacent and carries the same handling rules as `tickets.description`.
 
 `is_simulated` (`BOOLEAN`, NOT NULL, default `false`, partial index `WHERE is_simulated`) marks AI Call Simulator sessions (§3.9). Every operational query filters these out.
 

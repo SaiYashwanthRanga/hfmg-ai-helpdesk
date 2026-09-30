@@ -2,7 +2,7 @@
 
 Deliberately not the `sendgrid` SDK, which is synchronous -- a blocking HTTP
 call here would stall the event loop for every concurrent request, including
-an in-progress Twilio voice webhook (Twilio times those out around 15s). This
+an in-progress SIP voice turn (the caller is waiting on the line). This
 keeps the async discipline established for the LLM provider (app/llm/).
 """
 

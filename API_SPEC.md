@@ -21,7 +21,7 @@ This document describes the full target contract (including Phase 3 features lik
 | §4 Categories — create/update/delete | ⬜ Not built | Admin-only, deferred with auth |
 | §5 Users, §7 Audit Log | ⬜ Not built | No `users`/`audit_log` tables |
 | §6 Notifications (read visibility) | ⬜ Not built | Notifications are sent (`BackgroundTasks`) but not queryable — no `notification_log` table |
-| §8 Twilio webhooks | ✅ Built | All four endpoints, signature-validated, exactly as documented |
+| §8 SIP voice gateway | ✅ Built | `/start`, `/turn`, `/status`, bearer-token authenticated |
 | §9 `GET /health` | ✅ Built | Static liveness stub |
 | §9 `GET /health/ready` | ✅ Built | Real `SELECT 1` check, `503` on failure (was a stub prior to this) |
 | §9 `GET /health/dependencies` | ✅ Built | New — not previously documented here; see §11 |
@@ -90,7 +90,7 @@ URI-versioned (`/api/v1/...`). Breaking changes ship as `/api/v2`; additive/back
 
 ### 1.5 Idempotency
 
-State-changing `POST` endpoints that may be retried by a client (notably the Twilio webhook) accept an `Idempotency-Key` header or rely on a natural external key (`twilio_call_sid`) to avoid duplicate processing.
+State-changing `POST` endpoints that may be retried by a client (notably the SIP gateway calls) accept an `Idempotency-Key` header or rely on a natural external key (`call_id`) to avoid duplicate processing.
 
 ---
 
@@ -131,7 +131,7 @@ Returns the current authenticated user. **Auth:** required.
 ## 3. Tickets
 
 ### `POST /api/v1/tickets`
-Create a new ticket. Used by the web intake form; also the target of the future Twilio pipeline internally (via the domain service, not necessarily this HTTP route — see `ARCHITECTURE.md` §5.5).
+Create a new ticket. Used by the web intake form; also the target of the voice pipeline internally (via the domain service, not necessarily this HTTP route — see `ARCHITECTURE.md` §5.5).
 
 **Auth:** required (`REQUESTER`, `AGENT`, or `ADMIN`)
 
@@ -336,36 +336,35 @@ Query params: `entity_type`, `entity_id`, `actor_user_id`, `created_after`/`crea
 
 ---
 
-## 8. Webhooks — Twilio Voice Integration (Phase 2, implemented)
+## 8. SIP Voice Gateway (Phase 2, implemented)
 
-These endpoints back the AI voice agent. Full design: [TWILIO_ARCHITECTURE.md](TWILIO_ARCHITECTURE.md), [CALL_FLOW.md](CALL_FLOW.md), [VOICE_AGENT_DESIGN.md](VOICE_AGENT_DESIGN.md).
+These endpoints back the AI voice agent. The call path is Nextiva → SIPSorcery gateway → backend. Full contract: [SIP_SETUP.md](SIP_SETUP.md). Conversation design: [CALL_FLOW.md](CALL_FLOW.md), [VOICE_AGENT_DESIGN.md](VOICE_AGENT_DESIGN.md).
 
-**Auth for all four:** Twilio request-signature validation (`X-Twilio-Signature`, verified against the configured auth token) — never JWT. Unsigned or tampered requests get `403`.
+**Auth for all three:** `Authorization: Bearer <VOICE_SIP_GATEWAY_TOKEN>` (constant-time comparison) — never JWT. An empty configured token disables the endpoints (`403`); a wrong token gets `401`.
 
-**Content type:** requests are Twilio's form-encoded payloads; responses are TwiML (`application/xml`), except the status callback which returns `204`.
+**Content type:** JSON in, JSON out, except `/status` which returns `204`.
 
-### `POST /api/v1/webhooks/twilio/voice`
-Turn 0. Creates the call session (keyed by `CallSid`, idempotent on retry), returns the greeting wrapped in a `<Gather input="speech">`.
+### `POST /api/v1/voice/sip/start`
+Turn 0. Creates the call session (keyed by `call_id`, idempotent on retry).
 
-Request fields: `CallSid`, `From` (caller ID — captured silently as the callback number when usable), `To`.
+Request: `{ "call_id", "from_number", "to_number" }`. `from_number` is captured silently as the callback number when usable.
 
-### `POST /api/v1/webhooks/twilio/voice/gather`
-Turns 1..N. Receives the caller's transcribed speech, advances the conversation state machine, and returns the next prompt or the final hangup.
+### `POST /api/v1/voice/sip/turn`
+Turns 1..N. Receives the caller's transcribed speech, advances the conversation state machine, and returns the next lines.
 
-Request fields: `CallSid`, `SpeechResult`, `Confidence`.
+Request: `{ "call_id", "utterance", "confidence" }`. An empty `utterance` counts as a failed turn.
 
-Ticket creation happens inside this endpoint when collection completes, calling the same `TicketService.create_ticket()` the web form uses with `source: "PHONE"`, then dispatching the AI summary and `helpdesk@hfmg.net` notification as background tasks. The caller hears their ticket number without waiting on the summary.
+Response for `/start` and `/turn`: `{ "lines": [...], "expect_reply": bool, "ticket_id": uuid|null }`. If the backend hits an internal error it still returns `200` with an apology line and `expect_reply: false`.
 
-### `POST /api/v1/webhooks/twilio/voice/status`
-Call lifecycle callback. Marks the session ended. If the caller hung up after describing their problem but before intake finished, salvages a ticket flagged `INCOMPLETE VOICE INTAKE` rather than losing the issue. Returns `204`.
+Ticket creation happens inside `/turn` when collection completes, calling the same `TicketService.create_ticket()` the web form uses with `source: "PHONE"`, then dispatching the AI summary and `helpdesk@hfmg.net` notification as background tasks. The caller hears their ticket number without waiting on the summary.
 
-Request fields: `CallSid`, `CallStatus`.
+### `POST /api/v1/voice/sip/status`
+Call ended. Marks the session ended. If the caller hung up after describing their problem but before intake finished, salvages a ticket flagged `INCOMPLETE VOICE INTAKE` rather than losing the issue. Returns `204`.
 
-### `POST /api/v1/webhooks/twilio/voice/fallback`
-Invoked by Twilio when the primary webhook errors or times out. Creates an escalation ticket and plays an apology with a callback promise instead of a Twilio error tone.
+Request: `{ "call_id", "reason" }`.
 
-### Note on the earlier sketch
-An earlier draft of this section specified a single `/call-completed` endpoint that recorded the call and transcribed it afterward. That was replaced by the multi-turn `<Gather>` design above, which collects structured data conversationally instead of post-processing a recording — and avoids call recording entirely, which carries consent requirements (`TWILIO_ARCHITECTURE.md` §9).
+### Note on the earlier sketches
+Earlier drafts specified a `/call-completed` endpoint that recorded and transcribed the call, and later a Twilio `<Gather>` webhook design. Both are gone. Speech-to-text and text-to-speech live in the gateway, and the backend never receives audio or stores recordings.
 
 ---
 
@@ -378,19 +377,19 @@ Liveness check (no auth). Returns `200 {"status": "ok"}`.
 **✅ Implemented.** Readiness check (no auth) — verifies DB connectivity via a real `SELECT 1`. Returns `200 {"status": "ok"}` or `503` with an error detail if the database is unreachable. There is no worker queue to check (`BackgroundTasks` only, per the MVP scope decision) — DB reachability is this process's only real dependency at request time.
 
 ### `GET /api/v1/health/dependencies`
-**✅ Implemented, new.** OpenAI/Twilio/Database/Email status strip backing `DESIGN.md` §6.1's System Status Bar. No auth.
+**✅ Implemented, new.** OpenAI/SIP/Database/Email status strip backing `DESIGN.md` §6.1's System Status Bar. No auth.
 
 Response `200`:
 ```json
 {
   "openai": { "status": "operational", "checked_at": "2026-09-20T08:08:21.447062Z" },
-  "twilio": { "status": "down", "checked_at": "2026-09-20T08:08:21.447070Z" },
+  "sip": { "status": "down", "checked_at": "2026-09-20T08:08:21.447070Z" },
   "database": { "status": "operational", "checked_at": "2026-09-20T08:08:21.509769Z" },
   "email": { "status": "down", "checked_at": "2026-09-20T08:08:21.509784Z" }
 }
 ```
 
-`status` is one of `operational` / `degraded` / `down` / `unknown` (`degraded` is reserved in the schema but never emitted today — no latency-based signal is measured yet, see `REMAINING_PRODUCT_DECISIONS.md`). Each dependency's check is cached in-process for 30 seconds so this endpoint never triggers a live OpenAI/Twilio/SendGrid call on every dashboard poll. OpenAI and Email checks are real reachability probes (a cheap authenticated `GET`, no email sent, no summary generated); With `EMAIL_PROVIDER=hfmg_internal` the Email check is an unauthenticated reachability `GET` of the internal mail API (see §6.1). Twilio's check is configuration-only (`TWILIO_AUTH_TOKEN` set or not) because a real call would need `TWILIO_ACCOUNT_SID`, which isn't a configured setting anywhere in this codebase — see `docs/archive/DOCS_GAP_REPORT.md`.
+`status` is one of `operational` / `degraded` / `down` / `unknown` (`degraded` is reserved in the schema but never emitted today — no latency-based signal is measured yet, see `REMAINING_PRODUCT_DECISIONS.md`). Each dependency's check is cached in-process for 30 seconds so this endpoint never triggers a live OpenAI/SendGrid call on every dashboard poll. OpenAI and Email checks are real reachability probes (a cheap authenticated `GET`, no email sent, no summary generated); With `EMAIL_PROVIDER=hfmg_internal` the Email check is an unauthenticated reachability `GET` of the internal mail API (see §6.1). the SIP check is configuration-only (`VOICE_SIP_GATEWAY_TOKEN` set or not) because the gateway calls the backend rather than the reverse, so reachability can't be probed from here.
 
 ---
 
@@ -403,7 +402,7 @@ Response `200`:
 ```json
 {
   "openai": { "configured": true, "status": "operational", "masked_key": "sk-...a1b2", "detail": "Model: gpt-5-nano", "last_verified": "2026-09-20T08:08:21Z" },
-  "twilio": { "configured": false, "status": "down", "masked_key": null, "detail": null, "last_verified": "2026-09-20T08:08:21Z" },
+  "sip": { "configured": false, "status": "down", "masked_key": null, "detail": null, "last_verified": "2026-09-20T08:08:21Z" },
   "email": { "configured": true, "status": "operational", "masked_key": "SG....wxyz", "detail": "From reminder@hfmg.net to helpdesk@hfmg.net", "last_verified": "2026-09-20T08:08:21Z" },
   "database": { "configured": true, "status": "operational", "masked_key": null, "detail": "PostgreSQL", "last_verified": "2026-09-20T08:08:21Z" },
   "environment": { "environment": "development", "enable_ai_summary": false, "enable_email_notifications": true }
@@ -439,7 +438,7 @@ All eight endpoints are **✅ implemented, new** — none existed before this ch
 
 ## 13. Voice Calls (read)
 
-**✅ Implemented, new.** Read-only access to `voice_call_sessions` (`DATABASE_DESIGN.md` §3.8) for the Voice Operations Center (`docs/archive/WIREFRAMES.md` §5). No write endpoints — all conversation-state writes remain internal to the Twilio webhooks in §8.
+**✅ Implemented, new.** Read-only access to `voice_call_sessions` (`DATABASE_DESIGN.md` §3.8) for the Voice Operations Center (`docs/archive/WIREFRAMES.md` §5). No write endpoints — all conversation-state writes remain internal to the SIP endpoints in §8.
 
 ### `GET /api/v1/voice-calls`
 Paginated list, same envelope shape as `GET /tickets`. Query params: `page`, `page_size`, `state` (one of the 11 `voice_call_state_enum` values — see the correction in `CALL_FLOW.md`), `escalated` (bool). Each item denormalizes `caller_name`/`category`/`priority` out of the `collected` JSONB so clients don't need to parse it just to render a table column.
@@ -477,7 +476,7 @@ Only `category_breakdown` returns real data — it reuses `/analytics/tickets-by
 Applied per-IP and per-user at the reverse proxy / API gateway layer:
 - `POST /api/v1/tickets`: 20/hour per IP (public-ish intake form) to limit abuse.
 - `POST /api/v1/auth/login`: 10/15min per IP (brute-force protection).
-- `POST /api/v1/webhooks/twilio/*`: exempted from per-IP limits (Twilio's IPs), protected instead by signature validation.
+- `POST /api/v1/voice/sip/*`: exempted from per-IP limits (internal gateway host), protected instead by the bearer token and network isolation.
 
 Exceeding a limit returns `429` with a `Retry-After` header.
 
@@ -485,7 +484,7 @@ Exceeding a limit returns `429` with a `Retry-After` header.
 
 ## 16. AI Call Simulator (feature-flagged, test environments only)
 
-Browser-based test calls to the voice agent: the production orchestrator driven by typed or transcribed text instead of Twilio webhooks. Every route returns **`404`** unless `ENABLE_VOICE_SIMULATOR=true` and `ENVIRONMENT` is not `production`. Responses use the plain `{"detail": …}` error shape like the rest of the running API, not the §1.1 envelope.
+Browser-based test calls to the voice agent: the production orchestrator driven by typed or transcribed text instead of the SIP gateway. Every route returns **`404`** unless `ENABLE_VOICE_SIMULATOR=true` and `ENVIRONMENT` is not `production`. Responses use the plain `{"detail": …}` error shape like the rest of the running API, not the §1.1 envelope.
 
 | Endpoint | Purpose |
 |---|---|

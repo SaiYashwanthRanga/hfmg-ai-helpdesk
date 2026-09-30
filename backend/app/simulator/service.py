@@ -1,7 +1,7 @@
 """AI Call Simulator session lifecycle.
 
 Drives the production conversation code -- app/voice/orchestrator.py -- with
-typed or transcribed text instead of Twilio webhooks. Nothing here decides
+typed or transcribed text instead of the SIP gateway. Nothing here decides
 what the agent says, how speech is interpreted, or how tickets are built;
 it only feeds turns in, times them, and records what came out.
 See VOICE_SIMULATOR_DESIGN.md.
@@ -38,7 +38,7 @@ from app.simulator import schemas
 from app.speech import context as speech_context
 from app.speech.base import AUDIO_MIME, SUPPORTED_UPLOAD_TYPES, SpeechStreamError, base_mime_type
 from app.speech.factory import get_speech_provider
-from app.voice import orchestrator, scripts, twiml
+from app.voice import orchestrator, reply, scripts
 from app.voice.session import caller_id_is_usable, record_turn
 
 logger = logging.getLogger("hfmg.simulator")
@@ -407,11 +407,11 @@ async def start_session(db: AsyncSession, request: schemas.StartRequest) -> sche
     caller_id = (request.caller_id or "").strip()
     usable = caller_id_is_usable(caller_id)
     call = VoiceCallSession(
-        twilio_call_sid=f"SIM-{uuid.uuid4().hex}",
+        call_id=f"SIM-{uuid.uuid4().hex}",
         from_number=caller_id if usable else SIMULATOR_FROM,
         to_number=SIMULATOR_TO,
         state=VoiceCallState.GREETING,
-        # Same seeding as voice/session.get_or_create_session for Twilio caller ID.
+        # Same seeding as voice/session.get_or_create_session for caller ID.
         collected={"phone_number": caller_id} if usable else {},
         turns=[],
         is_simulated=True,
@@ -429,7 +429,7 @@ async def start_session(db: AsyncSession, request: schemas.StartRequest) -> sche
     llm_started = time.perf_counter()
     outcome = await orchestrator.start_call(call)
     llm_ms = _ms(llm_started)
-    text = twiml.spoken_text(outcome.twiml)
+    text = outcome.text
 
     turn = VoiceSimulatorTurn(
         session_id=call.id,
@@ -688,7 +688,7 @@ async def process_turn(
                 await reset_after_failure(exc2, "escalation also failed; ending call")
                 if call.state not in TERMINAL_STATES:
                     call.state = VoiceCallState.ABANDONED
-                outcome = orchestrator.TurnOutcome(twiml.say_and_hangup(scripts.SYSTEM_ERROR))
+                outcome = orchestrator.TurnOutcome(reply.say_and_hangup(scripts.SYSTEM_ERROR))
                 record_turn(call, role="agent", text=scripts.SYSTEM_ERROR)
                 fatal = True
         llm_ms = _ms(llm_started)
@@ -699,8 +699,8 @@ async def process_turn(
                 {"stage": "llm", "type": call_trace.schema_name or call_trace.kind, "message": call_trace.error}
             )
 
-    agent_text = twiml.spoken_text(outcome.twiml)
-    call_ended = twiml.ends_call(outcome.twiml)
+    agent_text = outcome.text
+    call_ended = outcome.hangup
     ticket_span = tr.span_named("ticket_create")
 
     turn.state_before = state_before

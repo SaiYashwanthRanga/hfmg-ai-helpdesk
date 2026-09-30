@@ -67,7 +67,7 @@ export const SERVER_STAGES: StageDefinition[] = [
 export type BudgetLevel = "good" | "warn" | "fail" | "none";
 
 /**
- * Thresholds from the production constraint: Twilio abandons a webhook at
+ * Thresholds from the production constraint: the SIP gateway waits on a response for
  * ~15s and each NLU call has a 4s budget (VOICE_SIMULATOR_DESIGN.md §5.2).
  */
 export const BUDGETS: Partial<Record<LatencyStage, { warn: number; fail: number }>> = {

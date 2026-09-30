@@ -130,7 +130,7 @@ class StartRequest(BaseModel):
         default=None,
         max_length=32,
         pattern=r"^\+?[0-9 ()\-]{7,31}$",
-        description="Simulated Twilio caller ID. When usable, the agent skips the phone question.",
+        description="Simulated caller ID. When usable, the agent skips the phone question.",
     )
     send_notifications: bool = False
     tts: bool = True

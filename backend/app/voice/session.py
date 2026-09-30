@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import VoiceCallSession, VoiceCallState
 
-# Caller ID values Twilio sends when the number is withheld or unavailable.
+# Caller ID values the gateway or carrier sends when the number is withheld or unavailable.
 _UNUSABLE_CALLER_IDS = {"", "anonymous", "unknown", "restricted", "private", "+266696687"}
 
 
@@ -19,20 +19,20 @@ def caller_id_is_usable(from_number: str) -> bool:
 
 
 async def get_session(db: AsyncSession, call_sid: str) -> VoiceCallSession | None:
-    stmt = select(VoiceCallSession).where(VoiceCallSession.twilio_call_sid == call_sid)
+    stmt = select(VoiceCallSession).where(VoiceCallSession.call_id == call_sid)
     return (await db.execute(stmt)).scalar_one_or_none()
 
 
 async def get_or_create_session(
     db: AsyncSession, *, call_sid: str, from_number: str, to_number: str
 ) -> VoiceCallSession:
-    """Idempotent by CallSid, so a Twilio retry of turn 0 resumes the same call."""
+    """Idempotent by call_id, so a gateway retry of turn 0 resumes the same call."""
     existing = await get_session(db, call_sid)
     if existing is not None:
         return existing
 
     session = VoiceCallSession(
-        twilio_call_sid=call_sid,
+        call_id=call_sid,
         from_number=from_number or "unknown",
         to_number=to_number or "unknown",
         state=VoiceCallState.GREETING,

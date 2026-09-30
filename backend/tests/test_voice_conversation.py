@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.db.models import Category, Priority, Ticket, VoiceCallState
-from app.voice import departments, names, nlu, orchestrator, scripts, twiml
+from app.voice import departments, names, nlu, orchestrator, scripts
 from app.voice import priority as rules
 from app.voice.session import get_or_create_session
 
@@ -192,7 +192,7 @@ async def _say(db, session, text, **kwargs):
 
 def _heard(outcome) -> str:
     """What the caller hears, as text (the TwiML XML-escapes apostrophes)."""
-    return twiml.spoken_text(outcome.twiml)
+    return outcome.text
 
 
 async def _up_to_summary(db, monkeypatch, *, name="Yashwanth", department="Development", caller_id="+12148859089"):
@@ -257,7 +257,7 @@ async def test_bare_no_asks_what_to_change_then_applies_it(db_session, monkeypat
     session = await _up_to_summary(db_session, monkeypatch)
     await _say(db_session, session, "Skip.")
     out = await _say(db_session, session, "No.")
-    assert scripts.SUMMARY_WHAT_TO_CHANGE in out.twiml
+    assert scripts.SUMMARY_WHAT_TO_CHANGE in out.text
     assert session.ticket_id is None
 
     monkeypatch.setattr(
@@ -298,7 +298,7 @@ async def test_corrected_name_is_read_back_before_the_ticket(db_session, monkeyp
     )
     out = await _say(db_session, session, "It's Yashwant, not Yashwanth.")
     assert session.state == VoiceCallState.CONFIRM_NAME  # unfamiliar name: spelled back first
-    assert "Y A S H W A N T" in out.twiml
+    assert "Y A S H W A N T" in out.text
 
 
 async def test_unresolved_disagreement_files_the_ticket_and_says_so(db_session, monkeypatch, conversation):
@@ -314,7 +314,7 @@ async def test_unresolved_disagreement_files_the_ticket_and_says_so(db_session, 
     out = await _say(db_session, session, "No, that's still not right.")
     await db_session.commit()
     assert session.ticket_id is not None
-    assert scripts.SUMMARY_LEAVE_AS_IS in out.twiml
+    assert scripts.SUMMARY_LEAVE_AS_IS in out.text
     ticket = await db_session.get(Ticket, session.ticket_id)
     assert "Read-back: caller said the summary was not fully correct" in ticket.description
 
@@ -342,8 +342,8 @@ async def test_uncertain_category_is_mentioned_in_the_read_back_not_asked(db_ses
     await _say(db_session, session, "Maria Lopez, billing")
     out = await _say(db_session, session, "skip")
     assert session.state == VoiceCallState.CONFIRM_SUMMARY  # no separate "is this about Network?"
-    assert "filing it under Network" in out.twiml
-    assert "Since you can still work" in out.twiml
+    assert "filing it under Network" in out.text
+    assert "Since you can still work" in out.text
 
 
 async def test_summary_wording_for_a_long_running_problem(db_session, monkeypatch, conversation):
@@ -362,20 +362,20 @@ async def test_summary_wording_for_a_long_running_problem(db_session, monkeypatc
 async def test_a_spoken_number_is_read_back_in_the_summary_but_caller_id_is_not(db_session, monkeypatch, conversation):
     with_caller_id = await _up_to_summary(db_session, monkeypatch)
     out = await _say(db_session, with_caller_id, "skip")
-    assert "reach you at" not in out.twiml
+    assert "reach you at" not in out.text
 
     session = await _up_to_summary(db_session, monkeypatch, caller_id="anonymous")
     assert session.state == VoiceCallState.COLLECT_PHONE
     await _say(db_session, session, "two one four, eight eight five, nine zero eight nine")
     out = await _say(db_session, session, "skip")
-    assert "reach you at 2 1 4, 8 8 5, 9 0 8 9" in out.twiml
+    assert "reach you at 2 1 4, 8 8 5, 9 0 8 9" in out.text
 
 
 async def test_phone_retry_says_how_many_digits_were_heard(db_session, monkeypatch, conversation):
     """Real call: 'Number is like 11006' -> 'one digit at a time' -> '1-0-0-6' -> ..."""
     session = await _up_to_summary(db_session, monkeypatch, caller_id="anonymous")
     out = await _say(db_session, session, "Number is like 11006")
-    assert "only caught 5 digits" in out.twiml
+    assert "only caught 5 digits" in out.text
     assert session.misunderstanding_count == 0
 
 
@@ -384,7 +384,7 @@ async def test_phone_failure_never_escalates_and_never_blocks_the_ticket(db_sess
     session = await _up_to_summary(db_session, monkeypatch, caller_id="anonymous")
     await _say(db_session, session, "Number is like 11006")
     out = await _say(db_session, session, "866-882-085-444")  # twelve digits
-    assert scripts.PHONE_GIVE_UP in out.twiml
+    assert scripts.PHONE_GIVE_UP in out.text
     assert not session.escalated
     assert session.state == VoiceCallState.COLLECT_EMAIL  # carried on
 
@@ -419,7 +419,7 @@ async def test_goodbye_at_an_optional_question_files_an_ordinary_ticket(db_sessi
     out = await _say(db_session, session, "Thank you. Bye bye.")
     await db_session.commit()
     assert session.state == VoiceCallState.COMPLETED
-    assert "<Hangup" in out.twiml and "Your ticket number is" in _heard(out)
+    assert out.hangup and "Your ticket number is" in _heard(out)
     ticket = await db_session.get(Ticket, session.ticket_id)
     assert "INCOMPLETE" not in ticket.description
     assert "Read-back: not done: the caller ended the call first" in ticket.description
@@ -457,7 +457,7 @@ async def test_goodbye_before_a_problem_is_a_polite_goodbye(db_session, conversa
     out = await _say(db_session, session, "Oh sorry, wrong number. Bye.")
     assert session.state == VoiceCallState.ABANDONED
     assert session.ticket_id is None
-    assert scripts.LEAVING_NO_TICKET in out.twiml
+    assert scripts.LEAVING_NO_TICKET in out.text
 
 
 async def test_goodbye_words_inside_a_real_description_are_not_goodbyes():
@@ -481,7 +481,7 @@ async def test_no_acknowledgement_is_better_than_an_odd_one(db_session, monkeypa
     session = await _call(db_session)
     _described(monkeypatch, short_issue="", started=None, work_blocked=None)
     out = await _say(db_session, session, "something is wrong with my laptop")
-    assert "Sorry to hear" not in out.twiml and "Got it" not in out.twiml
+    assert "Sorry to hear" not in out.text and "Got it" not in out.text
 
 
 @pytest.mark.parametrize(
