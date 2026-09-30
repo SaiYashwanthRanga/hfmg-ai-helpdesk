@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     db_max_overflow: int = 10
 
     cors_origins: str = "http://localhost:5173"
+    # Folder holding the built dashboard (frontend/dist). When set, the backend
+    # serves it at "/" so one process serves the UI and the API. Empty = API only.
+    frontend_dist_dir: str = ""
 
     # Surfaced read-only by GET /settings/status (DESIGN.md §12) so the
     # dashboard never has to guess which deployment it's looking at.

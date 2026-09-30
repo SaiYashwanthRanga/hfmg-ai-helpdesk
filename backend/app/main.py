@@ -1,9 +1,10 @@
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from app.api.v1.router import api_router
 from app.core.config import get_settings
@@ -53,3 +54,26 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 
 app.include_router(api_router)
+
+
+def _serve_dashboard(dist: Path) -> None:
+    """Serve the built React dashboard, with index.html as the SPA fallback."""
+    index = dist / "index.html"
+    root = dist.resolve()
+
+    @app.get("/{path:path}", include_in_schema=False)
+    async def dashboard(path: str):
+        if path.startswith("api/"):
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+        candidate = (root / path).resolve()
+        if path and candidate.is_file() and root in candidate.parents:
+            return FileResponse(candidate)
+        return FileResponse(index)
+
+
+if settings.frontend_dist_dir:
+    _dist = Path(settings.frontend_dist_dir)
+    if (_dist / "index.html").is_file():
+        _serve_dashboard(_dist)
+    else:
+        logger.warning("FRONTEND_DIST_DIR=%s has no index.html; serving the API only", _dist)
