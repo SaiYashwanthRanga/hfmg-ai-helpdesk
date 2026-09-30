@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     voice_max_misunderstandings: int = 3
     voice_max_email_attempts: int = 2
 
+    # Shared secret the SIP voice gateway (Sorcery) sends as a Bearer token to
+    # /api/v1/voice/sip/*. Empty disables those endpoints entirely.
+    voice_sip_gateway_token: str = ""
+
     @field_validator("openai_temperature", mode="before")
     @classmethod
     def _blank_temperature_is_unset(cls, value: Any) -> Any:
