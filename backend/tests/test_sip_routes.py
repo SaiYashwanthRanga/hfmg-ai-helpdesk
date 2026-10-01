@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.db.models import VoiceCallSession, VoiceCallState
+from app.speech import context as speech_context
 from app.voice import nlu, scripts
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
@@ -122,6 +123,62 @@ async def test_retried_start_does_not_reset_a_call_in_progress(client, db_sessio
     response = await client.post(START_URL, json={"call_id": "sip-retry"}, headers=AUTH)
 
     assert response.status_code == 200
-    assert response.json() == {"lines": [], "expect_reply": True, "ticket_id": None}
+    body = response.json()
+    assert body["lines"] == [] and body["expect_reply"] is True and body["ticket_id"] is None
+    assert body["stt_prompt"] == speech_context.stt_prompt("COLLECT_PHONE")
     await db_session.refresh(session)
     assert session.state == VoiceCallState.COLLECT_PHONE
+
+
+# --- stt_prompt ---------------------------------------------------------------
+
+
+async def test_start_returns_description_stt_prompt(client):
+    response = await client.post(START_URL, json={"call_id": "sip-stt-start"}, headers=AUTH)
+
+    body = response.json()
+    assert set(body) == {"lines", "expect_reply", "ticket_id", "stt_prompt"}
+    assert body["stt_prompt"] == speech_context.stt_prompt("COLLECT_DESCRIPTION")
+    assert "describes an IT problem" in body["stt_prompt"]
+
+
+async def test_turn_returns_prompt_for_the_next_answer(client, monkeypatch):
+    await client.post(START_URL, json={"call_id": "sip-stt-turn", "from_number": "+18455550142"}, headers=AUTH)
+
+    async def fake_description(utterance):
+        return nlu.TurnResult(
+            value="Printer is jammed",
+            confidence="high",
+            unable_to_determine=False,
+            category="Other",
+            extras={"short_issue": "printer"},
+        )
+
+    monkeypatch.setattr(nlu, "interpret_description", fake_description)
+    response = await client.post(
+        TURN_URL, json={"call_id": "sip-stt-turn", "utterance": "the printer is jammed"}, headers=AUTH
+    )
+
+    body = response.json()
+    session_state = "COLLECT_DETAILS" if any(
+        o in " ".join(body["lines"]) for o in scripts.DETAILS_ASK_OPTIONS
+    ) else "COLLECT_NAME"
+    assert body["expect_reply"] is True
+    assert body["stt_prompt"] == speech_context.stt_prompt(session_state)
+
+
+async def test_no_stt_prompt_when_the_call_ends(client):
+    response = await client.post(TURN_URL, json={"call_id": "sip-stt-unknown", "utterance": "hi"}, headers=AUTH)
+
+    body = response.json()
+    assert body["expect_reply"] is False
+    assert body["stt_prompt"] is None
+
+
+async def test_stt_prompt_disabled_by_setting(client, monkeypatch):
+    monkeypatch.setattr(settings, "speech_stt_context", False)
+    response = await client.post(START_URL, json={"call_id": "sip-stt-off"}, headers=AUTH)
+
+    body = response.json()
+    assert body["expect_reply"] is True
+    assert body["stt_prompt"] is None

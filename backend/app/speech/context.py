@@ -5,11 +5,12 @@ shape of the answer: an email spelled letter by letter, ten digits, a yes or
 no. Measured on the eval corpus (backend/eval), biasing lowered word error on
 email and phone turns substantially -- see docs/reviews/VOICE_LATENCY_ACCURACY_REPORT.md.
 
-Used twice:
+Used by:
 - `transcription_prompt(state)`: the `prompt` for OpenAI transcription (AI
   Call Simulator).
-- `gather_hints(state)`: Twilio <Gather hints="..."> on the production phone
-  path, which boosts the same phrases in Twilio's recognizer.
+- `stt_prompt(state, collected)`: the same prompt for the phone path, returned
+  to the SIP gateway as `stt_prompt` so it can pass it to its transcriber.
+- `gather_hints(state)`: comma-separated recognizer hint phrases.
 """
 
 # Words callers at HFMG say that a general-purpose recognizer gets wrong.
@@ -97,6 +98,15 @@ def recognition_mode(state: str | None, collected: dict | None) -> str | None:
     if state == "CONFIRM_NAME" and collected.get("name_spell_step"):
         return "SPELL_NAME"
     return state
+
+
+def stt_prompt(state: str | None, collected: dict | None = None) -> str | None:
+    """Transcription prompt for the caller's next answer, or None when the
+    state has no specific hint (greeting, terminal states)."""
+    mode = recognition_mode(state, collected)
+    if mode not in _STATE_HINTS:
+        return None
+    return transcription_prompt(mode)
 
 
 def gather_hints(state: str | None) -> str:

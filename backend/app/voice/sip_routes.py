@@ -16,7 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.db.base import get_db
-from app.db.models import EscalationReason, VoiceCallState
+from app.db.models import EscalationReason, VoiceCallSession, VoiceCallState
+from app.speech import context as speech_context
 from app.voice import orchestrator, scripts
 from app.voice.tasks import dispatch_ticket_tasks
 from app.voice.session import get_or_create_session, get_session
@@ -64,13 +65,23 @@ class TurnResponse(BaseModel):
     lines: list[str]
     expect_reply: bool
     ticket_id: str | None = None
+    # Transcription prompt for the caller's next answer (app/speech/context.py).
+    # Null when no reply is expected or the state has no specific hint.
+    stt_prompt: str | None = None
 
 
-def _to_response(outcome: orchestrator.TurnOutcome) -> TurnResponse:
+def _stt_prompt(session: VoiceCallSession, expect_reply: bool) -> str | None:
+    if not expect_reply or not settings.speech_stt_context:
+        return None
+    return speech_context.stt_prompt(session.state.value, session.collected)
+
+
+def _to_response(outcome: orchestrator.TurnOutcome, session: VoiceCallSession) -> TurnResponse:
     return TurnResponse(
         lines=outcome.lines,
         expect_reply=outcome.expect_reply,
         ticket_id=str(outcome.ticket_id) if outcome.ticket_id else None,
+        stt_prompt=_stt_prompt(session, outcome.expect_reply),
     )
 
 
@@ -88,7 +99,11 @@ async def start_call(body: StartCallRequest, db: AsyncSession = Depends(get_db))
         # call that has already begun: replay the greeting if nothing else has
         # happened yet, otherwise just keep listening.
         only_greeted = session.state == VoiceCallState.COLLECT_DESCRIPTION and len(session.turns) <= 1
-        return TurnResponse(lines=[scripts.GREETING] if only_greeted else [], expect_reply=True)
+        return TurnResponse(
+            lines=[scripts.GREETING] if only_greeted else [],
+            expect_reply=True,
+            stt_prompt=_stt_prompt(session, True),
+        )
 
     try:
         outcome = await orchestrator.start_call(session)
@@ -96,7 +111,7 @@ async def start_call(body: StartCallRequest, db: AsyncSession = Depends(get_db))
     except Exception:
         logger.exception("Failed to start SIP call %s", body.call_id)
         return _error_response()
-    return _to_response(outcome)
+    return _to_response(outcome, session)
 
 
 @router.post("/turn", response_model=TurnResponse)
@@ -134,7 +149,7 @@ async def turn(
         session.misunderstanding_count,
         body.confidence,
     )
-    return _to_response(outcome)
+    return _to_response(outcome, session)
 
 
 @router.post("/status", status_code=status.HTTP_204_NO_CONTENT)

@@ -56,12 +56,18 @@ Send an empty `utterance` when the caller said nothing. The backend counts it as
 ### Response for `/start` and `/turn`
 
 ```json
-{ "lines": ["Thanks. May I have your name?"], "expect_reply": true, "ticket_id": null }
+{
+  "lines": ["Thanks. May I have your name?"],
+  "expect_reply": true,
+  "ticket_id": null,
+  "stt_prompt": "English phone call to the HFMG IT help desk. Vocabulary: ... The caller says their first and last name and their department, ..."
+}
 ```
 
 - Speak every entry in `lines`, in order.
 - If `expect_reply` is `true`, listen for the caller and post the transcript to `/turn`. If `false`, hang up after speaking.
 - `ticket_id` is set once a ticket exists.
+- `stt_prompt` (optional, may be `null`) describes the caller's **next** answer: the problem description, name and department, spelled letters, an email, a phone number, or yes/no. Pass it as the `prompt` of the transcription request for the utterance that follows. It is `null` when `expect_reply` is `false`, when the state has no specific hint, or when `SPEECH_STT_CONTEXT=false`. Gateways that ignore it keep working unchanged.
 - If the backend hits an internal error it still returns `200` with a single apology line and `expect_reply: false`, so the caller never hears silence.
 
 ### `POST /status`
