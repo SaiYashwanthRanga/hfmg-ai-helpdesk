@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import type { SettingsStatusResponse } from "../types/settings";
 import { ApiError } from "./client";
+import { API_BASE_URL } from "./baseUrl";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api/v1";
 
 /**
  * GET /settings/status only — there is deliberately no corresponding

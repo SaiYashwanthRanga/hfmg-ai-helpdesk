@@ -18,8 +18,8 @@ import type {
   TurnTimings,
 } from "../types/voiceSimulator";
 import { ApiError } from "./client";
+import { API_BASE_URL } from "./baseUrl";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api/v1";
 const BASE = "/voice-simulator";
 
 /** Absolute URL for a reply's `speech_path` (streamed audio). */

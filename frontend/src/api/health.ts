@@ -1,4 +1,5 @@
 import type { DependencyStatus } from "../components/ui/StatusIndicator";
+import { API_BASE_URL } from "./baseUrl";
 
 export interface DependencyHealth {
   status: DependencyStatus;
@@ -12,7 +13,6 @@ export interface DependencyHealthReport {
   email: DependencyHealth;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api/v1";
 
 interface RawDependencyStatus {
   status: DependencyStatus;
