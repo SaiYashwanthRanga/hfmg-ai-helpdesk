@@ -15,6 +15,7 @@ import type {
   StartRequest,
   StartResponse,
 } from "../../types/voiceSimulator";
+import { uuid as newUuid } from "../uuid.ts";
 
 export interface ReplayApi {
   start: (body: StartRequest) => Promise<StartResponse>;
@@ -60,7 +61,7 @@ export function outcomeDiffs(before: SimulatorSession, after: SimulatorSession):
   return diffs;
 }
 
-export async function replaySession(api: ReplayApi, source: SessionDetail, uuid = () => crypto.randomUUID()): Promise<ReplayResult> {
+export async function replaySession(api: ReplayApi, source: SessionDetail, uuid = () => newUuid()): Promise<ReplayResult> {
   const callerTurns = source.turns.filter((t) => t.input_mode !== "system" && t.status === "completed");
   const started = await api.start({
     tts: false,

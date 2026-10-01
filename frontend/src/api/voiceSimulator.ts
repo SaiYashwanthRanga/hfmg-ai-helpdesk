@@ -19,6 +19,7 @@ import type {
 } from "../types/voiceSimulator";
 import { ApiError } from "./client";
 import { API_BASE_URL } from "./baseUrl";
+import { uuid } from "../lib/uuid";
 
 const BASE = "/voice-simulator";
 
@@ -88,7 +89,7 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
     throw err;
   } finally {
     appendLog({
-      id: crypto.randomUUID(),
+      id: uuid(),
       method,
       path: `${BASE}${path}`,
       status,

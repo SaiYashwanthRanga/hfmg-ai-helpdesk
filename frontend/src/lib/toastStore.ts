@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { uuid } from "./uuid";
 
 export type ToastVariant = "success" | "warning" | "error" | "info";
 
@@ -44,7 +45,7 @@ function dismiss(id: string) {
 }
 
 function push(variant: ToastVariant, message: string, action?: ToastAction) {
-  const id = crypto.randomUUID();
+  const id = uuid();
   toasts = [...toasts, { id, variant, message, action }];
   emitChange();
 

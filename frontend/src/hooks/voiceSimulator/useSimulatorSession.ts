@@ -11,6 +11,7 @@ import { useRecorder } from "./useRecorder";
 import type { Recording } from "./useRecorder";
 import { DEFAULT_VAD, useVoiceActivity } from "./useVoiceActivity";
 import type { VadSettings } from "./useVoiceActivity";
+import { uuid } from "../../lib/uuid";
 
 export type VoiceEngine = "server" | "browser";
 
@@ -183,7 +184,7 @@ export function useSimulatorSession() {
   const submitText = useCallback(
     (text: string, inputMode: "text" | "mock" = "text") => {
       if (stateRef.current.status !== "listening") return false;
-      const turn: PendingTurn = { turnClientId: crypto.randomUUID(), utterance: text, inputMode };
+      const turn: PendingTurn = { turnClientId: uuid(), utterance: text, inputMode };
       clocks.current.set(turn.turnClientId, { speechEndedAt: performance.now(), utteranceMs: null, captureMs: null });
       recorder.cancel();
       dispatch({ type: "TURN_SUBMITTED", turn, at: nowIso() });
@@ -196,7 +197,7 @@ export function useSimulatorSession() {
   const submitRecording = useCallback(
     (recording: Recording, speechEndedAt: number) => {
       if (stateRef.current.status !== "listening") return;
-      const turn: PendingTurn = { turnClientId: crypto.randomUUID(), utterance: null, inputMode: "voice" };
+      const turn: PendingTurn = { turnClientId: uuid(), utterance: null, inputMode: "voice" };
       clocks.current.set(turn.turnClientId, { speechEndedAt, utteranceMs: Math.round(recording.durationMs), captureMs: null });
       dispatch({ type: "TURN_SUBMITTED", turn, at: nowIso() });
       void runTurn(turn, recording);

@@ -17,6 +17,7 @@ import type {
   StartResponse,
 } from "../../types/voiceSimulator";
 import { stageStats } from "./latency.ts";
+import { uuid as newUuid } from "../uuid.ts";
 
 export const LOAD_TEST_PRESETS = [1, 5, 10, 25] as const;
 
@@ -219,7 +220,7 @@ export async function runLoadTest(
   onProgress?: (progress: LoadTestProgress) => void,
 ): Promise<{ results: CallerResult[]; summary: LoadTestSummary }> {
   const now = options.now ?? (() => performance.now());
-  const uuid = options.uuid ?? (() => crypto.randomUUID());
+  const uuid = options.uuid ?? (() => newUuid());
   const concurrency = Math.max(1, Math.min(options.concurrency ?? options.callers, options.callers));
   const results: CallerResult[] = new Array(options.callers);
   const progress: LoadTestProgress = { started: 0, finished: 0, turns: 0, results: [] };
