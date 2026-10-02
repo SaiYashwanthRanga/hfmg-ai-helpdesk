@@ -122,8 +122,36 @@ def _strict_scope(speech: str) -> dict[str, Any]:
     return _fact(None, "none", None)
 
 
-def _answer(schema_name: str, speech: str, strict: bool = False) -> dict[str, Any]:
+def _clarification(lowered: str, choices: list[str]) -> str:
+    """Keyword stand-in for the clarification interpreter."""
+    if "just_me" in choices:  # the scope question
+        if _has(lowered, ("whole office", "whole site", "everyone in the office", "entire")):
+            return "whole_site"
+        if _has(lowered, ("just me", "only me", "only happening to me", "nobody else")):
+            return "just_me"
+        if _has(lowered, ("team", "others", "everyone", "a few of us", "other people", "billing")):
+            return "others"
+    else:
+        if _has(lowered, ("don't know", "not sure", "no idea")):
+            return "unsure"
+        if _has(lowered, ("can still work", "i can work", "workaround", "not stopping", "paper", "not held up")):
+            return "no"
+        if _has(lowered, ("partly", "sometimes", "kind of")):
+            return "partly"
+        if _has(lowered, ("stopping me", "can't work", "cannot work", "can't do anything", "can't check", "yes", "yeah")):
+            return "yes"
+        if _has(lowered, ("no", "nope")):
+            return "no"
+    if _has(lowered, ("don't know", "not sure", "no idea")):
+        return "unsure"
+    return "unclear"
+
+
+def _answer(schema_name: str, speech: str, strict: bool = False, choices: list[str] | None = None) -> dict[str, Any]:
     lowered = speech.lower()
+    if schema_name == "record_clarification":
+        answer = _clarification(lowered, choices or [])
+        return {"escalation_requested": _has(lowered, _HUMAN), "answer": answer, "unable_to_determine": answer == "unclear"}
     wants_human = _has(lowered, _HUMAN)
     empty = not lowered.strip()
 
@@ -251,7 +279,8 @@ class FakeProvider:
         started = time.perf_counter()
         await asyncio.sleep(settings.fake_llm_latency_ms / 1000)
         strict = (schema.get("properties", {}).get("work_blocked", {}) or {}).get("type") == "object"
-        output = _answer(schema_name, _speech(user), strict=strict)
+        choices = (schema.get("properties", {}).get("answer", {}) or {}).get("enum")
+        output = _answer(schema_name, _speech(user), strict=strict, choices=choices)
         trace.record_llm_call(
             kind="structured",
             schema_name=schema_name,

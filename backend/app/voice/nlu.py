@@ -28,7 +28,7 @@ from app.core import trace
 from app.core.config import get_settings
 from app.db.models import Priority
 from app.voice import strict_extraction
-from app.voice.facts import WORK_BLOCKED, Source
+from app.voice.facts import WORK_BLOCKED, Source, normalize_text
 from app.llm.factory import get_provider
 
 logger = logging.getLogger("hfmg.voice.nlu")
@@ -792,6 +792,95 @@ async def interpret_details(utterance: str, *, asked: str) -> TurnResult:
         unable_to_determine=bool(data.get("unable_to_determine")) or (started is None and blocked is None),
         extras=extras,
     )
+
+
+# --- clarification questions (strict extraction) ------------------------------------------
+
+#: What each clarification question means, so a bare "yes" has exactly one reading.
+CLARIFICATIONS = {
+    "blocked": {
+        "answers": ["yes", "no", "partly", "unsure", "unclear"],
+        "yes": "it IS stopping them from doing their work",
+        "no": "it is NOT stopping them: they can still work, or have a workaround",
+    },
+    "patient_care": {
+        "answers": ["yes", "no", "partly", "unsure", "unclear"],
+        "yes": "patients cannot currently be checked in or seen because of this",
+        "no": "patient care is NOT currently held up",
+    },
+    "scope": {
+        "answers": ["just_me", "others", "whole_site", "unsure", "unclear"],
+        "yes": "",
+        "no": "",
+    },
+}
+
+_BARE_YES = {
+    "yes", "yeah", "yep", "yup", "yes it is", "yes it does", "yes please", "yes definitely",
+    "yes completely", "yes absolutely", "yes it is stopping me", "yes it's stopping me",
+}
+_BARE_NO = {
+    "no", "nope", "no it's not", "no it isn't", "no it is not", "no it doesn't", "no it does not",
+    "not really", "no not really", "no not at all", "not at all",
+}
+
+
+def bare_yes_no(utterance: str) -> bool | None:
+    """True/False only for a reply that is *nothing but* yes or no.
+
+    "Yes, I can still work" is not a bare yes: to "is this stopping you from
+    working?" it means no. Anything longer than a plain yes/no goes to the model.
+    """
+    text = normalize_text(utterance)
+    if text in _BARE_YES:
+        return True
+    if text in _BARE_NO:
+        return False
+    return None
+
+
+async def interpret_clarification(kind: str, question: str, utterance: str) -> TurnResult:
+    """Read the caller's reply to one clarification question.
+
+    extras["answer"] is one of CLARIFICATIONS[kind]["answers"]; the orchestrator maps
+    it to a fact. Nothing but this reply is considered.
+    """
+    spec = CLARIFICATIONS[kind]
+    quick = bare_yes_no(utterance)
+    if quick is not None:
+        answer = ("others" if quick else "just_me") if kind == "scope" else ("yes" if quick else "no")
+        return TurnResult(unable_to_determine=False, extras={"answer": answer, "via": "bare"})
+
+    properties = {
+        "escalation_requested": {"type": "boolean", "description": "True only if the caller is asking to speak with a human being."},
+        "answer": {"type": "string", "enum": spec["answers"]},
+        "unable_to_determine": {"type": "boolean"},
+    }
+    if kind == "scope":
+        meaning = (
+            "just_me: only the caller is affected. others: other people (a team, a department, a few "
+            "colleagues) are affected. whole_site: the whole office or site. "
+        )
+    else:
+        meaning = f"yes means {spec['yes']}. no means {spec['no']}. "
+    system = (
+        _SYSTEM
+        + "\n\nThe agent asked one yes/no style question. Classify the caller's reply to THAT question "
+        + "only; ignore anything from earlier in the call. "
+        + meaning
+        + "partly: they say it is partly or sometimes. unsure: they say they do not know. unclear: "
+        "anything else, or not an answer."
+    )
+    data = await _call_structured(system, _user_prompt(question, utterance), "record_clarification", properties)
+    if data is None:
+        return TurnResult()
+    answer = data.get("answer") if data.get("answer") in spec["answers"] else "unclear"
+    return TurnResult(
+        escalation_requested=bool(data.get("escalation_requested")),
+        unable_to_determine=bool(data.get("unable_to_determine")) or answer == "unclear",
+        extras={"answer": answer, "via": "model"},
+    )
+
 
 
 async def interpret_name(utterance: str, *, asked: str = "May I have your name and department?") -> TurnResult:

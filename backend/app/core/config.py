@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     # quote, and anything not explicitly stated is unknown and asked about. Off = the
     # original inferring behaviour. See app/voice/strict_extraction.py.
     voice_strict_extraction: bool = False
+    # With strict extraction, how many extra clarification questions (can you still work,
+    # is anyone else affected, is patient care blocked) may be asked after the details
+    # question. Each fact is asked about at most twice; unknown after that is final.
+    voice_max_clarification_turns: int = 2
     # Read the caller's name back spelled when confidence in it is low
     # (unfamiliar name, low recognizer confidence), and let them correct it.
     voice_confirm_name: bool = True

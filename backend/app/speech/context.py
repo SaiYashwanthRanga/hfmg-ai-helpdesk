@@ -60,6 +60,10 @@ _STATE_HINTS: dict[str, str] = {
         "time, and may say dot or underscore. Write every letter separately, separated by spaces, "
         "exactly as heard, for example: R A N G A dot S A I. Do not join letters into words."
     ),
+    # Strict extraction's clarification questions (state COLLECT_DETAILS + a pending question).
+    "CLARIFY_BLOCKED": "The caller answers yes or no, or says whether they can still work.",
+    "CLARIFY_SCOPE": "The caller says whether anyone else is affected: just them, their team, or everyone.",
+    "CLARIFY_PATIENT_CARE": "The caller answers yes or no about whether patients can be checked in or seen.",
     "CONFIRM_EMAIL": "The caller answers yes or no.",
     "CONFIRM_NAME": "The caller answers yes or no, or spells their name letter by letter.",
     "CONFIRM_SUMMARY": "The caller answers yes or no, or says what to change, such as their name, department, or when it started.",
@@ -97,6 +101,8 @@ def recognition_mode(state: str | None, collected: dict | None) -> str | None:
         return "SPELL_EMAIL"
     if state == "CONFIRM_NAME" and collected.get("name_spell_step"):
         return "SPELL_NAME"
+    if state == "COLLECT_DETAILS" and collected.get("pending_question"):
+        return f"CLARIFY_{str(collected['pending_question']).upper()}"
     return state
 
 

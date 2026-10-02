@@ -45,6 +45,33 @@ DETAILS_ASK_OPTIONS = (
 )
 DETAILS_ASK = DETAILS_ASK_OPTIONS[1]
 DETAILS_ASK_STARTED = "When did this start?"
+
+# Strict extraction: the details question invites an explicit statement ("it's stopping me",
+# "I can keep working") rather than a bare yes/no that could mean either half of the question.
+DETAILS_ASK_STRICT_OPTIONS = (
+    "When did this start, and are you able to keep working, or is it stopping you?",
+    "When did this start, and is it stopping you from working, or can you keep going?",
+)
+
+# Clarification questions. The first wording is used the first time, the second if the
+# first did not settle it. Each has one fixed meaning for yes (see nlu.CLARIFICATIONS).
+CLARIFY_BLOCKED_OPTIONS = (
+    "Is this stopping you from doing your work?",
+    "Is it stopping you from working completely, yes or no?",
+)
+CLARIFY_SCOPE_OPTIONS = (
+    "Is anyone else affected besides you?",
+    "Is this only happening to you, or to other people too?",
+)
+CLARIFY_PATIENT_CARE_OPTIONS = (
+    "Is this stopping you from checking in or seeing patients right now?",
+    "Are patients being held up right now because of this, yes or no?",
+)
+CLARIFY_OPTIONS = {
+    "blocked": CLARIFY_BLOCKED_OPTIONS,
+    "scope": CLARIFY_SCOPE_OPTIONS,
+    "patient_care": CLARIFY_PATIENT_CARE_OPTIONS,
+}
 DETAILS_ASK_BLOCKED = "Can you still get your work done, or is this stopping you completely?"
 
 # Name and department in one question: one turn instead of two.

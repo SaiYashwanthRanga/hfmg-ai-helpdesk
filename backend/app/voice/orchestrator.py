@@ -115,6 +115,8 @@ async def handle_turn(
             # Optional information / confirmation: silence moves the call on
             # rather than counting as a misunderstanding.
             update_collected(session, name_spell_step=None, name_reconfirm=False, name_confirm_pending=False)
+            if session.collected.get("pending_question"):
+                _record_clarification(session, session.collected["pending_question"], "unclear", "")
             return await _next_step(db, session)
         if session.state == VoiceCallState.COLLECT_PHONE:
             return await _phone_not_understood(db, session, "")
@@ -254,6 +256,8 @@ def _record_description(session: VoiceCallSession, result: nlu.TurnResult) -> No
 
 async def _handle_details(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
     """When it started / whether the caller can work. Optional: never retried."""
+    if session.collected.get("pending_question"):
+        return await _handle_clarification(db, session, utterance)
     asked = _details_question(session)
     result = await nlu.interpret_details(utterance, asked=asked)
 
@@ -482,11 +486,118 @@ def _mark_asked(session: VoiceCallSession, what: str) -> None:
     update_collected(session, asked=[*(session.collected.get("asked") or []), what])
 
 
+# --- clarification questions (strict extraction) ----------------------------------------------
+
+#: Systems several people share: if one is down, others probably are too, so scope is worth asking.
+_SHARED_CATEGORIES = {"Network", "Printer", "eClinicalWorks"}
+#: A fact is asked about at most this many times; after that it stays unknown.
+MAX_ASKS_PER_FACT = 2
+
+_CLARIFY_FIELD = {"blocked": facts_mod.WORK_BLOCKED, "patient_care": facts_mod.PATIENT_CARE, "scope": facts_mod.SCOPE}
+
+
+def _mark_clarify_ask(session: VoiceCallSession, kind: str, *, counts_toward_cap: bool = True) -> None:
+    asks = dict(session.collected.get("clarify_asks") or {})
+    asks[kind] = asks.get(kind, 0) + 1
+    update_collected(session, clarify_asks=asks)
+    if counts_toward_cap:
+        update_collected(session, clarify_turns=session.collected.get("clarify_turns", 0) + 1)
+
+
+def _impact_decided(collected: dict) -> bool:
+    """Strict extraction: patients blocked, or the whole site down, already fix the priority,
+    so how the caller's own work is going is not worth a question."""
+    if not settings.voice_strict_extraction:
+        return False
+    return (
+        facts_mod.get_fact(collected, facts_mod.PATIENT_CARE).value is True
+        or facts_mod.get_fact(collected, facts_mod.SCOPE).value == "whole_site"
+    )
+
+
+def _blocked_needed(collected: dict) -> bool:
+    return collected.get("work_blocked") is None and not _impact_decided(collected)
+
+
+def _next_clarification(session: VoiceCallSession) -> str | None:
+    """Which impact fact, if any, to ask about next. Never loops: every ask is counted,
+    each fact is asked at most MAX_ASKS_PER_FACT times, and the whole call at most
+    `voice_max_clarification_turns` times."""
+    if not settings.voice_strict_extraction:
+        return None
+    c = session.collected
+    if c.get("clarify_turns", 0) >= settings.voice_max_clarification_turns:
+        return None
+    asks = c.get("clarify_asks") or {}
+    blocked = facts_mod.get_fact(c, facts_mod.WORK_BLOCKED)
+    patient = facts_mod.get_fact(c, facts_mod.PATIENT_CARE)
+    scope = facts_mod.get_fact(c, facts_mod.SCOPE)
+
+    if not blocked.is_known and _blocked_needed(c) and asks.get("blocked", 0) < MAX_ASKS_PER_FACT:
+        return "blocked"
+    patient_matters = bool(c.get("patient_context_mentioned")) or (
+        blocked.value is True and c.get("category") == "eClinicalWorks"
+    )
+    if not patient.is_known and patient_matters and asks.get("patient_care", 0) < MAX_ASKS_PER_FACT:
+        return "patient_care"
+    scope_matters = blocked.value is True or c.get("category") in _SHARED_CATEGORIES
+    if not scope.is_known and scope_matters and asks.get("scope", 0) < MAX_ASKS_PER_FACT:
+        return "scope"
+    return None
+
+
+def _clarification_prompt(session: VoiceCallSession, kind: str) -> str:
+    options = scripts.CLARIFY_OPTIONS[kind]
+    attempt = (session.collected.get("clarify_asks") or {}).get(kind, 1) - 1
+    return options[min(attempt, len(options) - 1)]
+
+
+_ANSWER_VALUE = {
+    ("blocked", "yes"): True, ("blocked", "no"): False,
+    ("patient_care", "yes"): True, ("patient_care", "no"): False,
+    ("scope", "just_me"): "one_person", ("scope", "others"): "several_people", ("scope", "whole_site"): "whole_site",
+}
+
+
+def _record_clarification(session: VoiceCallSession, kind: str, answer: str, utterance: str) -> None:
+    """Turn the caller's answer into a fact and close the pending question."""
+    field = _CLARIFY_FIELD[kind]
+    value = _ANSWER_VALUE.get((kind, answer))
+    if value is not None:
+        fact = facts_mod.Fact.known(
+            field, value, source=facts_mod.Source.ANSWER, confidence=0.95, evidence=utterance.strip()[:200] or None
+        )
+    else:
+        reason = facts_mod.UnknownReason.CALLER_UNSURE if answer == "unsure" else facts_mod.UnknownReason.ASKED_UNCLEAR
+        fact = facts_mod.Fact.unknown(field, reason, source=facts_mod.Source.ANSWER)
+        if answer == "unsure":
+            # "I don't know" is a final answer: never ask this again.
+            asks = dict(session.collected.get("clarify_asks") or {})
+            asks[kind] = MAX_ASKS_PER_FACT
+            update_collected(session, clarify_asks=asks)
+    session.collected = facts_mod.apply_fact(session.collected, fact)
+    update_collected(session, pending_question=None)
+    _apply_priority_rules(session)
+
+
+async def _handle_clarification(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
+    """The caller's reply to a clarification question. Optional information: an unclear
+    answer never counts toward escalation, and the same question is not asked more than twice."""
+    kind = session.collected["pending_question"]
+    result = await nlu.interpret_clarification(kind, _clarification_prompt(session, kind), utterance)
+    if _wants_human(utterance, result):
+        update_collected(session, pending_question=None)
+        return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
+    _record_clarification(session, kind, result.extras.get("answer", "unclear"), utterance)
+    return await _next_step(db, session)
+
+
 def _details_question(session: VoiceCallSession) -> str:
     need_started = not session.collected.get("started")
-    need_blocked = session.collected.get("work_blocked") is None
+    need_blocked = _blocked_needed(session.collected)
     if need_started and need_blocked:
-        return scripts.pick(scripts.DETAILS_ASK_OPTIONS, len(session.turns or []))
+        options = scripts.DETAILS_ASK_STRICT_OPTIONS if settings.voice_strict_extraction else scripts.DETAILS_ASK_OPTIONS
+        return scripts.pick(options, len(session.turns or []))
     return scripts.DETAILS_ASK_STARTED if need_started else scripts.DETAILS_ASK_BLOCKED
 
 
@@ -537,9 +648,21 @@ async def _next_step(
             prompt = f"{acknowledgement} {prompt}"
         return TurnOutcome(_speak(session, _ask(session, prompt)))
 
-    if (not collected.get("started") or collected.get("work_blocked") is None) and not _asked(session, "details"):
+    if (not collected.get("started") or _blocked_needed(collected)) and not _asked(session, "details"):
         _mark_asked(session, "details")
+        if settings.voice_strict_extraction and _blocked_needed(collected):
+            _mark_clarify_ask(session, "blocked", counts_toward_cap=False)  # the details question asks it too
+            if collected.get("started"):
+                # Only "can you work" is missing: ask it directly, with one clear meaning for yes.
+                update_collected(session, pending_question="blocked")
+                return ask(VoiceCallState.COLLECT_DETAILS, _clarification_prompt(session, "blocked"))
         return ask(VoiceCallState.COLLECT_DETAILS, _details_question(session))
+
+    clarification = _next_clarification(session)
+    if clarification:
+        _mark_clarify_ask(session, clarification)
+        update_collected(session, pending_question=clarification)
+        return ask(VoiceCallState.COLLECT_DETAILS, _clarification_prompt(session, clarification))
 
     if not collected.get("caller_name"):
         _mark_asked(session, "department")  # asked together with the name
