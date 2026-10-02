@@ -171,6 +171,59 @@ The caller is **never asked** what priority their issue is. Callers are not cali
 - The agent announces Critical/High out loud ("I'm marking this high priority") but stays silent on Medium/Low — announcing routine priority invites negotiation.
 - A caller explicitly saying "this is an emergency" is a strong signal but **not** an override; the description still has to support it. Otherwise priority becomes a self-declared field and stops meaning anything.
 
+### 5.1 Impact facts: stated, not inferred (`VOICE_STRICT_EXTRACTION`)
+
+Priority is decided from three facts: can the caller work (`work_blocked`), is patient care blocked
+(`patient_care_affected`) and who is affected (`affected_scope`). The first extraction let the model
+*infer* them, and an audit found it did: "Outlook won't open" became "can't work" (High), "I use this for
+patient charts" became "patient care affected" (Critical), and the same sentence could get different
+priorities ([the baseline](docs/reviews/EXTRACTION_BASELINE.md)). With strict extraction a fact is recorded
+only when the caller said it, and the code, not the model, decides whether to believe the model.
+
+**Three states.** Each fact is `true`, `false` or `unknown` (scope: one person / several people / whole site /
+unknown). `unknown` is a real answer and is never turned into false. A fact carries its source
+(`description`, `details`, `answer`, `correction`), the caller's own words as evidence, a confidence and, when
+unknown, why (not stated, implied but unconfirmed, ungrounded quote, gate rejected, verifier rejected,
+conflicting, asked unclear, caller unsure). They live in `collected["facts"]`, with the plain
+`True/False/None` mirror in `collected["work_blocked"]` etc., so no migration was needed. Precedence: a direct
+answer beats a description; a later statement beats an earlier one at the same level; unknown never overwrites
+known. Code: `backend/app/voice/facts.py`.
+
+**Layers, each able to say "unknown":**
+1. **Prompt.** The model returns `{value, basis, evidence}` and may use `explicit` only for the caller's own
+   words. Descriptions name what is *not* enough (a symptom, a clinical context, a single-app login).
+2. **Grounding.** The quote must really appear in what the caller said.
+3. **Phrase gate** (`phrase_gate.py`). Plain patterns decide whether the words state the fact: "I can't work",
+   "I can't do my job", "I'm blocked", "we can't check in any patients", "I can't log in to my computer"
+   (but not "can't log in to Outlook"). Counter-evidence ("but I can still work") makes a conflict.
+4. **Verifier** (`nlu.verify_fact`). A second tiny model call sees only the quote and must clearly confirm every
+   accepted `true` for work or patient care. It runs only then, in parallel, with its own short timeout; any
+   failure leaves the fact unknown.
+5. **Clarification questions** for what is still unknown ([CALL_FLOW.md](CALL_FLOW.md) §2.1).
+6. **Read-back**, where the caller can still correct it (a correction is the strongest source).
+
+**Priority integration** (`priority.assess_facts`). The rules in `priority.py` are unchanged: true boosts, false
+caps, **unknown does neither**: the model's rating stands, and strict mode asks the model to rate only stated
+impact. What is new is saying so: `unverified` lists facts never settled; a clinical issue (eClinicalWorks, or
+patients mentioned) with an unresolved safety fact gets `NEEDS TRIAGE REVIEW - ...` as the first line of the
+ticket; the ticket quotes the caller's words behind the priority; the read-back says "I couldn't confirm how
+much this affects your work". Unknown patient impact never escalates to Critical. A known fact below
+`ACCEPT_THRESHOLD` (0.8) counts as unknown.
+
+**Settings** (`backend/.env`):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `VOICE_STRICT_EXTRACTION` | `false` | Master switch. Off = the original behaviour, unchanged |
+| `VOICE_MAX_CLARIFICATION_TURNS` | `2` | Extra impact questions per call (each fact is asked at most twice) |
+| `VOICE_VERIFY_SAFETY_FACTS` | `true` | The verifier call (only with strict extraction) |
+| `VOICE_VERIFIER_TIMEOUT_SECONDS` | `3.0` | Its timeout; no hedge, no retry |
+
+**Measured** ([validation report](docs/reviews/EXTRACTION_STRICT_VALIDATION.md), 340 runs, `gpt-4.1-mini`):
+invented `work_blocked` 61% to 0%, false Critical 5.6% to 0%, false High 15.6% to 4.7%, priority accuracy 75.6%
+to 94.7%. Reproduce with `python -m eval.extraction_eval` and `python -m eval.conversation_eval` (the corpus is
+`backend/eval/extraction_corpus.py`).
+
 ## 6. Escalation Intent Detection
 
 Checked on **every** turn, before slot extraction, so "let me talk to someone" works at any point — including mid-answer.

@@ -22,10 +22,13 @@ volunteered; a later explicit statement beats an earlier one at the same
 level; an unknown never overwrites a known value.
 """
 
+import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
+
+logger = logging.getLogger("hfmg.voice.facts")
 
 #: A fact is trusted (used to change priority) only at or above this confidence.
 ACCEPT_THRESHOLD = 0.8
@@ -218,6 +221,12 @@ def apply_fact(collected: dict, new: Fact) -> dict:
     existing = (collected.get(FACTS_KEY) or {}).get(new.field)
     current = get_fact(collected, new.field) if (existing or collected.get(new.field) is not None) else None
     merged = merge(current, new)
+    if conflicts(current, new):
+        # Two explicit statements disagree: keep an audit trail of which one won and why.
+        logger.info(
+            "fact %s: %s (%s) vs %s (%s) -> kept %s",
+            new.field, current.state, current.source.value, new.state, new.source.value, merged.state,
+        )
     facts = {**(collected.get(FACTS_KEY) or {}), new.field: merged.to_dict()}
     return {**collected, FACTS_KEY: facts, new.field: merged.value}
 

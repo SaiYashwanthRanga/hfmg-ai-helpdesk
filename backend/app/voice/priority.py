@@ -16,7 +16,7 @@ from dataclasses import dataclass, replace
 
 from app.db.models import Priority
 from app.voice import facts as facts_mod
-from app.voice.facts import Fact
+from app.voice.facts import Fact, UnknownReason
 
 SCOPES = {"one_person": "One person", "several_people": "Several people", "whole_site": "Whole site"}
 
@@ -162,9 +162,11 @@ def assess_facts(
     `unverified`, a clinical issue with an unresolved safety fact sets `needs_triage`,
     and `basis` quotes the caller's words behind the rule that decided the priority.
     """
-    work = facts[facts_mod.WORK_BLOCKED]
-    patient = facts[facts_mod.PATIENT_CARE]
-    scope = facts[facts_mod.SCOPE]
+    # A fact below the confidence threshold counts as unknown: it neither boosts nor caps.
+    work, patient, scope = (
+        fact if fact.is_trusted() else Fact.unknown(fact.field, UnknownReason.GATE_REJECTED, source=fact.source)
+        for fact in (facts[facts_mod.WORK_BLOCKED], facts[facts_mod.PATIENT_CARE], facts[facts_mod.SCOPE])
+    )
 
     base = assess(
         model_priority=model_priority,
@@ -183,7 +185,9 @@ def assess_facts(
     if not patient.is_known and clinical:
         unverified.append("patient_impact")
 
-    evidence_fact = facts.get(_BASIS_FIELD.get(base.rule, ""))
+    evidence_fact = {facts_mod.WORK_BLOCKED: work, facts_mod.PATIENT_CARE: patient, facts_mod.SCOPE: scope}.get(
+        _BASIS_FIELD.get(base.rule, "")
+    )
     basis = f'caller said "{evidence_fact.evidence}"' if evidence_fact and evidence_fact.evidence else None
 
     return replace(base, unverified=tuple(unverified), needs_triage=clinical and bool(unverified), basis=basis)

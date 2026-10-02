@@ -229,3 +229,13 @@ async def test_original_behaviour_is_unchanged_when_strict_is_off(db_session, mo
     ticket = await orchestrator._create_ticket(db_session, session)
     assert "NEEDS TRIAGE" not in ticket.description and "not confirmed" not in ticket.description
     assert (await db_session.execute(select(Ticket).where(Ticket.id == ticket.id))).scalar_one().priority == Priority.HIGH
+
+
+async def test_a_known_fact_below_the_confidence_threshold_counts_as_unknown():
+    weak = Fact.known(WB, True, source=Source.DESCRIPTION, confidence=0.5, evidence="maybe")
+    a = assess(model=M, wb=weak)
+    assert a.priority == M and a.rule == "model_only"           # a weak true does not boost
+    assert "work_impact" in a.unverified
+    weak_patient = Fact.known(PC, True, source=Source.DESCRIPTION, confidence=0.7)
+    assert assess(model=M, pc=weak_patient).priority == M      # and never reaches Critical
+    assert assess(model=M, wb=Fact.known(WB, True, source=Source.DESCRIPTION, confidence=0.8)).priority == H

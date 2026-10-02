@@ -218,3 +218,15 @@ def test_made_up_or_empty_quotes_are_not_grounded(utterance, quote):
 
 def test_normalize_text():
     assert facts.normalize_text("  I CAN’T   work!! ") == "i can't work"
+
+
+def test_an_overridden_conflicting_fact_is_logged(caplog):
+    first = facts.apply_fact({}, known(True, Source.DESCRIPTION))
+    with caplog.at_level("INFO", logger="hfmg.voice.facts"):
+        facts.apply_fact(first, known(False, Source.ANSWER))
+    assert any("work_blocked" in r.message and "true (description) vs false (answer) -> kept false" in r.message for r in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level("INFO", logger="hfmg.voice.facts"):
+        facts.apply_fact(first, known(True, Source.ANSWER))      # agreement: nothing to log
+    assert not caplog.records

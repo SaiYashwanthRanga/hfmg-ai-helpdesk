@@ -110,6 +110,29 @@ This document defines the conversation state machine: every state, every transit
 
 Terminal states end with `<Hangup/>`. The session row persists for audit and metrics.
 
+### 2.1 Strict extraction: asking about impact (`VOICE_STRICT_EXTRACTION=true`)
+
+By default the agent records `work_blocked`, `patient_care_affected` and `affected_scope` from what the
+model infers. With strict extraction they are recorded **only when the caller said them**
+([VOICE_AGENT_DESIGN.md](VOICE_AGENT_DESIGN.md) §5.1), and anything not said is *unknown* and asked about.
+No new state: the questions reuse `COLLECT_DETAILS`, with a `pending_question` key in the session.
+
+| Question (first wording) | Asked when | A yes means |
+|---|---|---|
+| "Is this stopping you from doing your work?" | work impact unknown, unless patients-blocked or a whole-site outage already fixes the priority | blocked |
+| "Is this stopping you from checking in or seeing patients right now?" | patients were mentioned, or the caller is blocked on an eClinicalWorks issue, and patient care is unknown | patient care affected |
+| "Is anyone else affected besides you?" | scope unknown **and** it can change the priority (the caller is blocked, or the system is shared: Network, Printer, eClinicalWorks) | several people |
+
+Rules that keep it short and loop-free:
+- If both *when it started* and *can you work* are missing, one question asks both and invites an explicit statement ("are you able to keep working, or is it stopping you?"). If only *can you work* is missing, the clean question above is asked directly.
+- Each fact is asked at most **twice** (the second time with different wording); "I'm not sure" is a final answer.
+- The whole call asks at most **`VOICE_MAX_CLARIFICATION_TURNS` (2)** clarification questions after the details question.
+- A bare "yes"/"no" is read deterministically; a longer reply ("yes, I can still work") is interpreted by the model against the question's fixed meaning of yes. A direct answer is a trusted fact.
+- Unclear answers and silence never count as misunderstandings and never escalate.
+- A caller asking for a person during a question escalates as usual.
+
+Measured on the voice scenarios this costs **0.73 extra turns per call** on average; callers who state their impact clearly are asked nothing extra.
+
 ## 3. The Greeting Is a Real Question
 
 The required greeting — *"Thank you for calling Horizon Family Medical Group IT Help Desk. How can I assist you today?"* — is open-ended, so most callers answer it with their actual problem. The flow takes advantage of that: `GREETING`'s first caller utterance feeds straight into `COLLECT_DESCRIPTION`, so a typical caller never hears a redundant "please describe your problem."

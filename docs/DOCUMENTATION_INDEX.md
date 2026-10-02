@@ -78,6 +78,9 @@ The complete map of this repository's documentation. Paths are relative to this 
 | [../VOICE_AGENT_DESIGN.md](../VOICE_AGENT_DESIGN.md) | Prompts, understanding, classification |
 | [../VOICE_SIMULATOR.md](../VOICE_SIMULATOR.md) | AI Call Simulator (test environments only): architecture, API, deployment, testing, operations, troubleshooting |
 | [../VOICE_SIMULATOR_DESIGN.md](../VOICE_SIMULATOR_DESIGN.md) | The simulator's design, and the deviations made while building it (§11) |
+| [reviews/EXTRACTION_REDESIGN_REPORT.md](reviews/EXTRACTION_REDESIGN_REPORT.md) | Strict extraction of impact facts: what changed, files, commits, deployment, rollback, risks |
+| [reviews/EXTRACTION_STRICT_VALIDATION.md](reviews/EXTRACTION_STRICT_VALIDATION.md) | Strict vs original extraction on the same corpus (false High/Critical, accuracy, turns) |
+| [reviews/EXTRACTION_BASELINE.md](reviews/EXTRACTION_BASELINE.md) | The measured baseline before the redesign, with the failing cases |
 | [reviews/TWILIO_READINESS_CHECK.md](reviews/TWILIO_READINESS_CHECK.md) | Historical (Twilio-era): superseded by the SIP migration |
 | [reviews/TWILIO_READINESS_REPORT.md](reviews/TWILIO_READINESS_REPORT.md) | Historical (Twilio-era) readiness report |
 

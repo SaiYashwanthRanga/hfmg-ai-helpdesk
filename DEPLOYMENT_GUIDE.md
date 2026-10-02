@@ -150,6 +150,10 @@ Complete variable reference — every variable the app reads:
 | `VOICE_CONFIRM_SUMMARY` | `true` | The whole ticket (who, what, since when, priority and why) is read back and can be corrected before it is created. One extra turn per call. `false` restores the old create-immediately flow |
 | `VOICE_MAX_PHONE_ATTEMPTS` | `2` | After this many failed tries the agent carries on without a callback number instead of escalating |
 | `VOICE_DEPARTMENTS` | HFMG's departments, comma-separated | **Set this.** Callers' departments are matched against it; anything else is read back and marked "unverified" on the ticket. If empty, a placeholder list written without HFMG's org chart is used |
+| `VOICE_STRICT_EXTRACTION` | `false` | Record work-blocked / patient-care / who-is-affected **only when the caller said it**, and ask when unsure (see [VOICE_AGENT_DESIGN.md](VOICE_AGENT_DESIGN.md) §5.1). Off = the original, inferring behaviour. Turn on after trying it in the simulator; turn off again to roll back, no migration either way |
+| `VOICE_MAX_CLARIFICATION_TURNS` | `2` | Extra impact questions per call with strict extraction (each fact at most twice) |
+| `VOICE_VERIFY_SAFETY_FACTS` | `true` | With strict extraction, a second short model call confirms every accepted "cannot work" / "patient care blocked" |
+| `VOICE_VERIFIER_TIMEOUT_SECONDS` | `3.0` | Timeout of that call; a failure leaves the fact unknown |
 | `VOICE_NLU_HEDGE_AFTER_SECONDS` | `2.5` | A slow NLU call gets a duplicate request; first answer wins. Cuts tail latency at the cost of extra tokens on slow calls only. `0` disables |
 | `ENVIRONMENT` | `production` | Must be exactly this in production: it hard-disables the AI Call Simulator and `LLM_PROVIDER=fake` |
 | `ENABLE_VOICE_SIMULATOR` | *(unset / `false`)* | **Never `true` in production.** The API refuses to start if it is. Test environments only; see [VOICE_SIMULATOR.md](VOICE_SIMULATOR.md) §3 |

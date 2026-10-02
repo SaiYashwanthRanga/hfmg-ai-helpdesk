@@ -529,9 +529,7 @@ def _next_clarification(session: VoiceCallSession) -> str | None:
     if c.get("clarify_turns", 0) >= settings.voice_max_clarification_turns:
         return None
     asks = c.get("clarify_asks") or {}
-    blocked = facts_mod.get_fact(c, facts_mod.WORK_BLOCKED)
-    patient = facts_mod.get_fact(c, facts_mod.PATIENT_CARE)
-    scope = facts_mod.get_fact(c, facts_mod.SCOPE)
+    blocked, patient, scope = (facts_mod.get_fact(c, field) for field in facts_mod.FIELDS)
 
     if not blocked.is_known and _blocked_needed(c) and asks.get("blocked", 0) < MAX_ASKS_PER_FACT:
         return "blocked"
