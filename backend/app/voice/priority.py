@@ -11,9 +11,12 @@ caller stated (can they work, who is affected, is patient care affected); the
 model's own rating is an input, never the explanation.
 """
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 
 from app.db.models import Priority
+from app.voice import facts as facts_mod
+from app.voice.facts import Fact
 
 SCOPES = {"one_person": "One person", "several_people": "Several people", "whole_site": "Whole site"}
 
@@ -32,6 +35,12 @@ class Assessment:
     impact: str
     #: Which rule fired -- for tests and the conversation inspector.
     rule: str
+    #: Facts the caller never settled ("work_impact", "patient_impact"). Strict extraction only.
+    unverified: tuple[str, ...] = ()
+    #: A clinical issue whose safety facts are unresolved: a person should look at the ticket.
+    needs_triage: bool = False
+    #: The caller's own words behind the rule that fired, when there are any.
+    basis: str | None = None
 
 
 def _cap(priority: Priority, ceiling: Priority) -> Priority:
@@ -121,3 +130,72 @@ def notice(assessment: Assessment) -> str | None:
     if assessment.reason:
         return f"Since {assessment.reason}, I'll mark this {word} priority."
     return f"I'll mark this {word} priority."
+
+
+# --- strict extraction: three-state facts --------------------------------------------------------
+
+#: Categories whose outage plausibly affects patient care even when the caller did not say so.
+CLINICAL_CATEGORIES = {"eClinicalWorks"}
+
+_BASIS_FIELD = {
+    "patient_care": facts_mod.PATIENT_CARE,
+    "site_wide": facts_mod.SCOPE,
+    "team_blocked": facts_mod.WORK_BLOCKED,
+    "caller_blocked": facts_mod.WORK_BLOCKED,
+    "caller_working": facts_mod.WORK_BLOCKED,
+    "others_affected": facts_mod.WORK_BLOCKED,
+}
+
+
+def assess_facts(
+    *,
+    model_priority: Priority | None,
+    facts: Mapping[str, Fact],
+    category: str | None = None,
+    patient_context: bool = False,
+) -> Assessment:
+    """`assess` over three-state facts, plus what is still unverified.
+
+    The rules themselves are unchanged: true boosts, false caps, and unknown does
+    neither (the model's rating, which strict extraction asks for on stated impact
+    only, stands). What is new is saying so: an unknown that matters is listed in
+    `unverified`, a clinical issue with an unresolved safety fact sets `needs_triage`,
+    and `basis` quotes the caller's words behind the rule that decided the priority.
+    """
+    work = facts[facts_mod.WORK_BLOCKED]
+    patient = facts[facts_mod.PATIENT_CARE]
+    scope = facts[facts_mod.SCOPE]
+
+    base = assess(
+        model_priority=model_priority,
+        work_blocked=work.value,
+        scope=scope.value,
+        patient_care=patient.value is True,
+    )
+
+    # Patients blocked, or the whole site down, already fix the priority: how the caller's
+    # own work is going no longer matters, so it is not "unverified".
+    decided = patient.value is True or scope.value == "whole_site"
+    clinical = patient_context or category in CLINICAL_CATEGORIES
+    unverified = []
+    if not work.is_known and not decided:
+        unverified.append("work_impact")
+    if not patient.is_known and clinical:
+        unverified.append("patient_impact")
+
+    evidence_fact = facts.get(_BASIS_FIELD.get(base.rule, ""))
+    basis = f'caller said "{evidence_fact.evidence}"' if evidence_fact and evidence_fact.evidence else None
+
+    return replace(base, unverified=tuple(unverified), needs_triage=clinical and bool(unverified), basis=basis)
+
+
+def triage_note(assessment: Assessment) -> str | None:
+    """The first line of a ticket whose clinical safety facts were never settled."""
+    if not assessment.needs_triage:
+        return None
+    parts = []
+    if "patient_impact" in assessment.unverified:
+        parts.append("patient impact not confirmed")
+    if "work_impact" in assessment.unverified:
+        parts.append("work impact not confirmed")
+    return "NEEDS TRIAGE REVIEW - " + ", ".join(parts) + "."

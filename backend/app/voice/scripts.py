@@ -46,6 +46,10 @@ DETAILS_ASK_OPTIONS = (
 DETAILS_ASK = DETAILS_ASK_OPTIONS[1]
 DETAILS_ASK_STARTED = "When did this start?"
 
+# Read-back, strict extraction: be honest about what was not settled.
+SUMMARY_WORK_IMPACT_UNKNOWN = "I couldn't confirm how much this affects your work."
+SUMMARY_FLAGGED_FOR_REVIEW = "I couldn't confirm the impact, so I'll flag it for a person to review."
+
 # Strict extraction: the details question invites an explicit statement ("it's stopping me",
 # "I can keep working") rather than a bare yes/no that could mean either half of the question.
 DETAILS_ASK_STRICT_OPTIONS = (

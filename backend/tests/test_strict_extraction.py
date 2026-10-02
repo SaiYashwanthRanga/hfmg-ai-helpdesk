@@ -146,7 +146,7 @@ async def test_strict_prompt_demands_explicit_statements_and_drops_the_inference
     system, user, _, properties = call.seen
     assert "Explicit-statement rule" in system
     assert "Do not infer impact" in system
-    assert "Medium for a fault" in system                    # unstated impact is not High
+    assert "no stated impact is Medium" in system              # unstated impact is not High
     assert "multiple users blocked" not in system            # the old priority guidance is gone
     blocked_text = properties[WB]["description"]
     assert "or it is minor" not in blocked_text

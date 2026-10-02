@@ -603,14 +603,7 @@ def _details_question(session: VoiceCallSession) -> str:
 
 def _apply_priority_rules(session: VoiceCallSession) -> None:
     """Decide the priority *and* why, from one rule (app/voice/priority.py)."""
-    collected = session.collected
-    model = Priority(collected.get("model_priority") or collected.get("priority") or Priority.MEDIUM.value)
-    assessment = priority_rules.assess(
-        model_priority=model,
-        work_blocked=collected.get("work_blocked"),
-        scope=collected.get("affected_scope"),
-        patient_care=collected.get("patient_care_affected"),
-    )
+    assessment = _assessment(session)
     update_collected(
         session,
         priority=assessment.priority.value,
@@ -618,12 +611,28 @@ def _apply_priority_rules(session: VoiceCallSession) -> None:
         priority_rule=assessment.rule,
         impact=assessment.impact,
     )
+    if settings.voice_strict_extraction:
+        update_collected(
+            session,
+            priority_unverified=list(assessment.unverified),
+            needs_triage=assessment.needs_triage,
+            priority_basis=assessment.basis,
+        )
 
 
 def _assessment(session: VoiceCallSession) -> priority_rules.Assessment:
     c = session.collected
+    model = Priority(c.get("model_priority") or c.get("priority") or Priority.MEDIUM.value)
+    if settings.voice_strict_extraction:
+        # True boosts, false caps, unknown does neither -- and is reported as unverified.
+        return priority_rules.assess_facts(
+            model_priority=model,
+            facts=facts_mod.all_facts(c),
+            category=c.get("category"),
+            patient_context=bool(c.get("patient_context_mentioned")),
+        )
     return priority_rules.assess(
-        model_priority=Priority(c.get("model_priority") or c.get("priority") or Priority.MEDIUM.value),
+        model_priority=model,
         work_blocked=c.get("work_blocked"),
         scope=c.get("affected_scope"),
         patient_care=c.get("patient_care_affected"),
@@ -786,6 +795,10 @@ def _summary_text(session: VoiceCallSession, *, updated: bool = False) -> str:
     elif c.get("work_blocked") is False:
         word = priority_rules.SPOKEN[assessment.priority]
         sentences.append(f"Since you can still work, I'll log it as {word} priority.")
+    elif assessment.needs_triage:
+        sentences.append(scripts.SUMMARY_FLAGGED_FOR_REVIEW)
+    elif "work_impact" in assessment.unverified:
+        sentences.append(scripts.SUMMARY_WORK_IMPACT_UNKNOWN)
 
     if c.get("phone_spoken") and c.get("phone_number"):
         sentences.append(f"I'll reach you at {scripts.spoken_phone_number(c['phone_number'])}.")
@@ -1051,6 +1064,8 @@ async def _create_ticket(
     if details:
         description = f"{description}\n\n--- Intake details ---\n{details}".strip()
     description = f"{description}\n\n--- Call transcript ---\n{transcript_text(session)}".strip()
+    if collected.get("needs_triage"):
+        description = f"{priority_rules.triage_note(_assessment(session))}\n\n{description}".strip()
 
     priority = Priority(collected.get("priority") or Priority.MEDIUM.value)
     if escalation_note and raise_priority:
@@ -1082,6 +1097,7 @@ def _intake_details(collected: dict) -> str:
     Anything the agent could not verify is said so, rather than left looking certain.
     """
     blocked = collected.get("work_blocked")
+    unverified = collected.get("priority_unverified") or []
     department = collected.get("department")
     if department and collected.get("department_verified") is False:
         department = f"{department} (unverified: not on HFMG's department list)"
@@ -1097,6 +1113,9 @@ def _intake_details(collected: dict) -> str:
         ("Work blocked", None if blocked is None else ("yes" if blocked else "no")),
         ("Impact", collected.get("impact")),
         ("Priority", priority_line),
+        ("Priority basis", collected.get("priority_basis")),
+        ("Work impact", "not confirmed (the caller did not say whether this stops them working)" if "work_impact" in unverified else None),
+        ("Patient impact", "not confirmed (the caller did not say whether patient care is affected)" if "patient_impact" in unverified else None),
         ("Callback number", "not captured (the caller could not give one)" if collected.get("phone_skipped") else None),
         ("Name", "spelling could not be verified with the caller" if collected.get("name_unverified") else None),
         ("Read-back", "caller said the summary was not fully correct; details unverified" if collected.get("summary_unresolved") else None),

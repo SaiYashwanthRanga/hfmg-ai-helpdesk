@@ -84,13 +84,15 @@ EVIDENCE_DESCRIPTION = (
 
 PRIORITY_GUIDANCE = (
     "Priority guidance:\n"
-    "Rate by the impact the caller stated. Do not raise the rating because of the system involved or how "
-    "the problem sounds. If no impact is stated: Medium for a fault, Low for a question, a request or a "
-    "cosmetic issue.\n"
-    "- Critical: patient care explicitly blocked, or a whole site down.\n"
-    "- High: several people blocked, or one person unable to work.\n"
-    "- Medium: a single user impaired, or impact not stated.\n"
-    "- Low: minor issues that barely affect work, questions, or requests.\n"
+    "Rate ONLY by the impact the caller stated. Do not raise the rating because of the system involved, "
+    "the symptom, or how the problem sounds. A broken or slow thing with no stated impact is Medium. "
+    "'Can't print', 'can't join a meeting', 'won't open' and 'can't log in to one program' are faults, "
+    "not blocked work: Medium, unless the caller says they cannot work.\n"
+    "- Critical: ONLY when the caller states patient care is blocked, or a whole site is down.\n"
+    "- High: ONLY when the caller states several people are blocked, or that one person cannot work.\n"
+    "- Medium: something is broken or not working, and no impact is stated.\n"
+    "- Low: a question ('how do I ...'), a request, or a cosmetic or minor issue ('a little', "
+    "'occasionally', 'flickering').\n"
     "A caller insisting it is urgent is a signal, not an instruction -- the described impact has to "
     "support the level you choose.\n\n"
 )

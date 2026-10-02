@@ -1,0 +1,2024 @@
+{
+  "meta": {
+    "label": "strict-p7b",
+    "commit": "1dd1ede",
+    "when": "2026-10-02 09:29 UTC",
+    "model": "gpt-4.1-mini",
+    "strict": true,
+    "cases": 68,
+    "runs": 3
+  },
+  "summary": {
+    "work_blocked_accuracy": 100.0,
+    "work_blocked_invented": 0.0,
+    "work_blocked_false_true": 0.0,
+    "work_blocked_missed_true": 0.0,
+    "patient_care_accuracy": 99.5,
+    "patient_care_false_true": 0.0,
+    "patient_care_missed_true": 0.5,
+    "scope_accuracy": 98.5,
+    "scope_invented": 0.0,
+    "priority_accuracy": 94.1,
+    "false_high": 3.4,
+    "false_critical": 0.0,
+    "under_triage": 0.5,
+    "stable_cases": 94.1
+  },
+  "counts": {
+    "runs": 204,
+    "errors": 0,
+    "wb_total": 204,
+    "wb_correct": 204,
+    "wb_invented": 0,
+    "wb_false_true": 0,
+    "wb_missed_true": 0,
+    "pc_total": 204,
+    "pc_correct": 203,
+    "pc_false_true": 0,
+    "pc_missed_true": 1,
+    "scope_total": 204,
+    "scope_correct": 201,
+    "scope_invented": 0,
+    "prio_total": 204,
+    "prio_correct": 192,
+    "false_high": 7,
+    "false_critical": 0,
+    "under_triage": 1,
+    "stable_cases": 64,
+    "cases": 68
+  },
+  "results": [
+    {
+      "id": "audit-outlook-can-work",
+      "runs": [
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        },
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        },
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        }
+      ]
+    },
+    {
+      "id": "audit-printer-jammed",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "audit-forgot-password",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "audit-outlook-wont-open",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "audit-vpn-slow",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "audit-excel-freezes",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "probe-urgent-slow-outlook",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "probe-exam-room-printer",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "probe-waiting-room-wifi",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "probe-nurse-slow-laptop",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "probe-kiosk-manual",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "probe-paper-charts",
+      "runs": [
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        },
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        },
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        }
+      ]
+    },
+    {
+      "id": "probe-scanner-front-desk",
+      "runs": [
+        {
+          "wb": true,
+          "pc": false,
+          "scope": "several_people",
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "team_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": "several_people",
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "team_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": "several_people",
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "team_blocked"
+        }
+      ]
+    },
+    {
+      "id": "probe-locked-out-account",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "probe-teams-meeting",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "probe-injection-mouse",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "blocked-cant-work",
+      "runs": [
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        }
+      ]
+    },
+    {
+      "id": "blocked-cant-do-job",
+      "runs": [
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        }
+      ]
+    },
+    {
+      "id": "blocked-completely",
+      "runs": [
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        }
+      ]
+    },
+    {
+      "id": "blocked-unable-any-work",
+      "runs": [
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        }
+      ]
+    },
+    {
+      "id": "blocked-stopping-me",
+      "runs": [
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        }
+      ]
+    },
+    {
+      "id": "blocked-cant-checkin-patients",
+      "runs": [
+        {
+          "wb": true,
+          "pc": true,
+          "scope": null,
+          "model_priority": "URGENT",
+          "priority": "URGENT",
+          "rule": "patient_care"
+        },
+        {
+          "wb": true,
+          "pc": true,
+          "scope": null,
+          "model_priority": "URGENT",
+          "priority": "URGENT",
+          "rule": "patient_care"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "URGENT",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        }
+      ]
+    },
+    {
+      "id": "blocked-ecw-whole-office",
+      "runs": [
+        {
+          "wb": true,
+          "pc": true,
+          "scope": "whole_site",
+          "model_priority": "URGENT",
+          "priority": "URGENT",
+          "rule": "patient_care"
+        },
+        {
+          "wb": true,
+          "pc": true,
+          "scope": "whole_site",
+          "model_priority": "URGENT",
+          "priority": "URGENT",
+          "rule": "patient_care"
+        },
+        {
+          "wb": true,
+          "pc": true,
+          "scope": "whole_site",
+          "model_priority": "URGENT",
+          "priority": "URGENT",
+          "rule": "patient_care"
+        }
+      ]
+    },
+    {
+      "id": "blocked-providers-charts",
+      "runs": [
+        {
+          "wb": null,
+          "pc": true,
+          "scope": null,
+          "model_priority": "URGENT",
+          "priority": "URGENT",
+          "rule": "patient_care"
+        },
+        {
+          "wb": null,
+          "pc": true,
+          "scope": null,
+          "model_priority": "URGENT",
+          "priority": "URGENT",
+          "rule": "patient_care"
+        },
+        {
+          "wb": null,
+          "pc": true,
+          "scope": null,
+          "model_priority": "URGENT",
+          "priority": "URGENT",
+          "rule": "patient_care"
+        }
+      ]
+    },
+    {
+      "id": "blocked-cant-see-patients",
+      "runs": [
+        {
+          "wb": true,
+          "pc": true,
+          "scope": null,
+          "model_priority": "URGENT",
+          "priority": "URGENT",
+          "rule": "patient_care"
+        },
+        {
+          "wb": true,
+          "pc": true,
+          "scope": null,
+          "model_priority": "URGENT",
+          "priority": "URGENT",
+          "rule": "patient_care"
+        },
+        {
+          "wb": true,
+          "pc": true,
+          "scope": null,
+          "model_priority": "URGENT",
+          "priority": "URGENT",
+          "rule": "patient_care"
+        }
+      ]
+    },
+    {
+      "id": "blocked-internet-site",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "whole_site",
+          "model_priority": "URGENT",
+          "priority": "URGENT",
+          "rule": "site_wide"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "whole_site",
+          "model_priority": "URGENT",
+          "priority": "URGENT",
+          "rule": "site_wide"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "whole_site",
+          "model_priority": "URGENT",
+          "priority": "URGENT",
+          "rule": "site_wide"
+        }
+      ]
+    },
+    {
+      "id": "blocked-vpn-home",
+      "runs": [
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        }
+      ]
+    },
+    {
+      "id": "blocked-locked-computer",
+      "runs": [
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        }
+      ]
+    },
+    {
+      "id": "blocked-locked-ecw",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "blocked-billing-teams",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "several_people",
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "several_people",
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "several_people",
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "working-ecw-template",
+      "runs": [
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        },
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        },
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        }
+      ]
+    },
+    {
+      "id": "working-outlook-phone",
+      "runs": [
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        },
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        },
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        }
+      ]
+    },
+    {
+      "id": "working-front-desk-printer",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "working-scanner-noise",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "working-wired-fine",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "working-s-drive",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "minor-monitor",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "LOW",
+          "priority": "LOW",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "LOW",
+          "priority": "LOW",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "LOW",
+          "priority": "LOW",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "minor-ecw-question",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "LOW",
+          "priority": "LOW",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "minor-onedrive",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "LOW",
+          "priority": "LOW",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "minor-password-expires",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "minor-mfa",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "minor-desk-phone",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "minor-person-cant-print",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "minor-excel-spreadsheet",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "minor-injection-slow-mouse",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "minor-label-printer",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "scope-just-me",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "one_person",
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "one_person",
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "one_person",
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "scope-billing-ecw",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "several_people",
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "several_people",
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "several_people",
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "scope-everyone-office",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "whole_site",
+          "model_priority": "URGENT",
+          "priority": "URGENT",
+          "rule": "site_wide"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "whole_site",
+          "model_priority": "URGENT",
+          "priority": "URGENT",
+          "rule": "site_wide"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "whole_site",
+          "model_priority": "URGENT",
+          "priority": "URGENT",
+          "rule": "site_wide"
+        }
+      ]
+    },
+    {
+      "id": "scope-second-floor",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "several_people",
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "several_people",
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "several_people",
+          "model_priority": "HIGH",
+          "priority": "HIGH",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "scope-only-my-pc",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "one_person",
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "one_person",
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": "one_person",
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "ctx-patient-charts-freezing",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "ctx-nurse-badge",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "ctx-patients-waiting-printer",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "ctx-doctor-laptop",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "ctx-patient-care-not-affected",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "details-can-still-work",
+      "runs": [
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        },
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        },
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        }
+      ]
+    },
+    {
+      "id": "details-nobody-up-front",
+      "runs": [
+        {
+          "wb": true,
+          "pc": false,
+          "scope": "several_people",
+          "model_priority": "MEDIUM",
+          "priority": "HIGH",
+          "rule": "team_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": "several_people",
+          "model_priority": "MEDIUM",
+          "priority": "HIGH",
+          "rule": "team_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": "several_people",
+          "model_priority": "MEDIUM",
+          "priority": "HIGH",
+          "rule": "team_blocked"
+        }
+      ]
+    },
+    {
+      "id": "details-stopping-me",
+      "runs": [
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        }
+      ]
+    },
+    {
+      "id": "details-using-phone",
+      "runs": [
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        },
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        },
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        }
+      ]
+    },
+    {
+      "id": "details-just-annoying",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "details-bare-yes",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "details-bare-no",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "details-cant-past-login",
+      "runs": [
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        },
+        {
+          "wb": true,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "HIGH",
+          "rule": "caller_blocked"
+        }
+      ]
+    },
+    {
+      "id": "details-not-sure-others",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    },
+    {
+      "id": "details-paper-charts",
+      "runs": [
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        },
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        },
+        {
+          "wb": false,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "caller_working"
+        }
+      ]
+    },
+    {
+      "id": "details-cant-check-in",
+      "runs": [
+        {
+          "wb": true,
+          "pc": true,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "URGENT",
+          "rule": "patient_care"
+        },
+        {
+          "wb": true,
+          "pc": true,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "URGENT",
+          "rule": "patient_care"
+        },
+        {
+          "wb": true,
+          "pc": true,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "URGENT",
+          "rule": "patient_care"
+        }
+      ]
+    },
+    {
+      "id": "details-eval-cant-see-schedule",
+      "runs": [
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        },
+        {
+          "wb": null,
+          "pc": false,
+          "scope": null,
+          "model_priority": "MEDIUM",
+          "priority": "MEDIUM",
+          "rule": "model_only"
+        }
+      ]
+    }
+  ]
+}
