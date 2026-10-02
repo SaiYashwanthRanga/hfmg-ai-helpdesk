@@ -25,6 +25,7 @@ WB, PC, SC = facts_mod.WORK_BLOCKED, facts_mod.PATIENT_CARE, facts_mod.SCOPE
 @pytest.fixture
 def strict(monkeypatch):
     monkeypatch.setattr(settings, "voice_strict_extraction", True)
+    monkeypatch.setattr(settings, "voice_verify_safety_facts", False)  # the verifier has its own tests (test_verifier.py)
 
 
 @pytest.fixture

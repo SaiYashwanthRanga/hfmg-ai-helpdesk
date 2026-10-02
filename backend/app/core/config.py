@@ -93,6 +93,11 @@ class Settings(BaseSettings):
     # is anyone else affected, is patient care blocked) may be asked after the details
     # question. Each fact is asked about at most twice; unknown after that is final.
     voice_max_clarification_turns: int = 2
+    # Strict extraction: a second, tiny model call confirms every accepted `true` for
+    # work_blocked / patient_care_affected by reading only the quoted words. Anything but a
+    # clear yes (including a timeout) leaves the fact unknown. Runs only on those facts.
+    voice_verify_safety_facts: bool = True
+    voice_verifier_timeout_seconds: float = 3.0
     # Read the caller's name back spelled when confidence in it is low
     # (unfamiliar name, low recognizer confidence), and let them correct it.
     voice_confirm_name: bool = True

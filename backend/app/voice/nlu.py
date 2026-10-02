@@ -479,7 +479,16 @@ def _strict_schema(properties: dict) -> dict:
     }
 
 
-async def _call_structured(system: str, user: str, name: str, properties: dict) -> dict | None:
+async def _call_structured(
+    system: str,
+    user: str,
+    name: str,
+    properties: dict,
+    *,
+    timeout: float | None = None,
+    hedge: bool = True,
+    max_retries: int | None = None,
+) -> dict | None:
     """Run one bounded extraction turn. Returns None on any failure.
 
     The timeout is the voice budget, not the provider default: a caller is
@@ -500,12 +509,12 @@ async def _call_structured(system: str, user: str, name: str, properties: dict) 
             user=user,
             schema_name=name,
             schema=schema,
-            timeout=settings.voice_nlu_timeout_seconds,
-            max_retries=settings.voice_nlu_max_retries,
+            timeout=timeout if timeout is not None else settings.voice_nlu_timeout_seconds,
+            max_retries=max_retries if max_retries is not None else settings.voice_nlu_max_retries,
             model=settings.voice_nlu_model or None,
         )
 
-    hedge_after = settings.voice_nlu_hedge_after_seconds
+    hedge_after = settings.voice_nlu_hedge_after_seconds if hedge else 0
     if not hedge_after or hedge_after <= 0:
         return await attempt()
     return await _hedged(attempt, hedge_after)
@@ -596,6 +605,58 @@ _BLOCKED_FIELD = {
         "False if they say they can still work, have a workaround, or it is minor. Null if they did not say."
     ),
 }
+
+
+# --- the verifier (strict extraction) -----------------------------------------------------
+
+_VERIFIER_QUESTIONS = {
+    "work_blocked": (
+        "Does this statement say that the speaker, or their team, cannot do their work or their job "
+        "right now? Yes for statements like: 'I can't work', 'I can't do my job', 'I can't do anything', "
+        "'it's stopping me from working', 'I'm blocked', 'the whole front desk is stuck', 'we can't check "
+        "anyone in', 'I can't log in to my computer at all'. A faulty system, a slow computer, a frozen "
+        "program, or a problem with one application does not count unless the statement itself says the "
+        "work cannot be done."
+    ),
+    "patient_care_affected": (
+        "Does this statement say that the speaker's clinic cannot currently check in, see or treat "
+        "patients, or cannot reach patient charts, orders or results? Yes for statements like: 'we can't "
+        "check anyone in', 'I can't see patients', 'patients can't be seen', 'I can't open patient charts'. "
+        "The cause is not needed. Mentioning patients, charts, being a nurse or doctor, or needing a "
+        "computer for patient work does not count."
+    ),
+}
+
+
+async def verify_fact(field: str, quote: str) -> bool | None:
+    """Ask a second, minimal model call whether `quote` states the fact.
+
+    The verifier sees only the quote, with none of the conversation, so it cannot be nudged by
+    what the extractor was told. True only for a clear yes; False for no; None when unclear or
+    the call failed. Short timeout, no hedge, no retry: it must not slow the call.
+    """
+    question = _VERIFIER_QUESTIONS[field]
+    properties = {"answer": {"type": "string", "enum": ["yes", "no", "unclear"]}}
+    system = (
+        "You check one statement from a phone call to an IT help desk. " + question + " "
+        "Answer yes, no or unclear. Judge only the words in the statement; do not assume anything else."
+    )
+    data = await _call_structured(
+        system,
+        f"Statement: \"{quote}\"",
+        f"verify_{field}",
+        properties,
+        timeout=settings.voice_verifier_timeout_seconds,
+        hedge=False,
+        max_retries=0,
+    )
+    if not data:
+        return None
+    return {"yes": True, "no": False}.get(data.get("answer"))
+
+
+def _verifier():
+    return verify_fact if settings.voice_verify_safety_facts else None
 
 
 async def interpret_description(utterance: str) -> TurnResult:
@@ -699,7 +760,9 @@ async def interpret_description(utterance: str) -> TurnResult:
 
     category = _validate_category(data.get("category"))
     if strict:
-        established = await strict_extraction.establish_facts(data, utterance, Source.DESCRIPTION)
+        established = await strict_extraction.establish_facts(
+            data, utterance, Source.DESCRIPTION, verifier=_verifier()
+        )
         impact_extras = {
             **strict_extraction.legacy_extras(established),
             "facts": established,
@@ -768,6 +831,7 @@ async def interpret_details(utterance: str, *, asked: str) -> TurnResult:
         properties = {
             **properties,
             "work_blocked": strict_extraction.work_blocked_field(),
+            "patient_care_affected": strict_extraction.patient_care_field(),
             "affected_scope": strict_extraction.scope_field(),
         }
     system = _SYSTEM + (strict_extraction.STRICT_RULE if strict else "")
@@ -777,7 +841,8 @@ async def interpret_details(utterance: str, *, asked: str) -> TurnResult:
     started = _clean(data.get("started"))
     if strict:
         established = await strict_extraction.establish_facts(
-            data, utterance, Source.DETAILS, fields=(WORK_BLOCKED, "affected_scope")
+            data, utterance, Source.DETAILS, fields=(WORK_BLOCKED, "patient_care_affected", "affected_scope"),
+            verifier=_verifier(),
         )
         blocked = established[WORK_BLOCKED].value
         extras = {"started": started, **strict_extraction.legacy_extras(established), "facts": established}
@@ -1002,7 +1067,7 @@ async def interpret_summary_correction(utterance: str, summary: str) -> TurnResu
     correction_facts = None
     if strict:
         correction_facts = await strict_extraction.establish_facts(
-            data, utterance, Source.CORRECTION, fields=(WORK_BLOCKED,)
+            data, utterance, Source.CORRECTION, fields=(WORK_BLOCKED,), verifier=_verifier()
         )
         if correction_facts[WORK_BLOCKED].is_known:
             changes["work_blocked"] = correction_facts[WORK_BLOCKED].value

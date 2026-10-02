@@ -14,7 +14,8 @@ and the code, not the model, decides whether to believe it (`establish_facts`):
     1. the model must say the basis is explicit
     2. its quote must really appear in what the caller said (grounding)
     3. the phrase gate (phrase_gate.py): a strong pattern in the caller's words must state it
-    4. -- the verifier (a second, tiny model call on the quote) is added in a later phase --
+    4. the verifier (nlu.verify_fact): a second, tiny model call that sees only the quote and
+       must clearly confirm every `true` for work_blocked / patient_care_affected
 
 Anything that fails a check becomes an *unknown* fact with a reason, and an
 unknown is later asked about; it is never guessed. This module holds the
@@ -22,6 +23,8 @@ prompt text, the schema fragments and that decision logic; the model calls
 themselves stay in nlu.py.
 """
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from app.voice import facts as facts_mod
@@ -179,11 +182,53 @@ def judge_fact(field: str, raw: Any, utterance: str, source: Source) -> Fact:
     return _unknown(field, UnknownReason.GATE_REJECTED, source, evidence)
 
 
+#: The facts whose wrong `true` is costly (a false High or Critical), so a second reader confirms them.
+SAFETY_FIELDS = (facts_mod.WORK_BLOCKED, facts_mod.PATIENT_CARE)
+#: Confidence of a fact the verifier confirmed.
+VERIFIED_CONFIDENCE = 0.95
+
+#: Reads only the quoted words and says whether they state the fact: True / False / None (unclear or failed).
+Verifier = Callable[[str, str], Awaitable[bool | None]]
+
+
+async def _verify(fact: Fact, verifier: Verifier) -> Fact:
+    """Keep a `true` only if the verifier clearly confirms its quote. Any failure is unknown."""
+    quote = fact.evidence or ""
+    try:
+        confirmed = await verifier(fact.field, quote) if quote else None
+    except Exception:  # a verifier that fails must never be the reason a fact is believed
+        confirmed = None
+    if confirmed is True:
+        return Fact.known(
+            fact.field, True, source=fact.source, confidence=max(fact.confidence, VERIFIED_CONFIDENCE), evidence=fact.evidence
+        )
+    return _unknown(fact.field, UnknownReason.VERIFIER_REJECTED, fact.source, fact.evidence)
+
+
 async def establish_facts(
-    data: dict[str, Any], utterance: str, source: Source, *, fields: tuple[str, ...] = facts_mod.FIELDS
+    data: dict[str, Any],
+    utterance: str,
+    source: Source,
+    *,
+    fields: tuple[str, ...] = facts_mod.FIELDS,
+    verifier: Verifier | None = None,
 ) -> dict[str, Fact]:
-    """Judge each requested field of a model response. Async so later checks can call the model."""
-    return {field: judge_fact(field, data.get(field), utterance, source) for field in fields}
+    """Judge each requested field of a model response.
+
+    Every accepted `true` for work_blocked / patient_care_affected is then confirmed by
+    `verifier` (when given), in parallel, so the extra latency is one short call and only
+    on the turns that actually claim one of these facts.
+    """
+    established = {field: judge_fact(field, data.get(field), utterance, source) for field in fields}
+    if verifier is None:
+        return established
+
+    to_verify = [f for f in established.values() if f.field in SAFETY_FIELDS and f.value is True]
+    if to_verify:
+        checked = await asyncio.gather(*[_verify(f, verifier) for f in to_verify])
+        for fact in checked:
+            established[fact.field] = fact
+    return established
 
 
 def legacy_extras(established: dict[str, Fact]) -> dict[str, Any]:

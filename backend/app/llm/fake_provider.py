@@ -149,6 +149,10 @@ def _clarification(lowered: str, choices: list[str]) -> str:
 
 def _answer(schema_name: str, speech: str, strict: bool = False, choices: list[str] | None = None) -> dict[str, Any]:
     lowered = speech.lower()
+    if schema_name in ("verify_work_blocked", "verify_patient_care_affected"):
+        # Reads only the quoted words, like the real verifier: yes when they state the fact.
+        phrases = _BLOCKED_PHRASES if schema_name == "verify_work_blocked" else _PATIENT_BLOCKED
+        return {"answer": "yes" if _quote(speech, phrases) else "no"}
     if schema_name == "record_clarification":
         answer = _clarification(lowered, choices or [])
         return {"escalation_requested": _has(lowered, _HUMAN), "answer": answer, "unable_to_determine": answer == "unclear"}
@@ -199,6 +203,7 @@ def _answer(schema_name: str, speech: str, strict: bool = False, choices: list[s
                 "escalation_requested": wants_human,
                 "started": started,
                 "work_blocked": strict_blocked,
+                "patient_care_affected": _strict_patient_care(speech),
                 "affected_scope": _strict_scope(speech),
                 "unable_to_determine": started is None and strict_blocked["value"] is None,
             }
