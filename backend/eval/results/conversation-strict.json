@@ -1,0 +1,443 @@
+{
+  "meta": {
+    "label": "strict",
+    "strict": true,
+    "commit": "5dd1e9f",
+    "runs": 3,
+    "when": "2026-10-02 09:38 UTC",
+    "scenarios": 11
+  },
+  "summary": {
+    "conversations": 33,
+    "ticket_created_pct": 100.0,
+    "priority_correct_pct": 100.0,
+    "work_blocked_correct_pct": 100.0,
+    "false_high_pct": 0.0,
+    "false_critical_pct": 0.0,
+    "avg_turns": 8.09,
+    "avg_clarification_turns": 0.73,
+    "needs_triage_pct": 0.0
+  },
+  "results": [
+    {
+      "id": "simple_outlook",
+      "turns": 8,
+      "clarifications": 0,
+      "priority": "MEDIUM",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "MEDIUM"
+    },
+    {
+      "id": "simple_outlook",
+      "turns": 8,
+      "clarifications": 0,
+      "priority": "MEDIUM",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "MEDIUM"
+    },
+    {
+      "id": "simple_outlook",
+      "turns": 8,
+      "clarifications": 0,
+      "priority": "MEDIUM",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "MEDIUM"
+    },
+    {
+      "id": "volunteers_everything",
+      "turns": 6,
+      "clarifications": 0,
+      "priority": "URGENT",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "URGENT"
+    },
+    {
+      "id": "volunteers_everything",
+      "turns": 6,
+      "clarifications": 0,
+      "priority": "URGENT",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "URGENT"
+    },
+    {
+      "id": "volunteers_everything",
+      "turns": 6,
+      "clarifications": 0,
+      "priority": "URGENT",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "URGENT"
+    },
+    {
+      "id": "hesitant_password",
+      "turns": 10,
+      "clarifications": 1,
+      "priority": "HIGH",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "HIGH"
+    },
+    {
+      "id": "hesitant_password",
+      "turns": 10,
+      "clarifications": 1,
+      "priority": "HIGH",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "HIGH"
+    },
+    {
+      "id": "hesitant_password",
+      "turns": 10,
+      "clarifications": 1,
+      "priority": "HIGH",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "HIGH"
+    },
+    {
+      "id": "fast_printer",
+      "turns": 9,
+      "clarifications": 1,
+      "priority": "MEDIUM",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "MEDIUM"
+    },
+    {
+      "id": "fast_printer",
+      "turns": 9,
+      "clarifications": 1,
+      "priority": "MEDIUM",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "MEDIUM"
+    },
+    {
+      "id": "fast_printer",
+      "turns": 9,
+      "clarifications": 1,
+      "priority": "MEDIUM",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "MEDIUM"
+    },
+    {
+      "id": "accent_indian_vpn",
+      "turns": 9,
+      "clarifications": 1,
+      "priority": "HIGH",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "HIGH"
+    },
+    {
+      "id": "accent_indian_vpn",
+      "turns": 9,
+      "clarifications": 1,
+      "priority": "HIGH",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "HIGH"
+    },
+    {
+      "id": "accent_indian_vpn",
+      "turns": 9,
+      "clarifications": 1,
+      "priority": "HIGH",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "HIGH"
+    },
+    {
+      "id": "accent_spanish_scanner",
+      "turns": 9,
+      "clarifications": 1,
+      "priority": "LOW",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "LOW"
+    },
+    {
+      "id": "accent_spanish_scanner",
+      "turns": 9,
+      "clarifications": 1,
+      "priority": "LOW",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "LOW"
+    },
+    {
+      "id": "accent_spanish_scanner",
+      "turns": 9,
+      "clarifications": 1,
+      "priority": "LOW",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "LOW"
+    },
+    {
+      "id": "self_correction_teams",
+      "turns": 8,
+      "clarifications": 1,
+      "priority": "MEDIUM",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "MEDIUM"
+    },
+    {
+      "id": "self_correction_teams",
+      "turns": 8,
+      "clarifications": 1,
+      "priority": "MEDIUM",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "MEDIUM"
+    },
+    {
+      "id": "self_correction_teams",
+      "turns": 8,
+      "clarifications": 1,
+      "priority": "MEDIUM",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": "MEDIUM"
+    },
+    {
+      "id": "vague_slow_pc",
+      "turns": 9,
+      "clarifications": 0,
+      "priority": "MEDIUM",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": [
+        "MEDIUM",
+        "LOW"
+      ]
+    },
+    {
+      "id": "vague_slow_pc",
+      "turns": 9,
+      "clarifications": 0,
+      "priority": "MEDIUM",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": [
+        "MEDIUM",
+        "LOW"
+      ]
+    },
+    {
+      "id": "vague_slow_pc",
+      "turns": 9,
+      "clarifications": 0,
+      "priority": "MEDIUM",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": [
+        "MEDIUM",
+        "LOW"
+      ]
+    },
+    {
+      "id": "indian_name_spelling",
+      "turns": 10,
+      "clarifications": 1,
+      "priority": "HIGH",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": [
+        "HIGH"
+      ]
+    },
+    {
+      "id": "indian_name_spelling",
+      "turns": 10,
+      "clarifications": 1,
+      "priority": "HIGH",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": [
+        "HIGH"
+      ]
+    },
+    {
+      "id": "indian_name_spelling",
+      "turns": 10,
+      "clarifications": 1,
+      "priority": "HIGH",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": [
+        "HIGH"
+      ]
+    },
+    {
+      "id": "wants_human",
+      "turns": 2,
+      "clarifications": 0,
+      "priority": "HIGH",
+      "priority_ok": null,
+      "work_blocked_ok": null,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": null
+    },
+    {
+      "id": "wants_human",
+      "turns": 2,
+      "clarifications": 0,
+      "priority": "HIGH",
+      "priority_ok": null,
+      "work_blocked_ok": null,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": null
+    },
+    {
+      "id": "wants_human",
+      "turns": 2,
+      "clarifications": 0,
+      "priority": "HIGH",
+      "priority_ok": null,
+      "work_blocked_ok": null,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": null
+    },
+    {
+      "id": "digits_and_skip",
+      "turns": 9,
+      "clarifications": 2,
+      "priority": "HIGH",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": [
+        "HIGH",
+        "URGENT"
+      ]
+    },
+    {
+      "id": "digits_and_skip",
+      "turns": 9,
+      "clarifications": 2,
+      "priority": "HIGH",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": [
+        "HIGH",
+        "URGENT"
+      ]
+    },
+    {
+      "id": "digits_and_skip",
+      "turns": 9,
+      "clarifications": 2,
+      "priority": "HIGH",
+      "priority_ok": true,
+      "work_blocked_ok": true,
+      "needs_triage": false,
+      "unverified": [],
+      "ticket_created": true,
+      "expected": [
+        "HIGH",
+        "URGENT"
+      ]
+    }
+  ]
+}

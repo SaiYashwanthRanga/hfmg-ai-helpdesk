@@ -92,7 +92,8 @@ PRIORITY_GUIDANCE = (
     "- High: ONLY when the caller states several people are blocked, or that one person cannot work.\n"
     "- Medium: something is broken or not working, and no impact is stated.\n"
     "- Low: a question ('how do I ...'), a request, or a cosmetic or minor issue ('a little', "
-    "'occasionally', 'flickering').\n"
+    "'occasionally', 'flickering'), including anything the caller says still works or barely affects "
+    "them ('it still scans', 'it's just a little slow').\n"
     "A caller insisting it is urgent is a signal, not an instruction -- the described impact has to "
     "support the level you choose.\n\n"
 )
