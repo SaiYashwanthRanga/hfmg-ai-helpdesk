@@ -66,7 +66,63 @@ def _has(text: str, words: tuple[str, ...]) -> bool:
     return any(w in text for w in words)
 
 
-def _answer(schema_name: str, speech: str) -> dict[str, Any]:
+_BLOCKED_PHRASES = (
+    "can't work", "cannot work", "can't do my job", "cannot do my job", "can't do anything", "cannot do anything",
+    "not able to do any work", "unable to work", "i'm blocked", "i am blocked", "completely stuck", "i'm stuck",
+    "is stuck", "stopping me from working", "can't check in any patients", "can't check anyone in",
+)
+_CAN_WORK_PHRASES = ("can still work", "i can work", "using my phone", "workaround", "isn't stopping me", "paper charts")
+_IMPLIED_BLOCK = ("won't open", "won't start", "can't log in", "locked out", "is down", "not working")
+_PATIENT_BLOCKED = ("can't check in any patients", "can't check in patients", "can't check anyone in", "can't see patients",
+                    "can't open patient charts", "cannot check in")
+_SCOPE_PHRASES = (
+    ("whole_site", ("whole office", "whole site", "entire site", "entire office", "everyone in the office")),
+    ("several_people", ("my team", "front desk is", "whole front desk", "the department", "billing department", "nobody in billing", "all of us")),
+    ("one_person", ("just me", "only my computer", "only me")),
+)
+
+
+def _quote(speech: str, phrases: tuple[str, ...]) -> str | None:
+    """The first phrase present in `speech`, with the caller's own capitalisation."""
+    lowered = speech.lower().replace("\u2019", "'")
+    for phrase in phrases:
+        at = lowered.find(phrase)
+        if at >= 0:
+            return speech[at:at + len(phrase)]
+    return None
+
+
+def _fact(value: Any, basis: str, evidence: str | None) -> dict[str, Any]:
+    return {"value": value, "basis": basis, "evidence": evidence}
+
+
+def _strict_blocked(speech: str) -> dict[str, Any]:
+    """Explicit statements only -- what the strict prompt asks of a real model."""
+    can = _quote(speech, _CAN_WORK_PHRASES)
+    cannot = _quote(speech, _BLOCKED_PHRASES)
+    if cannot and not can:
+        return _fact(True, "explicit", cannot)
+    if can and not cannot:
+        return _fact(False, "explicit", can)
+    if _has(speech.lower(), _IMPLIED_BLOCK):
+        return _fact(None, "implied", None)
+    return _fact(None, "none", None)
+
+
+def _strict_patient_care(speech: str) -> dict[str, Any]:
+    hit = _quote(speech, _PATIENT_BLOCKED)
+    return _fact(True, "explicit", hit) if hit else _fact(None, "none", None)
+
+
+def _strict_scope(speech: str) -> dict[str, Any]:
+    for value, phrases in _SCOPE_PHRASES:
+        hit = _quote(speech, phrases)
+        if hit:
+            return _fact(value, "explicit", hit)
+    return _fact(None, "none", None)
+
+
+def _answer(schema_name: str, speech: str, strict: bool = False) -> dict[str, Any]:
     lowered = speech.lower()
     wants_human = _has(lowered, _HUMAN)
     empty = not lowered.strip()
@@ -96,9 +152,28 @@ def _answer(schema_name: str, speech: str) -> dict[str, Any]:
             "started": _started(lowered),
             "work_blocked": _blocked(lowered),
             "unable_to_determine": not is_description,
+            **(
+                {
+                    "work_blocked": _strict_blocked(speech),
+                    "patient_care_affected": _strict_patient_care(speech),
+                    "affected_scope": _strict_scope(speech),
+                    "patient_context_mentioned": _has(lowered, ("patient", "chart")),
+                }
+                if strict
+                else {}
+            ),
         }
     if schema_name == "record_details":
         started, blocked = _started(lowered), _blocked(lowered)
+        if strict:
+            strict_blocked = _strict_blocked(speech)
+            return {
+                "escalation_requested": wants_human,
+                "started": started,
+                "work_blocked": strict_blocked,
+                "affected_scope": _strict_scope(speech),
+                "unable_to_determine": started is None and strict_blocked["value"] is None,
+            }
         return {
             "escalation_requested": wants_human,
             "started": started,
@@ -119,7 +194,7 @@ def _answer(schema_name: str, speech: str) -> dict[str, Any]:
             "issue": None,
             "issue_details": None,
             "started": _started(lowered),
-            "work_blocked": _blocked(lowered),
+            "work_blocked": _strict_blocked(speech) if strict else _blocked(lowered),
             "phone_number": None,
             "category": None,
             "unable_to_determine": not (dept or agrees or _started(lowered)),
@@ -175,7 +250,8 @@ class FakeProvider:
     ) -> dict[str, Any] | None:
         started = time.perf_counter()
         await asyncio.sleep(settings.fake_llm_latency_ms / 1000)
-        output = _answer(schema_name, _speech(user))
+        strict = (schema.get("properties", {}).get("work_blocked", {}) or {}).get("type") == "object"
+        output = _answer(schema_name, _speech(user), strict=strict)
         trace.record_llm_call(
             kind="structured",
             schema_name=schema_name,

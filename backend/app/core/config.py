@@ -84,6 +84,11 @@ class Settings(BaseSettings):
     # Send an identical second NLU request if the first hasn't answered by
     # then; first usable answer wins. 0 disables.
     voice_nlu_hedge_after_seconds: float = 2.5
+    # Strict extraction of the impact facts (work_blocked, patient_care_affected,
+    # affected_scope): the model must quote the caller's own words, the code checks the
+    # quote, and anything not explicitly stated is unknown and asked about. Off = the
+    # original inferring behaviour. See app/voice/strict_extraction.py.
+    voice_strict_extraction: bool = False
     # Read the caller's name back spelled when confidence in it is low
     # (unfamiliar name, low recognizer confidence), and let them correct it.
     voice_confirm_name: bool = True

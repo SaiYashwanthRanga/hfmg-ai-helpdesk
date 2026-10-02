@@ -35,6 +35,7 @@ from app.db.models import (
 from app.schemas.ticket import TicketCreate
 from app.services import ticket_service
 from app.voice import departments, names, nlu, reply, scripts
+from app.voice import facts as facts_mod
 from app.voice import priority as priority_rules
 from app.voice.session import caller_id_is_usable, record_turn, transcript_text, update_collected
 
@@ -221,6 +222,14 @@ def _acknowledgement(session: VoiceCallSession) -> str | None:
 def _record_description(session: VoiceCallSession, result: nlu.TurnResult) -> None:
     extras = result.extras
     collected = session.collected
+    strict_facts = extras.get("facts")
+    # Strict extraction records the three impact facts through the facts engine
+    # (with evidence and source); the original path writes the plain values.
+    impact = {} if strict_facts else dict(
+        work_blocked=extras.get("work_blocked"),
+        affected_scope=extras.get("affected_scope"),
+        patient_care_affected=extras.get("patient_care_affected"),
+    )
     update_collected(
         session,
         description=result.value,
@@ -229,10 +238,11 @@ def _record_description(session: VoiceCallSession, result: nlu.TurnResult) -> No
         model_priority=(result.priority or Priority.MEDIUM).value,
         short_issue=extras.get("short_issue"),
         started=extras.get("started"),
-        work_blocked=extras.get("work_blocked"),
-        affected_scope=extras.get("affected_scope"),
-        patient_care_affected=extras.get("patient_care_affected"),
+        **impact,
     )
+    if strict_facts:
+        session.collected = facts_mod.apply_facts(session.collected, list(strict_facts.values()))
+        update_collected(session, patient_context_mentioned=bool(extras.get("patient_context_mentioned")))
     # Volunteered details: keep what the caller already told us (a second
     # issue on the same call keeps name and department), fill the gaps.
     if not collected.get("caller_name") and extras.get("caller_name"):
@@ -250,7 +260,14 @@ async def _handle_details(db: AsyncSession, session: VoiceCallSession, utterance
     if _wants_human(utterance, result):
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
 
-    if not result.failed or result.extras.get("work_blocked") is not None:
+    detail_facts = result.extras.get("facts")
+    if detail_facts:
+        # Strict extraction: unknown facts never overwrite what is already known.
+        if result.extras.get("started"):
+            update_collected(session, started=result.extras["started"])
+        session.collected = facts_mod.apply_facts(session.collected, list(detail_facts.values()))
+        _apply_priority_rules(session)
+    elif not result.failed or result.extras.get("work_blocked") is not None:
         values = {
             "started": result.extras.get("started"),
             "work_blocked": result.extras.get("work_blocked"),
@@ -751,7 +768,15 @@ def _apply_corrections(session: VoiceCallSession, changes: dict) -> None:
     if changes.get("started"):
         update_collected(session, started=changes["started"])
     if "work_blocked" in changes:
-        update_collected(session, work_blocked=changes["work_blocked"])
+        session.collected = facts_mod.apply_fact(
+            session.collected,
+            facts_mod.Fact.known(
+                facts_mod.WORK_BLOCKED,
+                changes["work_blocked"],
+                source=facts_mod.Source.CORRECTION,
+                evidence=changes.get("work_blocked_evidence"),
+            ),
+        )
     if changes.get("phone_number"):
         update_collected(session, phone_number=changes["phone_number"], phone_spoken=True, phone_skipped=False)
     _apply_priority_rules(session)

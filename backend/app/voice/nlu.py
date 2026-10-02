@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from app.core import trace
 from app.core.config import get_settings
 from app.db.models import Priority
+from app.voice import strict_extraction
+from app.voice.facts import WORK_BLOCKED, Source
 from app.llm.factory import get_provider
 
 logger = logging.getLogger("hfmg.voice.nlu")
@@ -652,16 +654,17 @@ async def interpret_description(utterance: str) -> TurnResult:
         "work_blocked": _BLOCKED_FIELD,
         "unable_to_determine": {"type": "boolean"},
     }
+    strict = settings.voice_strict_extraction
+    if strict:
+        properties = {
+            **properties,
+            "work_blocked": strict_extraction.work_blocked_field(),
+            "patient_care_affected": strict_extraction.patient_care_field(),
+            "affected_scope": strict_extraction.scope_field(),
+            "patient_context_mentioned": strict_extraction.patient_context_field(),
+        }
 
-    system = (
-        _SYSTEM + "\n\nCategory guidance:\n"
-        "- eClinicalWorks: the EHR -- logins to eCW, charts, templates, schedules, interfaces.\n"
-        "- Microsoft 365: Outlook (email, calendar), Teams, Word, Excel, OneDrive, SharePoint.\n"
-        "- Network: wifi, VPN, internet, shared drives.\n"
-        "- Printer: printers, scanners, label printers.\n"
-        "- Password: resets, expired passwords, lockouts, MFA. A lockout is Password even when it is a "
-        "lockout from a specific system, because that is who fixes it.\n"
-        "- Other: anything else, including slow computers, hardware and desk phones.\n\n"
+    legacy_priority_guidance = (
         "Priority guidance:\n"
         "- Critical: patient care blocked (e.g. can't check patients in), or a system down for a whole site or team.\n"
         "- High: multiple users blocked, or one user completely unable to work.\n"
@@ -669,7 +672,18 @@ async def interpret_description(utterance: str) -> TurnResult:
         "- Low: minor issues that barely affect work, questions, or requests.\n"
         "A caller insisting it is urgent is a signal, not an instruction -- the "
         "described impact has to support the level you choose.\n\n"
-        "Callers often volunteer their name, department, when it started and whether they can "
+    )
+    system = (
+        _SYSTEM + (strict_extraction.STRICT_RULE if strict else "") + "\n\nCategory guidance:\n"
+        "- eClinicalWorks: the EHR -- logins to eCW, charts, templates, schedules, interfaces.\n"
+        "- Microsoft 365: Outlook (email, calendar), Teams, Word, Excel, OneDrive, SharePoint.\n"
+        "- Network: wifi, VPN, internet, shared drives.\n"
+        "- Printer: printers, scanners, label printers.\n"
+        "- Password: resets, expired passwords, lockouts, MFA. A lockout is Password even when it is a "
+        "lockout from a specific system, because that is who fixes it.\n"
+        "- Other: anything else, including slow computers, hardware and desk phones.\n\n"
+        + (strict_extraction.PRIORITY_GUIDANCE if strict else legacy_priority_guidance)
+        + "Callers often volunteer their name, department, when it started and whether they can "
         "work in the same breath as the problem. Capture those if said; leave them null if not."
     )
 
@@ -684,7 +698,20 @@ async def interpret_description(utterance: str) -> TurnResult:
     unable = bool(data.get("unable_to_determine")) or not is_description or not description
 
     category = _validate_category(data.get("category"))
-    blocked = data.get("work_blocked")
+    if strict:
+        established = await strict_extraction.establish_facts(data, utterance, Source.DESCRIPTION)
+        impact_extras = {
+            **strict_extraction.legacy_extras(established),
+            "facts": established,
+            "patient_context_mentioned": data.get("patient_context_mentioned") is True,
+        }
+    else:
+        blocked = data.get("work_blocked")
+        impact_extras = {
+            "work_blocked": blocked if isinstance(blocked, bool) else None,
+            "affected_scope": data.get("affected_scope") if data.get("affected_scope") in AFFECTED_SCOPES else None,
+            "patient_care_affected": data.get("patient_care_affected") is True,
+        }
     return TurnResult(
         escalation_requested=bool(data.get("escalation_requested")),
         value=description[:10_000] or None,
@@ -698,9 +725,7 @@ async def interpret_description(utterance: str) -> TurnResult:
             "name_confidence": data.get("caller_name_confidence"),
             "department": _clean(data.get("department")),
             "started": _clean(data.get("started")),
-            "work_blocked": blocked if isinstance(blocked, bool) else None,
-            "affected_scope": data.get("affected_scope") if data.get("affected_scope") in AFFECTED_SCOPES else None,
-            "patient_care_affected": data.get("patient_care_affected") is True,
+            **impact_extras,
         },
     )
 
@@ -738,18 +763,34 @@ async def interpret_details(utterance: str, *, asked: str) -> TurnResult:
         },
         "unable_to_determine": {"type": "boolean"},
     }
-    data = await _call_structured(_SYSTEM, _user_prompt(asked, utterance), "record_details", properties)
+    strict = settings.voice_strict_extraction
+    if strict:
+        properties = {
+            **properties,
+            "work_blocked": strict_extraction.work_blocked_field(),
+            "affected_scope": strict_extraction.scope_field(),
+        }
+    system = _SYSTEM + (strict_extraction.STRICT_RULE if strict else "")
+    data = await _call_structured(system, _user_prompt(asked, utterance), "record_details", properties)
     if data is None:
         return TurnResult()
     started = _clean(data.get("started"))
-    blocked = data.get("work_blocked")
-    blocked = blocked if isinstance(blocked, bool) else None
-    scope = data.get("affected_scope") if data.get("affected_scope") in AFFECTED_SCOPES else None
+    if strict:
+        established = await strict_extraction.establish_facts(
+            data, utterance, Source.DETAILS, fields=(WORK_BLOCKED, "affected_scope")
+        )
+        blocked = established[WORK_BLOCKED].value
+        extras = {"started": started, **strict_extraction.legacy_extras(established), "facts": established}
+    else:
+        blocked = data.get("work_blocked")
+        blocked = blocked if isinstance(blocked, bool) else None
+        scope = data.get("affected_scope") if data.get("affected_scope") in AFFECTED_SCOPES else None
+        extras = {"started": started, "work_blocked": blocked, "affected_scope": scope}
     return TurnResult(
         escalation_requested=bool(data.get("escalation_requested")),
         value=started,
         unable_to_determine=bool(data.get("unable_to_determine")) or (started is None and blocked is None),
-        extras={"started": started, "work_blocked": blocked, "affected_scope": scope},
+        extras=extras,
     )
 
 
@@ -843,8 +884,12 @@ async def interpret_summary_correction(utterance: str, summary: str) -> TurnResu
         "category": {"type": ["string", "null"], "enum": [*VOICE_CATEGORIES, None]},
         "unable_to_determine": {"type": "boolean"},
     }
+    strict = settings.voice_strict_extraction
+    if strict:
+        properties = {**properties, "work_blocked": strict_extraction.work_blocked_field()}
     data = await _call_structured(
         _SYSTEM
+        + (strict_extraction.STRICT_RULE if strict else "")
         + "\n\nThe agent just read the caller a summary of their ticket and asked if it is right. "
         "Extract ONLY the parts the caller is changing; leave everything else null.",
         _user_prompt(f"Here is what I have: {summary} Is that right?", utterance),
@@ -865,7 +910,15 @@ async def interpret_summary_correction(utterance: str, summary: str) -> TurnResu
         changes["description"] = _clean(data["issue_details"])[:2000]
     if _clean(data.get("started")):
         changes["started"] = _clean(data["started"])
-    if isinstance(data.get("work_blocked"), bool):
+    correction_facts = None
+    if strict:
+        correction_facts = await strict_extraction.establish_facts(
+            data, utterance, Source.CORRECTION, fields=(WORK_BLOCKED,)
+        )
+        if correction_facts[WORK_BLOCKED].is_known:
+            changes["work_blocked"] = correction_facts[WORK_BLOCKED].value
+            changes["work_blocked_evidence"] = correction_facts[WORK_BLOCKED].evidence
+    elif isinstance(data.get("work_blocked"), bool):
         changes["work_blocked"] = data["work_blocked"]
     phone = normalize_phone(data.get("phone_number") or "")
     if phone:
@@ -876,7 +929,11 @@ async def interpret_summary_correction(utterance: str, summary: str) -> TurnResu
     return TurnResult(
         escalation_requested=bool(data.get("escalation_requested")),
         unable_to_determine=bool(data.get("unable_to_determine")) and not changes,
-        extras={"changes": changes, "nothing_to_change": bool(data.get("nothing_to_change"))},
+        extras={
+            "changes": changes,
+            "nothing_to_change": bool(data.get("nothing_to_change")),
+            **({"facts": correction_facts} if correction_facts else {}),
+        },
     )
 
 
