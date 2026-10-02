@@ -13,7 +13,8 @@ and the code, not the model, decides whether to believe it (`establish_facts`):
 
     1. the model must say the basis is explicit
     2. its quote must really appear in what the caller said (grounding)
-    3. -- further checks (phrase gate, verifier) are added in later phases --
+    3. the phrase gate (phrase_gate.py): a strong pattern in the caller's words must state it
+    4. -- the verifier (a second, tiny model call on the quote) is added in a later phase --
 
 Anything that fails a check becomes an *unknown* fact with a reason, and an
 unknown is later asked about; it is never guessed. This module holds the
@@ -24,10 +25,11 @@ themselves stay in nlu.py.
 from typing import Any
 
 from app.voice import facts as facts_mod
+from app.voice import phrase_gate
 from app.voice.facts import Fact, Source, UnknownReason
 
-#: Confidence given to a fact that is explicit and grounded (refined by later checks).
-EXPLICIT_CONFIDENCE = 0.85
+#: Confidence of a fact whose wording matched a strong explicit pattern (refined by later checks).
+GATE_CONFIDENCE = 0.9
 
 # --- prompt text ----------------------------------------------------------------------
 
@@ -132,30 +134,49 @@ def _unknown(field: str, reason: UnknownReason, source: Source, evidence: str | 
 
 
 def judge_fact(field: str, raw: Any, utterance: str, source: Source) -> Fact:
-    """Turn the model's claim about one field into a Fact, believing it only if it checks out."""
-    if not isinstance(raw, dict):
-        return _unknown(field, UnknownReason.NOT_STATED, source)
+    """Turn the model's claim about one field into a Fact, believing it only if it checks out.
 
-    value = raw.get("value")
-    basis = raw.get("basis")
-    evidence = raw.get("evidence")
+    The phrase gate has the last word on *whether the caller stated it*:
+    - a strong pattern in what the caller said is required for any value;
+    - a statement and its opposite together (or two different scopes) is a conflict;
+    - the model's claim must agree with the words, or the fact is a conflict;
+    - when the model found nothing but the words are explicit, the words are accepted
+      (the evidence is then the matched phrase).
+    The model's own quote is kept as the evidence when it is real, so what is stored
+    is what the model pointed at and the words support.
+    """
+    claim = raw if isinstance(raw, dict) else {}
+    value = claim.get("value")
+    basis = claim.get("basis")
+    evidence = claim.get("evidence")
     evidence = evidence.strip() if isinstance(evidence, str) and evidence.strip() else None
 
+    # A value of the wrong type is no claim at all.
+    if field in facts_mod.BOOLEAN_FIELDS and value is not None and not isinstance(value, bool):
+        value = None
+    if field == facts_mod.SCOPE and value is not None and value not in facts_mod.SCOPE_VALUES:
+        value = None
+
+    verdict = phrase_gate.inspect(field, utterance)
+    if verdict.conflict:
+        return _unknown(field, UnknownReason.CONFLICTING, source)
+
+    grounded = facts_mod.is_grounded(utterance, evidence)
+    if verdict.value is not None:
+        if value is not None and value != verdict.value:
+            return _unknown(field, UnknownReason.CONFLICTING, source, verdict.quote)
+        shown = evidence if (value is not None and basis == "explicit" and grounded) else verdict.quote
+        return Fact.known(field, verdict.value, source=source, confidence=GATE_CONFIDENCE, evidence=shown)
+
+    # The words state nothing explicit. Say why the model's claim (if any) was not believed.
     if value is None:
         reason = UnknownReason.IMPLIED_UNCONFIRMED if basis == "implied" else UnknownReason.NOT_STATED
         return _unknown(field, reason, source)
-
-    # The model proposed a value. Every check below must pass.
-    if field in facts_mod.BOOLEAN_FIELDS and not isinstance(value, bool):
-        return _unknown(field, UnknownReason.NOT_STATED, source)
-    if field == facts_mod.SCOPE and value not in facts_mod.SCOPE_VALUES:
-        return _unknown(field, UnknownReason.NOT_STATED, source)
     if basis != "explicit":
         return _unknown(field, UnknownReason.IMPLIED_UNCONFIRMED, source)
-    if not facts_mod.is_grounded(utterance, evidence):
+    if not grounded:
         return _unknown(field, UnknownReason.UNGROUNDED, source, evidence)
-
-    return Fact.known(field, value, source=source, confidence=EXPLICIT_CONFIDENCE, evidence=evidence)
+    return _unknown(field, UnknownReason.GATE_REJECTED, source, evidence)
 
 
 async def establish_facts(

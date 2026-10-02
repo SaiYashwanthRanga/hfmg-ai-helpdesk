@@ -100,8 +100,11 @@ async def test_unsupported_claims_become_unknown_never_true(raw, reason):
 async def test_scope_must_be_one_of_the_known_values():
     ok = strict_extraction.judge_fact(SC, _fact("whole_site", "explicit", "the whole office"), "the whole office is down", Source.DESCRIPTION)
     assert ok.value == "whole_site"
-    bad = strict_extraction.judge_fact(SC, _fact("everyone", "explicit", "the whole office"), "the whole office is down", Source.DESCRIPTION)
-    assert bad.value is None
+    # An invalid claimed value is no claim; the words themselves still say whole_site.
+    ignored = strict_extraction.judge_fact(SC, _fact("everyone", "explicit", "the whole office"), "the whole office is down", Source.DESCRIPTION)
+    assert ignored.value == "whole_site"
+    silent = strict_extraction.judge_fact(SC, _fact("everyone", "explicit", "it is down"), "it is down", Source.DESCRIPTION)
+    assert silent.value is None
 
 
 async def test_a_false_needs_the_same_proof_as_a_true():
