@@ -125,6 +125,7 @@ async def turn(
         logger.warning("Turn for unknown SIP call %s", body.call_id)
         return _error_response()
 
+    ticket_before = session.ticket_id
     try:
         outcome = await orchestrator.handle_turn(
             db, session, utterance=body.utterance, confidence=body.confidence
@@ -139,7 +140,9 @@ async def turn(
             logger.exception("Escalation also failed for SIP call %s", body.call_id)
             return _error_response()
 
-    if outcome.ticket_id is not None:
+    # Only for a ticket created on this turn. A replayed turn, or an escalation after
+    # the ticket exists, returns the existing ticket id and must not summarize/email again.
+    if outcome.ticket_id is not None and outcome.ticket_id != ticket_before:
         await dispatch_ticket_tasks(db, background_tasks, outcome.ticket_id)
 
     logger.info(
@@ -166,7 +169,7 @@ async def call_status(
     session.ended_at = datetime.now(timezone.utc)
 
     terminal = (VoiceCallState.COMPLETED, VoiceCallState.ESCALATED, VoiceCallState.ABANDONED)
-    if session.state in terminal or session.ticket_id is not None:
+    if session.state in terminal or orchestrator.issue_filed(session):
         await db.commit()
         return
 

@@ -5,6 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.summarizer import generate_summary_for_ticket
+from app.ai.ticket_followup import summarize_then_notify
 from app.db.base import get_db
 from app.db.models import Priority, TicketSource, TicketStatus
 from app.notifications.email import send_ticket_notification
@@ -29,8 +30,7 @@ async def create_ticket(
 ) -> TicketRead:
     ticket = await ticket_service.create_ticket(db, payload)
 
-    background_tasks.add_task(send_ticket_notification, ticket, "created")
-    background_tasks.add_task(generate_summary_for_ticket, ticket.id)
+    background_tasks.add_task(summarize_then_notify, ticket.id)
 
     return TicketRead.model_validate(ticket)
 

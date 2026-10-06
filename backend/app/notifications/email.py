@@ -3,6 +3,7 @@ import logging
 from app.core.config import get_settings
 from app.db.models import Ticket
 from app.notifications.factory import get_email_provider
+from app.services.ticket_text import extract_issue
 
 logger = logging.getLogger("hfmg.notifications.email")
 
@@ -14,21 +15,17 @@ _EVENT_SUBJECTS = {
 }
 
 
-def _build_body(ticket: Ticket, event: str) -> str:
-    lines = [
-        f"Ticket: {ticket.ticket_number}",
-        f"Status: {ticket.status.value}",
-        f"Priority: {ticket.priority.value}",
-        f"Category: {ticket.category.name}",
-        f"Caller: {ticket.caller_name}",
-        f"Phone: {ticket.phone_number}",
-        f"Email: {ticket.email or '(not provided)'}",
-        "",
-        "Description:",
-        ticket.description,
-    ]
-    if ticket.ai_summary:
-        lines += ["", "AI Summary:", ticket.ai_summary]
+def _build_body(issue: str, summary: str | None) -> str:
+    """Only the issue and its summary. The details, transcript, intake details and
+    ticket fields stay on the ticket (dashboard / Freshworks); the subject names
+    the ticket. The summary is written from the details, so repeating them here
+    would only duplicate it.
+
+    The summary is the one already saved on the ticket; this module never calls
+    the LLM. No saved summary (disabled or failed) means no Summary section."""
+    lines = ["Issue:", issue]
+    if summary:
+        lines += ["", "Summary:", summary]
     return "\n".join(lines)
 
 
@@ -64,7 +61,7 @@ async def send_ticket_notification(ticket: Ticket, event: str) -> None:
         subject = subject_template.format(
             ticket_number=ticket.ticket_number, category=ticket.category.name, status=ticket.status.value
         )
-        body = _build_body(ticket, event)
+        body = _build_body(extract_issue(ticket.description), ticket.ai_summary)
 
         sent = await provider.send(
             to=settings.helpdesk_email,

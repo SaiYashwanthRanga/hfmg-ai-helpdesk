@@ -12,6 +12,7 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import select
 
+from app.ai import ticket_followup
 from app.core import trace
 from app.core.config import Settings, get_settings
 from app.db.models import (
@@ -424,7 +425,7 @@ async def test_notifications_are_opt_in(client, categories, monkeypatch):
     async def fake_send(ticket, event):
         sent.append(ticket.ticket_number)
 
-    monkeypatch.setattr(service, "send_ticket_notification", fake_send)
+    monkeypatch.setattr(ticket_followup, "send_ticket_notification", fake_send)
     monkeypatch.setattr(settings, "simulator_allow_notifications", True)
     await _full_intake(client)
     assert sent == []

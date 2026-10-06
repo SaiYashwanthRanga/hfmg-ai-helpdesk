@@ -546,3 +546,55 @@ async def test_ticket_notification_flows_through_internal_provider(db_session, c
     assert values(parts, "To") == ["helpdesk@hfmg.net"]
     assert ticket.ticket_number in values(parts, "Subject")[0]
     assert "&lt;b&gt;now&lt;/b&gt;" in values(parts, "BodyHtml")[0]
+
+
+async def _notify(db_session, category_id, mail, monkeypatch, description, *, summary=""):
+    """Send the "created" email for a ticket whose summary is already saved (or not)."""
+    from app.notifications import email as email_module
+    from app.schemas.ticket import TicketCreate
+    from app.services import ticket_service
+
+    recorder = mail()
+    monkeypatch.setattr(settings, "email_provider", "hfmg_internal")
+    monkeypatch.setattr(settings, "enable_email_notifications", True)
+    monkeypatch.setattr(settings, "helpdesk_email", "helpdesk@hfmg.net")
+    factory.get_email_provider.cache_clear()
+
+    ticket = await ticket_service.create_ticket(
+        db_session,
+        TicketCreate(caller_name="Ann", phone_number="+15550001111", category_id=category_id, description=description),
+    )
+    if summary:
+        await ticket_service.set_ai_summary(db_session, ticket.id, summary=summary, failed=False)
+    ticket = await ticket_service.get_ticket(db_session, ticket.id)
+    await email_module.send_ticket_notification(ticket, "created")
+    return ticket, values(parse_parts(recorder.requests[0]), "BodyHtml")[0]
+
+
+VOICE_DESCRIPTION = (
+    "NEEDS TRIAGE REVIEW - work impact not confirmed.\n\n"
+    "Back office has no wifi.\n\n"
+    "--- Intake details ---\nDepartment: Billing\nPriority: High: no network\n\n"
+    "--- Call transcript ---\nAgent: How can I help?\nCaller: my wifi is down"
+)
+
+
+async def test_ticket_email_has_only_issue_and_summary(db_session, category_id, mail, monkeypatch):
+    ticket, body = await _notify(
+        db_session, category_id, mail, monkeypatch, VOICE_DESCRIPTION,
+        summary="Back office lost wifi.",
+    )
+    assert body == (
+        '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px">'
+        "Issue:<br>\nBack office has no wifi.<br>\n<br>\nSummary:<br>\nBack office lost wifi.</div>"
+    )
+    for leaked in ("transcript", "Intake", "Department", "Priority", "TRIAGE", ticket.ticket_number, "Ann", "5550001111"):
+        assert leaked.lower() not in body.lower()
+    # Everything stays on the ticket itself.
+    assert "--- Call transcript ---" in ticket.description and "Department: Billing" in ticket.description
+
+
+async def test_ticket_email_omits_summary_section_when_none(db_session, category_id, mail, monkeypatch):
+    _, body = await _notify(db_session, category_id, mail, monkeypatch, VOICE_DESCRIPTION)
+    assert "Issue:" in body and "Back office has no wifi." in body
+    assert "Summary" not in body

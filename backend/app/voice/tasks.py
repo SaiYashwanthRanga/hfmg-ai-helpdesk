@@ -3,9 +3,7 @@
 from fastapi import BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.summarizer import generate_summary_for_ticket
-from app.notifications.email import send_ticket_notification
-from app.services import ticket_service
+from app.ai.ticket_followup import summarize_then_notify
 
 
 async def dispatch_ticket_tasks(
@@ -13,9 +11,8 @@ async def dispatch_ticket_tasks(
 ) -> None:
     """Fire the same background work the web form fires.
 
-    The AI summary is deliberately not awaited -- the caller hears their ticket
-    number immediately and the summary lands seconds later.
+    One task, not two: the AI summary is generated and saved first, then the
+    helpdesk email is sent from it. Neither is awaited here -- the caller hears
+    their ticket number immediately.
     """
-    ticket = await ticket_service.get_ticket(db, ticket_id)
-    background_tasks.add_task(send_ticket_notification, ticket, "created")
-    background_tasks.add_task(generate_summary_for_ticket, ticket.id)
+    background_tasks.add_task(summarize_then_notify, ticket_id)

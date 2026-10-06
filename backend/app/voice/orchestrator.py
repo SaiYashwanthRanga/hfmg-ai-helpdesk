@@ -37,6 +37,7 @@ from app.services import ticket_service
 from app.voice import departments, names, nlu, reply, scripts
 from app.voice import facts as facts_mod
 from app.voice import priority as priority_rules
+from app.services.ticket_text import DETAILS_MARKER, INTAKE_MARKER, TRANSCRIPT_MARKER
 from app.voice.session import caller_id_is_usable, record_turn, transcript_text, update_collected
 
 logger = logging.getLogger("hfmg.voice.orchestrator")
@@ -64,6 +65,29 @@ class TurnOutcome:
     @property
     def text(self) -> str:
         return " ".join(self.lines).strip()
+
+
+def issue_filed(session: VoiceCallSession) -> bool:
+    """Has a ticket been filed for the issue the caller is on right now?
+
+    Not the same as "this call has a ticket": a caller may report several issues,
+    and each gets its own. `ticket_filed` is cleared when the next one begins.
+    A call that started before the flag existed falls back to `ticket_id`.
+    """
+    filed = (session.collected or {}).get("ticket_filed")
+    if filed is None:
+        return session.ticket_id is not None
+    return bool(filed)
+
+
+def _record_ticket(session: VoiceCallSession, ticket: Ticket) -> None:
+    """Note a ticket filed on this call. `ticket_id` is always the latest; `ticket_ids` is all of them."""
+    session.ticket_id = ticket.id
+    update_collected(
+        session,
+        ticket_filed=True,
+        ticket_ids=[*(session.collected.get("ticket_ids") or []), str(ticket.id)],
+    )
 
 
 async def start_call(session: VoiceCallSession) -> TurnOutcome:
@@ -240,6 +264,7 @@ def _record_description(session: VoiceCallSession, result: nlu.TurnResult) -> No
         model_priority=(result.priority or Priority.MEDIUM).value,
         short_issue=extras.get("short_issue"),
         started=extras.get("started"),
+        details=None,  # belongs to the previous issue if the caller reports another
         **impact,
     )
     if strict_facts:
@@ -264,6 +289,7 @@ async def _handle_details(db: AsyncSession, session: VoiceCallSession, utterance
     if _wants_human(utterance, result):
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
 
+    _keep_details(session, result, utterance)
     detail_facts = result.extras.get("facts")
     if detail_facts:
         # Strict extraction: unknown facts never overwrite what is already known.
@@ -280,6 +306,26 @@ async def _handle_details(db: AsyncSession, session: VoiceCallSession, utterance
         update_collected(session, **{k: v for k, v in values.items() if v is not None})
         _apply_priority_rules(session)
     return await _next_step(db, session)
+
+
+_MIN_FALLBACK_WORDS = 4
+
+
+def _keep_details(session: VoiceCallSession, result: nlu.TurnResult, utterance: str) -> None:
+    """Keep what the caller said about the problem, so it does not live only in the transcript.
+
+    The model reports it in the same call that reads the start time. If that call
+    failed outright (no extras at all) the caller's own words are kept instead, when
+    there are enough of them to be more than "yes" or "this morning".
+    """
+    if "details" in result.extras:
+        details = result.extras["details"]
+    elif len(utterance.split()) >= _MIN_FALLBACK_WORDS:
+        details = " ".join(utterance.split())
+    else:
+        details = None
+    if details:
+        update_collected(session, details=details[:2000])
 
 
 async def _handle_name(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
@@ -952,9 +998,11 @@ async def _handle_anything_else(
         keep = (
             "caller_name", "name_confidence", "name_confirmed_as", "name_unverified", "department",
             "department_verified", "phone_number", "phone_spoken", "phone_skipped", "email",
+            "ticket_ids",
         )
         session.collected = {k: session.collected.get(k) for k in keep if session.collected.get(k) is not None}
         session.collected["asked"] = ["department", "email"]
+        session.collected["ticket_filed"] = False  # the next issue gets its own ticket
         session.email_attempt_count = 0
         session.state = VoiceCallState.COLLECT_DESCRIPTION
         return TurnOutcome(_speak(session, _ask(session, scripts.DESCRIPTION_ASK)))
@@ -973,7 +1021,7 @@ async def _caller_leaving(db: AsyncSession, session: VoiceCallSession) -> TurnOu
     collected = session.collected
     if collected.get("escalation_pending"):
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
-    if session.ticket_id is not None:
+    if issue_filed(session):
         session.state = VoiceCallState.COMPLETED
         return TurnOutcome(_speak(session, reply.say_and_hangup(scripts.GOODBYE)))
 
@@ -992,7 +1040,7 @@ async def _caller_leaving(db: AsyncSession, session: VoiceCallSession) -> TurnOu
                 escalation_note="INCOMPLETE VOICE INTAKE - caller ended the call before intake finished.",
                 raise_priority=False,  # they chose to leave; automation did not fail them
             )
-        session.ticket_id = ticket.id
+        _record_ticket(session, ticket)
         session.state = VoiceCallState.COMPLETED
         line = scripts.LEAVING_WITH_TICKET.format(ticket_number=scripts.spoken_ticket_number(ticket.ticket_number))
         return TurnOutcome(_speak(session, reply.say_and_hangup(line)), ticket.id)
@@ -1007,8 +1055,8 @@ async def _caller_leaving(db: AsyncSession, session: VoiceCallSession) -> TurnOu
 async def _create_ticket_and_read_back(
     db: AsyncSession, session: VoiceCallSession, *, preamble: str | None = None
 ) -> TurnOutcome:
-    if session.ticket_id is not None:
-        # The gateway replayed the turn; don't create a second ticket.
+    if issue_filed(session):
+        # The gateway replayed the turn; this issue already has its ticket.
         ticket = await db.get(Ticket, session.ticket_id)
         read_back = scripts.READ_BACK.format(
             ticket_number=scripts.spoken_ticket_number(ticket.ticket_number)
@@ -1018,7 +1066,7 @@ async def _create_ticket_and_read_back(
         )
 
     ticket = await _create_ticket(db, session)
-    session.ticket_id = ticket.id
+    _record_ticket(session, ticket)
     session.state = VoiceCallState.ANYTHING_ELSE
 
     lines = [preamble] if preamble else []
@@ -1058,10 +1106,12 @@ async def _create_ticket(
     description = collected.get("description") or ""
     if escalation_note:
         description = f"{escalation_note}\n\n{description}".strip()
+    if collected.get("details"):
+        description = f"{description}\n\n{DETAILS_MARKER}\n{collected['details']}".strip()
     details = _intake_details(collected)
     if details:
-        description = f"{description}\n\n--- Intake details ---\n{details}".strip()
-    description = f"{description}\n\n--- Call transcript ---\n{transcript_text(session)}".strip()
+        description = f"{description}\n\n{INTAKE_MARKER}\n{details}".strip()
+    description = f"{description}\n\n{TRANSCRIPT_MARKER}\n{transcript_text(session)}".strip()
     if collected.get("needs_triage"):
         description = f"{priority_rules.triage_note(_assessment(session))}\n\n{description}".strip()
 
@@ -1129,7 +1179,7 @@ async def salvage_abandoned_call(db: AsyncSession, session: VoiceCallSession) ->
         session,
         escalation_note="INCOMPLETE VOICE INTAKE - caller disconnected before intake finished.",
     )
-    session.ticket_id = ticket.id
+    _record_ticket(session, ticket)
     return ticket
 
 
@@ -1199,11 +1249,11 @@ async def escalate(
         ),
     }
 
-    if session.ticket_id is not None:
+    if issue_filed(session):
         ticket = await db.get(Ticket, session.ticket_id)
     else:
         ticket = await _create_ticket(db, session, escalation_note=notes[reason])
-        session.ticket_id = ticket.id
+        _record_ticket(session, ticket)
 
     phone = session.collected.get("phone_number") or phone
 

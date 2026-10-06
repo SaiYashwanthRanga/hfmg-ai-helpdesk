@@ -19,7 +19,7 @@ from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.summarizer import generate_summary_for_ticket
+from app.ai.ticket_followup import summarize_then_notify
 from app.core import trace
 from app.core.config import get_settings
 from app.db.base import async_session_factory
@@ -32,7 +32,6 @@ from app.db.models import (
     VoiceSimulatorSession,
     VoiceSimulatorTurn,
 )
-from app.notifications.email import send_ticket_notification
 from app.services import ticket_service
 from app.simulator import schemas
 from app.speech import context as speech_context
@@ -304,10 +303,7 @@ async def _dispatch_ticket_tasks(
     db: AsyncSession, background_tasks: BackgroundTasks, ticket_id: uuid.UUID, *, send_email: bool
 ) -> None:
     """Same post-creation work as voice/routes.py, with email opt-in (design D11)."""
-    ticket = await ticket_service.get_ticket(db, ticket_id)
-    if send_email:
-        background_tasks.add_task(send_ticket_notification, ticket, "created")
-    background_tasks.add_task(generate_summary_for_ticket, ticket.id)
+    background_tasks.add_task(summarize_then_notify, ticket_id, send_email=send_email)
 
 
 # --- lifecycle ------------------------------------------------------------
@@ -768,7 +764,7 @@ async def end_session(
     options.end_reason = options.end_reason or request.reason
     salvaged: uuid.UUID | None = None
 
-    if call.state not in TERMINAL_STATES and call.ticket_id is None:
+    if call.state not in TERMINAL_STATES and not orchestrator.issue_filed(call):
         call.state = VoiceCallState.ABANDONED
         has_description = bool(call.collected.get("description"))
         has_phone = bool(call.collected.get("phone_number") or caller_id_is_usable(call.from_number))

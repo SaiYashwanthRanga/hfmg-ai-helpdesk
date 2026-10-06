@@ -824,6 +824,15 @@ async def interpret_details(utterance: str, *, asked: str) -> TurnResult:
             "enum": [*AFFECTED_SCOPES, None],
             "description": "Only if the caller says who else is affected: just them, several people, or a whole site.",
         },
+        "details": {
+            "type": ["string", "null"],
+            "description": (
+                "Anything the caller said about the problem itself beyond when it started and whether they "
+                "can work: symptoms, what they tried, error messages, what exactly fails or still works. One "
+                "or two short sentences in the caller's own facts. Never add anything they did not say. Null "
+                "if they only gave timing, said whether they can work, or said nothing about the problem."
+            ),
+        },
         "unable_to_determine": {"type": "boolean"},
     }
     strict = settings.voice_strict_extraction
@@ -851,6 +860,7 @@ async def interpret_details(utterance: str, *, asked: str) -> TurnResult:
         blocked = blocked if isinstance(blocked, bool) else None
         scope = data.get("affected_scope") if data.get("affected_scope") in AFFECTED_SCOPES else None
         extras = {"started": started, "work_blocked": blocked, "affected_scope": scope}
+    extras["details"] = _clean(data.get("details"))
     return TurnResult(
         escalation_requested=bool(data.get("escalation_requested")),
         value=started,

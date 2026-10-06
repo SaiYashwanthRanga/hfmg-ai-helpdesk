@@ -6,6 +6,7 @@ from app.core.config import get_settings
 from app.db.base import async_session_factory
 from app.llm.factory import get_provider
 from app.services.ticket_service import get_ticket, set_ai_summary
+from app.services.ticket_text import without_transcript
 
 logger = logging.getLogger("hfmg.ai.summarizer")
 
@@ -47,6 +48,26 @@ _SCHEMA = {
 }
 
 
+async def summarize_ticket(ticket) -> str | None:
+    """One LLM call: the triage summary text, or None when there is no usable result.
+
+    Runs in the background, so it can afford more patience than the voice
+    path -- nobody is waiting on the line for this.
+    """
+    prompt = _PROMPT_TEMPLATE.format(
+        category=ticket.category.name,
+        priority=ticket.priority.value,
+        description=without_transcript(ticket.description),
+    )
+    data = await get_provider().structured(
+        system=_SYSTEM,
+        user=prompt,
+        schema_name="ticket_summary",
+        schema=_SCHEMA,
+    )
+    return ((data or {}).get("summary") or "").strip() or None
+
+
 async def generate_summary_for_ticket(ticket_id: uuid.UUID) -> None:
     """Best-effort AI summary generation, run as a FastAPI BackgroundTask.
 
@@ -76,11 +97,6 @@ async def _generate(ticket_id: uuid.UUID, started: float) -> None:
 
     async with async_session_factory() as db:
         ticket = await get_ticket(db, ticket_id)
-        prompt = _PROMPT_TEMPLATE.format(
-            category=ticket.category.name,
-            priority=ticket.priority.value,
-            description=ticket.description,
-        )
         logger.info(
             "AI summary starting for ticket %s (model=%s, description_chars=%d)",
             ticket_id,
@@ -88,17 +104,9 @@ async def _generate(ticket_id: uuid.UUID, started: float) -> None:
             len(ticket.description),
         )
 
-        # Runs in the background, so it can afford more patience than the
-        # voice path -- nobody is waiting on the line for this.
-        data = await provider.structured(
-            system=_SYSTEM,
-            user=prompt,
-            schema_name="ticket_summary",
-            schema=_SCHEMA,
-        )
+        summary = await summarize_ticket(ticket)
         elapsed = time.perf_counter() - started
 
-        summary = (data or {}).get("summary", "").strip() if data else ""
         if not summary:
             logger.warning(
                 "AI summary FAILED for ticket %s after %.2fs (provider returned no usable "
