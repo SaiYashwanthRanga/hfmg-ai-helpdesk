@@ -283,8 +283,10 @@ def derive_intent(
         return "confirm_name" if answer is True else "spell_name"
     if state_before == VoiceCallState.COLLECT_NAME:
         return "provide_name"
-    if state_before == VoiceCallState.COLLECT_PHONE:
+    if state_before in (VoiceCallState.COLLECT_PHONE, VoiceCallState.COLLECT_ALTERNATE_CALLBACK_NUMBER):
         return "provide_phone"
+    if state_before == VoiceCallState.CONFIRM_CALLBACK_NUMBER:
+        return "confirm_callback" if answer is True else "deny_callback" if answer is False else "unclear"
     if state_before == VoiceCallState.COLLECT_EMAIL:
         if model_output.get("declined"):
             return "decline_email"

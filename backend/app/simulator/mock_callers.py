@@ -124,6 +124,7 @@ def mock_caller(seed: int, *, category: str | None = None, escalate: bool = Fals
         "COLLECT_NAME": f"This is {first} {last}, from {rng.choice(_DEPARTMENTS)}.",
         "CONFIRM_NAME": "Yes, that's right.",
         "COLLECT_PHONE": spoken_phone,
+        "CONFIRM_CALLBACK_NUMBER": "Yes, that's right.",
         "COLLECT_EMAIL": _spoken_email(local),
         "CONFIRM_EMAIL": "Yes, that's right.",
         "CONFIRM_CATEGORY": "Yes.",

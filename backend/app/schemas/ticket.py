@@ -65,6 +65,9 @@ class TicketRead(BaseModel):
     ticket_number: str
     caller_name: str
     phone_number: str
+    # Added for voice tickets; null for web tickets and calls that never confirmed one.
+    caller_number: str | None = None
+    callback_number: str | None = None
     email: str | None
     category: CategoryRead
     priority: Priority

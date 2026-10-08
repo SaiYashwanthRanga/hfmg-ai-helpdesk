@@ -114,6 +114,16 @@ def phone_retry(digits_heard: int, attempt: int) -> str:
 
 PHONE_GIVE_UP = "That's okay, we'll follow up another way."
 
+# Callback number confirmation, before the ticket is filed.
+CALLBACK_CONFIRM = (
+    "I have your callback number as {number}. If our IT team needs to reach you regarding this ticket, "
+    "they will call this number. Is this the best number to contact you on?"
+)
+CALLBACK_ASK_OTHER = "What number would you like our IT team to call instead?"
+CALLBACK_CONFIRM_NEW = "I have your callback number as {number}. Is that correct?"
+CALLBACK_REPEAT = "Sorry, I didn't catch a yes or a no."
+CALLBACK_KEEP_CURRENT = "No problem, we'll use {number}."
+
 # Spelled, not said: transcription garbles spoken names in addresses
 # ("saiyashwanth" -> "sichuan") but gets spelled letters right. Almost every
 # caller is @hfmg.net, so only the part before the @ is needed.

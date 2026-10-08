@@ -103,6 +103,8 @@ _GOODBYE_STATES = (
     VoiceCallState.COLLECT_NAME,
     VoiceCallState.CONFIRM_NAME,
     VoiceCallState.COLLECT_PHONE,
+    VoiceCallState.CONFIRM_CALLBACK_NUMBER,
+    VoiceCallState.COLLECT_ALTERNATE_CALLBACK_NUMBER,
     VoiceCallState.COLLECT_EMAIL,
     VoiceCallState.CONFIRM_EMAIL,
     VoiceCallState.CONFIRM_SUMMARY,
@@ -155,6 +157,8 @@ async def handle_turn(
         VoiceCallState.COLLECT_NAME: _handle_name,
         VoiceCallState.CONFIRM_NAME: _handle_name_confirmation,
         VoiceCallState.COLLECT_PHONE: _handle_phone,
+        VoiceCallState.CONFIRM_CALLBACK_NUMBER: _handle_callback_confirmation,
+        VoiceCallState.COLLECT_ALTERNATE_CALLBACK_NUMBER: _handle_alternate_callback,
         VoiceCallState.COLLECT_EMAIL: _handle_email,
         VoiceCallState.CONFIRM_EMAIL: _handle_email_confirmation,
         VoiceCallState.CONFIRM_SUMMARY: _handle_summary_confirmation,
@@ -521,6 +525,138 @@ async def _phone_not_understood(db: AsyncSession, session: VoiceCallSession, utt
     return TurnOutcome(_speak(session, _ask(session, prompt)))
 
 
+# --- callback number confirmation ---------------------------------------------------
+#
+# The IT team calls whatever number is on the ticket, so the caller hears it once
+# before the ticket is filed. `collected` keeps three things apart:
+#   phone_number        the number we had: caller ID, or what the caller said
+#   callback_candidate  a different number the caller offered, awaiting a yes
+#   callback_number     the number the caller confirmed (None if they never did)
+# Whatever happens, the call carries on: after `voice_max_phone_attempts` failed
+# tries, or a refusal, the number we already had stands.
+
+
+def _callback_number_pending(session: VoiceCallSession) -> bool:
+    collected = session.collected
+    return bool(
+        settings.voice_confirm_callback
+        and collected.get("phone_number")
+        and not collected.get("callback_confirmed")
+    )
+
+
+def _ask_callback_confirmation(session: VoiceCallSession, *, preamble: str | None = None) -> TurnOutcome:
+    """Read the number back; if the caller offered another, confirm that one instead."""
+    collected = session.collected
+    session.state = VoiceCallState.CONFIRM_CALLBACK_NUMBER
+    if collected.get("callback_candidate"):
+        prompt = scripts.CALLBACK_CONFIRM_NEW.format(
+            number=scripts.spoken_phone_number(collected["callback_candidate"])
+        )
+    else:
+        prompt = scripts.CALLBACK_CONFIRM.format(number=scripts.spoken_phone_number(collected["phone_number"]))
+    body = _say_then_ask(session, preamble, prompt) if preamble else _ask(session, prompt)
+    return TurnOutcome(_speak(session, body))
+
+
+def _ask_alternate_callback(session: VoiceCallSession) -> TurnOutcome:
+    session.state = VoiceCallState.COLLECT_ALTERNATE_CALLBACK_NUMBER
+    return TurnOutcome(_speak(session, _ask(session, scripts.CALLBACK_ASK_OTHER)))
+
+
+async def _callback_settled(
+    db: AsyncSession, session: VoiceCallSession, number: str | None, *, preamble: str | None = None
+) -> TurnOutcome:
+    """Done asking. `number` is what the caller confirmed; None means they never did."""
+    update_collected(
+        session,
+        callback_confirmed=True,
+        callback_number=number,
+        callback_fallback=number is None,
+        callback_candidate=None,
+        callback_attempts=0,
+    )
+    return await _finish_collection(db, session, preamble=preamble)
+
+
+async def _keep_current_callback(db: AsyncSession, session: VoiceCallSession) -> TurnOutcome:
+    """The caller will not (or cannot) give another number: the one we had stands."""
+    line = scripts.CALLBACK_KEEP_CURRENT.format(
+        number=scripts.spoken_phone_number(session.collected["phone_number"])
+    )
+    return await _callback_settled(db, session, None, preamble=line)
+
+
+def _callback_attempts_used(session: VoiceCallSession) -> bool:
+    """Count one more failed try; True once the limit is reached."""
+    attempts = session.collected.get("callback_attempts", 0) + 1
+    update_collected(session, callback_attempts=attempts)
+    return attempts >= settings.voice_max_phone_attempts
+
+
+def _propose_callback(session: VoiceCallSession, number: str) -> TurnOutcome:
+    update_collected(session, callback_candidate=number)
+    return _ask_callback_confirmation(session)
+
+
+async def _handle_callback_confirmation(
+    db: AsyncSession, session: VoiceCallSession, utterance: str
+) -> TurnOutcome:
+    collected = session.collected
+    result = await nlu.interpret_yes_no("Is that the best number to reach you on?", utterance)
+
+    if _wants_human(utterance, result):
+        return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
+
+    candidate = collected.get("callback_candidate")
+    if result.yes_no is True:
+        return await _callback_settled(db, session, candidate or collected["phone_number"])
+
+    if result.yes_no is False:
+        if nlu.count_digits(utterance) >= 7:
+            # "No, it's 845 555 0142": the new number came with the no.
+            offered = await nlu.interpret_phone(utterance)
+            if not offered.failed:
+                if offered.value == collected["phone_number"]:
+                    return await _callback_settled(db, session, offered.value)
+                return _propose_callback(session, offered.value)
+        if candidate:
+            # The caller turned down the number they offered, too.
+            update_collected(session, callback_candidate=None)
+            if _callback_attempts_used(session):
+                return await _keep_current_callback(db, session)
+        return _ask_alternate_callback(session)
+
+    # Neither a yes nor a no. Ask once more, then carry on with the number we have.
+    if _callback_attempts_used(session):
+        return await _keep_current_callback(db, session)
+    return _ask_callback_confirmation(session, preamble=scripts.CALLBACK_REPEAT)
+
+
+async def _handle_alternate_callback(
+    db: AsyncSession, session: VoiceCallSession, utterance: str
+) -> TurnOutcome:
+    collected = session.collected
+    if nlu.phone_declined(utterance) and not nlu.mentions_escalation(utterance):
+        return await _keep_current_callback(db, session)
+
+    result = await nlu.interpret_phone(utterance)
+    if _wants_human(utterance, result):
+        return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
+
+    if result.failed:
+        # Not a usable number: say what was wrong, ask again, give up after the limit.
+        if _callback_attempts_used(session):
+            return await _keep_current_callback(db, session)
+        session.state = VoiceCallState.COLLECT_ALTERNATE_CALLBACK_NUMBER
+        prompt = scripts.phone_retry(nlu.count_digits(utterance), collected.get("callback_attempts", 1))
+        return TurnOutcome(_speak(session, _ask(session, prompt)))
+
+    if result.value == collected["phone_number"]:
+        return await _callback_settled(db, session, result.value)  # "no, the same one"
+    return _propose_callback(session, result.value)
+
+
 # --- choosing the next question -------------------------------------------------
 
 
@@ -844,7 +980,8 @@ def _summary_text(session: VoiceCallSession, *, updated: bool = False) -> str:
     elif "work_impact" in assessment.unverified:
         sentences.append(scripts.SUMMARY_WORK_IMPACT_UNKNOWN)
 
-    if c.get("phone_spoken") and c.get("phone_number"):
+    if c.get("phone_spoken") and c.get("phone_number") and not c.get("callback_confirmed"):
+        # (Once the callback number has been confirmed it has been heard already.)
         sentences.append(f"I'll reach you at {scripts.spoken_phone_number(c['phone_number'])}.")
 
     if c.get("category") not in (None, "Other") and c.get("category_confidence") in ("medium", "low"):
@@ -857,14 +994,20 @@ def _summary_text(session: VoiceCallSession, *, updated: bool = False) -> str:
 async def _finish_collection(
     db: AsyncSession, session: VoiceCallSession, *, preamble: str | None = None
 ) -> TurnOutcome:
-    """Everything needed is gathered. Read it back, then create the ticket.
+    """Everything needed is gathered. Confirm the callback number, read the ticket
+    back, then create it.
 
     With the read-back on (the default) the caller confirms the whole ticket
     once, and the category question is dropped in favour of a "filing it
     under X" clause in that read-back. With it off, the older behaviour
     applies: confirm an uncertain category, then create.
+
+    Every route to a ticket passes through here, so the callback number is
+    checked here, once, before anything else.
     """
     collected = session.collected
+    if _callback_number_pending(session):
+        return _ask_callback_confirmation(session, preamble=preamble)
     if settings.voice_confirm_summary and not collected.get("summary_confirmed"):
         session.state = VoiceCallState.CONFIRM_SUMMARY
         text = _summary_text(session, updated=bool(collected.get("summary_rounds")))
@@ -959,6 +1102,10 @@ def _apply_corrections(session: VoiceCallSession, changes: dict) -> None:
         )
     if changes.get("phone_number"):
         update_collected(session, phone_number=changes["phone_number"], phone_spoken=True, phone_skipped=False)
+        # A number given at the read-back replaces the confirmed one, so it is confirmed in its turn.
+        update_collected(
+            session, callback_confirmed=False, callback_number=None, callback_candidate=None, callback_fallback=False
+        )
     _apply_priority_rules(session)
 
 
@@ -998,6 +1145,7 @@ async def _handle_anything_else(
         keep = (
             "caller_name", "name_confidence", "name_confirmed_as", "name_unverified", "department",
             "department_verified", "phone_number", "phone_spoken", "phone_skipped", "email",
+            "callback_confirmed", "callback_number", "callback_fallback",
             "ticket_ids",
         )
         session.collected = {k: session.collected.get(k) for k in keep if session.collected.get(k) is not None}
@@ -1120,9 +1268,14 @@ async def _create_ticket(
         # Automation couldn't serve this caller; don't leave them in a normal queue.
         priority = Priority.URGENT if priority == Priority.URGENT else Priority.HIGH
 
-    phone = collected.get("phone_number") or (
+    # The number to call: the one the caller confirmed, else the one we had (caller ID or spoken).
+    callback_number = collected.get("callback_number")
+    phone = callback_number or collected.get("phone_number") or (
         session.from_number if caller_id_is_usable(session.from_number) else "unknown"
     )
+    # What the call came in from, kept as-is for auditing ("anonymous" says it was withheld).
+    inbound = (session.from_number or "").strip()
+    caller_number = None if inbound in ("", "unknown") else inbound[:32]
     payload = TicketCreate(
         caller_name=collected.get("caller_name") or "Unknown caller (voice)",
         phone_number=phone,
@@ -1135,7 +1288,9 @@ async def _create_ticket(
     # Simulated calls (VOICE_SIMULATOR_DESIGN.md) run this exact path; only
     # the source differs, which keeps their tickets out of the real queue.
     source = TicketSource.SIMULATOR if session.is_simulated else TicketSource.PHONE
-    return await ticket_service.create_ticket(db, payload, source=source)
+    return await ticket_service.create_ticket(
+        db, payload, source=source, caller_number=caller_number, callback_number=callback_number
+    )
 
 
 def _intake_details(collected: dict) -> str:
@@ -1165,6 +1320,7 @@ def _intake_details(collected: dict) -> str:
         ("Work impact", "not confirmed (the caller did not say whether this stops them working)" if "work_impact" in unverified else None),
         ("Patient impact", "not confirmed (the caller did not say whether patient care is affected)" if "patient_impact" in unverified else None),
         ("Callback number", "not captured (the caller could not give one)" if collected.get("phone_skipped") else None),
+        ("Callback number", "not confirmed by the caller; using the number on file" if collected.get("callback_fallback") else None),
         ("Name", "spelling could not be verified with the caller" if collected.get("name_unverified") else None),
         ("Read-back", "caller said the summary was not fully correct; details unverified" if collected.get("summary_unresolved") else None),
         ("Read-back", "not done: the caller ended the call first" if collected.get("summary_skipped") else None),
@@ -1255,7 +1411,7 @@ async def escalate(
         ticket = await _create_ticket(db, session, escalation_note=notes[reason])
         _record_ticket(session, ticket)
 
-    phone = session.collected.get("phone_number") or phone
+    phone = session.collected.get("callback_number") or session.collected.get("phone_number") or phone
 
     if phone:
         opener = (

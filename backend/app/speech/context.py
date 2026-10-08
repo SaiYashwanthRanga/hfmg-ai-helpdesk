@@ -44,6 +44,8 @@ _STATE_HINTS: dict[str, str] = {
     "COLLECT_DETAILS": "The caller says when the problem started and whether they can still work.",
     "COLLECT_NAME": "The caller says their first and last name and their department, for example: Maria Lopez, billing.",
     "COLLECT_PHONE": "The caller says a ten-digit US phone number, for example: 845-555-0142.",
+    "CONFIRM_CALLBACK_NUMBER": "The caller answers yes or no, or says a different ten-digit US phone number.",
+    "COLLECT_ALTERNATE_CALLBACK_NUMBER": "The caller says a ten-digit US phone number, for example: 845-555-0142.",
     "COLLECT_EMAIL": (
         "The caller says or spells an email address, usually at hfmg.net, "
         "for example: m lopez at h f m g dot net, which is mlopez@hfmg.net."
@@ -74,6 +76,8 @@ _STATE_HINTS: dict[str, str] = {
 _STATE_GATHER_HINTS: dict[str, list[str]] = {
     "COLLECT_EMAIL": ["at hfmg dot net", "hfmg dot net", "dot net", "at", "dot", "underscore", "skip"],
     "COLLECT_PHONE": ["oh", "double"],
+    "CONFIRM_CALLBACK_NUMBER": ["yes", "no", "that's right", "that's not right"],
+    "COLLECT_ALTERNATE_CALLBACK_NUMBER": ["oh", "double"],
     "COLLECT_NAME": ["billing", "front desk", "radiology", "finance", "HR", "lab", "reception", "family medicine"],
     "CONFIRM_EMAIL": ["yes", "no", "correct", "that's right"],
     "CONFIRM_NAME": ["yes", "no", "that's right", "that's wrong"],

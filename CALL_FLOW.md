@@ -50,6 +50,11 @@ This document defines the conversation state machine: every state, every transit
                     └──────────┬───────────┘   skip after 2 failed tries
                                │
                                ▼
+                    ┌──────────────────────┐   "I have your callback number as X ... is this the
+                    │ CONFIRM_CALLBACK_NUMBER│   best number?" always asked once, before the read-back.
+                    └──────────┬───────────┘   "no" → COLLECT_ALTERNATE_CALLBACK_NUMBER → read the new
+                               │                number back once; refusal / 2 failed tries → keep the
+                               ▼                number we had (never an escalation)
                     ┌──────────────────────┐   the whole ticket read back: who, what, since
                     │   CONFIRM_SUMMARY     │   when, priority AND WHY, spoken phone number.
                     └──────────┬───────────┘   "no" / "yes, but…" → change it → read again
@@ -97,9 +102,11 @@ This document defines the conversation state machine: every state, every transit
 | `COLLECT_NAME` | Caller's name and department (department asked once; optional) | `CONFIRM_NAME` |
 | `CONFIRM_NAME` | Name read back **spelled**; "no" → spell first name, then last name (decoded letter by letter). Optional, never counts as a misunderstanding. `VOICE_CONFIRM_NAME=false` skips it | `COLLECT_PHONE` / `COLLECT_EMAIL` |
 | `COLLECT_PHONE` | Callback number — **only entered when caller ID is unavailable**. A retry says what was wrong ("I only caught 5 digits"); after two tries the call carries on without a number (noted on the ticket), it never escalates over this | `COLLECT_EMAIL` |
+| `CONFIRM_CALLBACK_NUMBER` | "I have your callback number as X. If our IT team needs to reach you regarding this ticket, they will call this number. Is this the best number to contact you on?" — entered from the end of collection, whether the number came from caller ID or was spoken. A number offered with the "no" ("No, it's 214…") is read back directly: "I have your callback number as Y. Is that correct?". Unclear twice → the number we have stands. `VOICE_CONFIRM_CALLBACK=false` skips it | `CONFIRM_SUMMARY` / `COLLECT_ALTERNATE_CALLBACK_NUMBER` |
+| `COLLECT_ALTERNATE_CALLBACK_NUMBER` | "What number would you like our IT team to call instead?" A retry says what was wrong ("I only caught 5 digits"); a refusal ("I'd rather not") or `VOICE_MAX_PHONE_ATTEMPTS` failed tries keeps the number we had, noted on the ticket | `CONFIRM_CALLBACK_NUMBER` / `CONFIRM_SUMMARY` |
 | `COLLECT_EMAIL` | The part of the HFMG email **before the @, spelled** (a full address said aloud still works); `@hfmg.net` is added. Optional | `CONFIRM_EMAIL` / `CONFIRM_CATEGORY` |
 | `CONFIRM_EMAIL` | "Did I get that right?" read-back | `CONFIRM_SUMMARY` / back to `COLLECT_EMAIL` |
-| `CONFIRM_SUMMARY` | The whole ticket read back — name, department, the problem, since when, **priority and the reason for it**, and the callback number if it was spoken (not if caller ID gave it). "No" → "What should I change?"; "yes, but…" is a correction, not a yes. Two corrections at most, then it is filed and noted. `VOICE_CONFIRM_SUMMARY=false` skips it | `CREATING_TICKET` |
+| `CONFIRM_SUMMARY` | The whole ticket read back — name, department, the problem, since when, **priority and the reason for it**, (the callback number is not repeated here once it has been confirmed in `CONFIRM_CALLBACK_NUMBER`; it is still read here when `VOICE_CONFIRM_CALLBACK=false` and the caller spoke it). "No" → "What should I change?"; "yes, but…" is a correction, not a yes. Two corrections at most, then it is filed and noted. `VOICE_CONFIRM_SUMMARY=false` skips it | `CREATING_TICKET` |
 | `CONFIRM_CATEGORY` | Legacy: only used when `VOICE_CONFIRM_SUMMARY=false` and classifier confidence is low. With the read-back on, an uncertain category is instead mentioned in it ("I'm filing it under Network") and can be corrected there | `CREATING_TICKET` |
 | `CREATING_TICKET` | (no input — ticket is created) | `READ_BACK` |
 | `READ_BACK` | (no input — number is read) | `ANYTHING_ELSE` |

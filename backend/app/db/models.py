@@ -58,6 +58,9 @@ class VoiceCallState(str, enum.Enum):
     # Name read back spelled; on "no", the caller spells first and last name.
     CONFIRM_NAME = "CONFIRM_NAME"
     COLLECT_PHONE = "COLLECT_PHONE"
+    # The callback number read back ("is this the best number?"); a "no" asks for another.
+    CONFIRM_CALLBACK_NUMBER = "CONFIRM_CALLBACK_NUMBER"
+    COLLECT_ALTERNATE_CALLBACK_NUMBER = "COLLECT_ALTERNATE_CALLBACK_NUMBER"
     COLLECT_EMAIL = "COLLECT_EMAIL"
     CONFIRM_EMAIL = "CONFIRM_EMAIL"
     CONFIRM_CATEGORY = "CONFIRM_CATEGORY"
@@ -114,7 +117,12 @@ class Ticket(Base):
     ticket_number: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
 
     caller_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    # The number to call: the confirmed callback number when there is one, else the caller's number.
     phone_number: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Voice tickets only: what the call came in from (audit/debugging), and the number the
+    # caller confirmed for the IT team to use. NULL for web tickets and unconfirmed calls.
+    caller_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    callback_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
     email: Mapped[str | None] = mapped_column(CITEXT, nullable=True)
 
     category_id: Mapped[uuid.UUID] = mapped_column(

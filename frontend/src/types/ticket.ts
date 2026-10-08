@@ -40,6 +40,9 @@ export interface TicketListItem {
 
 export interface Ticket extends TicketListItem {
   phone_number: string;
+  /** Voice tickets: what the call came in from, and the number the caller confirmed. */
+  caller_number?: string | null;
+  callback_number?: string | null;
   email: string | null;
   description: string;
   ai_summary: string | null;

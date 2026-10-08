@@ -51,8 +51,14 @@ def _simulator_ticket_number() -> str:
 
 
 async def create_ticket(
-    db: AsyncSession, payload: TicketCreate, *, source: TicketSource = TicketSource.WEB
+    db: AsyncSession,
+    payload: TicketCreate,
+    *,
+    source: TicketSource = TicketSource.WEB,
+    caller_number: str | None = None,
+    callback_number: str | None = None,
 ) -> Ticket:
+    """`caller_number` / `callback_number` are set by the voice flow only (see Ticket)."""
     category = await db.get(Category, payload.category_id)
     if category is None or not category.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown or inactive category")
@@ -69,6 +75,8 @@ async def create_ticket(
             ticket_number=ticket_number,
             caller_name=payload.caller_name,
             phone_number=payload.phone_number,
+            caller_number=caller_number,
+            callback_number=callback_number,
             email=payload.email,
             category_id=payload.category_id,
             priority=priority,

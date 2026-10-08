@@ -104,6 +104,9 @@ class Settings(BaseSettings):
     # Read the whole intake back (who, what, since when, impact, priority)
     # and let the caller correct it before the ticket is created.
     voice_confirm_summary: bool = True
+    # Read the callback number back ("is this the best number?") before filing the
+    # ticket, and let the caller give another. Without it the number is used as heard.
+    voice_confirm_callback: bool = True
     # Callback-number attempts before the agent carries on without one.
     voice_max_phone_attempts: int = 2
     # HFMG's departments, comma-separated. Empty = the built-in placeholder list

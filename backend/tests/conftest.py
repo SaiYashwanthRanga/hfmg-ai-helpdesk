@@ -98,12 +98,13 @@ def _hermetic_ai_summary_defaults(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _voice_flow_defaults(monkeypatch):
-    """Scripted conversation tests predate the name and summary read-backs;
-    they test other behaviour and keep their original question order. The
-    read-backs have their own tests (test_voice_conversation.py,
-    test_voice_spelling.py), which switch them back on."""
+    """Scripted conversation tests predate the name, summary and callback-number
+    read-backs; they test other behaviour and keep their original question order.
+    The read-backs have their own tests (test_voice_conversation.py,
+    test_voice_spelling.py, test_callback_confirmation.py), which switch them back on."""
     monkeypatch.setattr(settings, "voice_confirm_name", False)
     monkeypatch.setattr(settings, "voice_confirm_summary", False)
+    monkeypatch.setattr(settings, "voice_confirm_callback", False)
     yield
 
 

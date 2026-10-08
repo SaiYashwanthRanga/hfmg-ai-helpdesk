@@ -15,18 +15,32 @@ _EVENT_SUBJECTS = {
 }
 
 
-def _build_body(issue: str, summary: str | None) -> str:
-    """Only the issue and its summary. The details, transcript, intake details and
-    ticket fields stay on the ticket (dashboard / Freshworks); the subject names
-    the ticket. The summary is written from the details, so repeating them here
-    would only duplicate it.
+# What the voice flow stores when it could not capture a name or number (orchestrator._create_ticket).
+_NO_NAME = {"", "unknown caller (voice)"}
+_NO_PHONE = {"", "unknown"}
+
+
+def _known(value: str | None, placeholders: set[str]) -> str | None:
+    """The value, or None when it is blank or one of the stored "not captured" placeholders."""
+    text = (value or "").strip()
+    return None if text.lower() in placeholders else text
+
+
+def _build_body(
+    caller: str | None, callback: str | None, issue: str, summary: str | None
+) -> str:
+    """Who to call back and on what number, the issue, and its summary. The details,
+    transcript, intake details, department, priority and other ticket fields stay on
+    the ticket (dashboard / Freshworks); the subject names the ticket. The summary is
+    written from the details, so repeating them here would only duplicate it.
 
     The summary is the one already saved on the ticket; this module never calls
-    the LLM. No saved summary (disabled or failed) means no Summary section."""
-    lines = ["Issue:", issue]
-    if summary:
-        lines += ["", "Summary:", summary]
-    return "\n".join(lines)
+    the LLM. A caller, number or summary that is not available is left out, not blank."""
+    lines: list[str] = []
+    for label, value in (("Caller", caller), ("Callback Number", callback), ("Issue", issue), ("Summary", summary)):
+        if value:
+            lines += [f"{label}:", value, ""]
+    return "\n".join(lines).rstrip()
 
 
 async def send_ticket_notification(ticket: Ticket, event: str) -> None:
@@ -61,7 +75,14 @@ async def send_ticket_notification(ticket: Ticket, event: str) -> None:
         subject = subject_template.format(
             ticket_number=ticket.ticket_number, category=ticket.category.name, status=ticket.status.value
         )
-        body = _build_body(extract_issue(ticket.description), ticket.ai_summary)
+        body = _build_body(
+            _known(ticket.caller_name, _NO_NAME),
+            # The number the caller confirmed; a web ticket, or a call that never confirmed
+            # one, has only its phone number.
+            _known(ticket.callback_number or ticket.phone_number, _NO_PHONE),
+            extract_issue(ticket.description),
+            ticket.ai_summary,
+        )
 
         sent = await provider.send(
             to=settings.helpdesk_email,

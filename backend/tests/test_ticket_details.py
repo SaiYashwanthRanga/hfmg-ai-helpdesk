@@ -145,7 +145,7 @@ async def test_summarizer_input_has_the_details_and_no_transcript(db_session, mo
     assert "Maria Lopez" not in prompt and CALLER_ID not in prompt
 
 
-async def test_email_has_only_issue_and_summary_not_details(db_session, monkeypatch):
+async def test_email_has_caller_callback_issue_and_summary_not_details(db_session, monkeypatch):
     ticket = await _call(db_session, monkeypatch, HOTSPOT, details_result=_details_reply(HOTSPOT), sid="CA-mail-1")
     await ticket_service.set_ai_summary(db_session, ticket.id, summary="Hotspot stopped working today.", failed=False)
     sent = []
@@ -165,6 +165,7 @@ async def test_email_has_only_issue_and_summary_not_details(db_session, monkeypa
 
     assert sent[0]["body_html"] == (
         '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px">'
+        f"Caller:<br>\nMaria Lopez<br>\n<br>\nCallback Number:<br>\n{CALLER_ID}<br>\n<br>\n"
         f"Issue:<br>\n{html.escape(HOTSPOT['issue'])}<br>\n<br>\n"
         "Summary:<br>\nHotspot stopped working today.</div>"
     )

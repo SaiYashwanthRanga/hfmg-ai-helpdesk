@@ -456,6 +456,25 @@ def join_spelled_name(name: str | None) -> str | None:
     return name
 
 
+_PHONE_DECLINED = (
+    "skip", "rather not", "prefer not", "no thanks", "no thank you", "never mind", "nevermind",
+    "don't want", "dont want", "do not want", "don't have", "dont have", "keep it", "keep that",
+    "same number", "that one is fine", "that's fine",
+)
+_BARE_NO = {"no", "nope", "none", "nothing", "nah", "n"}
+
+
+def phone_declined(utterance: str) -> bool:
+    """The caller will not give another number ("I'd rather not", "no", "skip").
+
+    Only when no digits were said: "no, 845 555 0142" is a number, not a refusal.
+    """
+    text = (utterance or "").lower().strip(" .!,")
+    if count_digits(text):
+        return False
+    return text in _BARE_NO or any(p in text for p in _PHONE_DECLINED)
+
+
 def email_declined(utterance: str) -> bool:
     text = (utterance or "").lower()
     return any(p in text for p in _EMAIL_DECLINED) and "@" not in text and " at " not in f" {text} "
