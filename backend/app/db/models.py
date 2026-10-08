@@ -34,6 +34,11 @@ class AISummaryStatus(str, enum.Enum):
     FAILED = "FAILED"
 
 
+class CallerType(str, enum.Enum):
+    INTERNAL_IT = "INTERNAL_IT"
+    PATIENT_SUPPORT = "PATIENT_SUPPORT"
+
+
 class TicketSource(str, enum.Enum):
     WEB = "WEB"
     PHONE = "PHONE"
@@ -52,6 +57,8 @@ OPERATIONAL_SOURCES = tuple(s for s in TicketSource if s is not TicketSource.SIM
 class VoiceCallState(str, enum.Enum):
     GREETING = "GREETING"
     COLLECT_DESCRIPTION = "COLLECT_DESCRIPTION"
+    # Low-confidence classification: "Are you calling about a patient service or an IT issue?"
+    CLASSIFY_CALLER_TYPE = "CLASSIFY_CALLER_TYPE"
     # When it started / whether the caller can work (asked only if not volunteered).
     COLLECT_DETAILS = "COLLECT_DETAILS"
     COLLECT_NAME = "COLLECT_NAME"
@@ -124,6 +131,10 @@ class Ticket(Base):
     caller_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
     callback_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
     email: Mapped[str | None] = mapped_column(CITEXT, nullable=True)
+
+    caller_type: Mapped[CallerType | None] = mapped_column(
+        SQLEnum(CallerType, name="caller_type_enum"), nullable=True
+    )
 
     category_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("categories.id", ondelete="RESTRICT"), nullable=False, index=True

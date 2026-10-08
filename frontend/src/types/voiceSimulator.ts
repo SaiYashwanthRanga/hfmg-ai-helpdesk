@@ -16,6 +16,7 @@ export type SimulatorStatus =
 export type AgentState =
   | "GREETING"
   | "COLLECT_DESCRIPTION"
+  | "CLASSIFY_CALLER_TYPE"
   | "COLLECT_DETAILS"
   | "COLLECT_NAME"
   | "CONFIRM_NAME"

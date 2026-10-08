@@ -347,6 +347,7 @@ async def test_web_tickets_are_unaffected(client, category_id, sent_emails, monk
 
     assert created["phone_number"] == "+15550001111"
     assert created["caller_number"] is None and created["callback_number"] is None
+    assert created["caller_type"] is None
     assert "Callback Number:<br>\n+15550001111" in sent_emails[0]["body_html"]  # the form's number, as the callback
 
 
@@ -361,4 +362,4 @@ async def test_the_ticket_api_keeps_every_existing_field(client, category_id):
         "id", "ticket_number", "caller_name", "phone_number", "email", "category", "priority", "description",
         "ai_summary", "ai_summary_status", "ai_summary_generated_at", "status", "source", "created_at", "updated_at",
     }
-    assert existing <= set(created) and set(created) - existing == {"caller_number", "callback_number"}
+    assert existing <= set(created) and set(created) - existing == {"caller_number", "callback_number", "caller_type"}

@@ -7,6 +7,7 @@ import type { VoiceCallState } from "../../types/voiceCall";
 const STATE_COLOR: Record<VoiceCallState, SemanticColor> = {
   GREETING: "info",
   COLLECT_DESCRIPTION: "info",
+  CLASSIFY_CALLER_TYPE: "info",
   COLLECT_DETAILS: "info",
   COLLECT_NAME: "info",
   CONFIRM_NAME: "primary",
@@ -26,6 +27,7 @@ const STATE_COLOR: Record<VoiceCallState, SemanticColor> = {
 const STATE_LABEL: Record<VoiceCallState, string> = {
   GREETING: "Greeting",
   COLLECT_DESCRIPTION: "Collecting description",
+  CLASSIFY_CALLER_TYPE: "Classifying caller",
   COLLECT_DETAILS: "Collecting details",
   COLLECT_NAME: "Collecting name",
   CONFIRM_NAME: "Confirming name",

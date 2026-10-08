@@ -5,8 +5,8 @@ without touching conversation logic. See VOICE_AGENT_DESIGN.md section 2.
 """
 
 GREETING = (
-    "Thank you for calling Horizon Family Medical Group IT Help Desk. "
-    "How can I assist you today?"
+    "Thank you for calling Horizon Family Medical Group support. "
+    "Please briefly tell me how I can help you today."
 )
 
 # Re-prompts are progressively simpler and never repeat the previous wording --
@@ -172,7 +172,7 @@ LEAVING_WITH_TICKET = "No problem. I've saved what you told me. Your ticket numb
 LEAVING_NO_TICKET = "No problem. Take care."
 
 ANYTHING_ELSE = "Is there anything else I can help you with?"
-GOODBYE = "Thank you for calling Horizon Family Medical Group IT Help Desk. Goodbye."
+GOODBYE = "Thank you for calling Horizon Family Medical Group. Goodbye."
 
 ESCALATION_CALLER_REQUESTED = (
     "Of course. I'll have a member of our IT team call you back at {phone}. "
@@ -198,6 +198,34 @@ ESCALATION_READ_BACK = (
 SYSTEM_ERROR = (
     "I'm sorry, I'm having a technical problem on my end. "
     "I've logged a callback request and someone from IT will reach out to you shortly."
+)
+
+# --- caller type classification (low confidence) ------------------------------------
+CLASSIFY_CALLER_TYPE_ASK = (
+    "Just so I can help you in the right way: are you calling about a patient service "
+    "such as appointments or the patient portal, or is this about an employee IT issue?"
+)
+
+# --- patient support flow -----------------------------------------------------------
+PATIENT_ACK_OPTIONS = (
+    "I can help you with that.",
+    "Let me get that noted for you.",
+    "Okay, I'll get that logged for our team.",
+)
+PATIENT_NAME_ASK = "May I have your name, please?"
+PATIENT_CREATING_TICKET = "Let me create a support request for you."
+PATIENT_READ_BACK = (
+    "Your request number is {ticket_number}. I've sent it to our support team "
+    "and someone will follow up with you."
+)
+PATIENT_GOODBYE = "Thank you for calling Horizon Family Medical Group. Goodbye."
+PATIENT_ANYTHING_ELSE = "Is there anything else I can help you with?"
+PATIENT_ESCALATION = (
+    "Of course. I'll have a member of our support team call you back at {phone}. "
+    "One moment while I log that."
+)
+PATIENT_ESCALATION_NO_NUMBER = (
+    "Of course. I'll ask a member of our support team to follow up with you."
 )
 
 

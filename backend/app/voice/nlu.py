@@ -46,6 +46,37 @@ VOICE_CATEGORIES = [
     "Other",
 ]
 
+PATIENT_CATEGORIES = [
+    "Appointment Booking",
+    "Patient Portal Login",
+    "Website Error",
+    "Insurance / Billing Portal",
+    "Medical Records Portal",
+    "Prescription Refill Portal",
+    "Other Patient Support",
+]
+
+_PATIENT_KEYWORDS = {
+    "appointment", "schedule", "book", "booking", "reschedule", "cancel appointment",
+    "patient portal", "portal login", "my chart", "mychart",
+    "website", "site", "online",
+    "registration", "register",
+    "insurance", "billing", "copay", "co-pay", "bill",
+    "prescription", "refill", "medication", "rx",
+    "medical records", "records", "lab results", "test results",
+    "doctor", "physician", "provider",
+}
+_IT_KEYWORDS = {
+    "outlook", "email", "teams", "microsoft", "office", "word", "excel", "onedrive", "sharepoint",
+    "printer", "scanner", "print",
+    "vpn", "wifi", "internet", "network", "ethernet",
+    "nextiva", "extension", "phone system", "desk phone",
+    "laptop", "computer", "workstation", "monitor", "keyboard", "mouse", "docking station",
+    "freshworks", "eclinicalworks", "ecw",
+    "password", "reset", "mfa", "two-factor", "locked out", "lockout",
+    "citrix", "remote desktop", "rdp",
+}
+
 # Spoken priority -> stored enum. The shipped enum predates the Critical/High/
 # Medium/Low vocabulary, so Critical maps onto URGENT.
 PRIORITY_MAP = {
@@ -1249,3 +1280,145 @@ async def interpret_yes_no(question: str, utterance: str) -> TurnResult:
         yes_no=bool(answer) if answer is not None else None,
         unable_to_determine=bool(data.get("unable_to_determine")) or answer is None,
     )
+
+
+# --- caller type classification ---------------------------------------------------
+
+
+@dataclass
+class CallerClassification:
+    caller_type: str  # "INTERNAL_IT" or "PATIENT_SUPPORT"
+    confidence: float  # 0.0 to 1.0
+    patient_category: str | None = None  # one of PATIENT_CATEGORIES when PATIENT_SUPPORT
+
+
+def _keyword_classify(text: str) -> CallerClassification | None:
+    lowered = (text or "").lower()
+    patient_hits = sum(1 for kw in _PATIENT_KEYWORDS if kw in lowered)
+    it_hits = sum(1 for kw in _IT_KEYWORDS if kw in lowered)
+    if patient_hits == 0 and it_hits == 0:
+        return None
+    if patient_hits > 0 and it_hits == 0:
+        return CallerClassification("PATIENT_SUPPORT", 0.85)
+    if it_hits > 0 and patient_hits == 0:
+        return CallerClassification("INTERNAL_IT", 0.85)
+    return None
+
+
+async def classify_caller_type(description: str) -> CallerClassification:
+    """Classify the caller as INTERNAL_IT or PATIENT_SUPPORT from their issue description.
+
+    Returns a confidence score; the orchestrator asks a clarifying question
+    when confidence < 0.80.
+    """
+    keyword_result = _keyword_classify(description)
+
+    properties = {
+        "caller_type": {
+            "type": "string",
+            "enum": ["INTERNAL_IT", "PATIENT_SUPPORT"],
+            "description": (
+                "INTERNAL_IT: the caller is an HFMG employee with an IT problem (computer, printer, VPN, "
+                "email, password, software). PATIENT_SUPPORT: the caller is a patient or external person "
+                "with a service issue (appointments, patient portal, website, insurance, medical records, "
+                "prescription refills)."
+            ),
+        },
+        "confidence": {
+            "type": "number",
+            "description": "0.0 to 1.0. How confident you are. Low when the issue could be either type.",
+        },
+        "patient_category": {
+            "type": ["string", "null"],
+            "enum": [*PATIENT_CATEGORIES, None],
+            "description": (
+                "When caller_type is PATIENT_SUPPORT, which patient category best fits. "
+                "Null for INTERNAL_IT callers."
+            ),
+        },
+    }
+    system = (
+        _SYSTEM
+        + "Classify whether this caller is an HFMG employee with an IT problem "
+        "(INTERNAL_IT) or a patient/external person needing help with an HFMG service "
+        "(PATIENT_SUPPORT).\n\n"
+        "PATIENT_SUPPORT examples: booking appointments, patient portal login, website errors, "
+        "insurance/billing portal, medical records, prescription refills, registration.\n\n"
+        "INTERNAL_IT examples: Outlook, email, Teams, printer, VPN, wifi, Nextiva phones, "
+        "computer/laptop, password resets, eClinicalWorks, Freshworks.\n\n"
+        "If the issue is ambiguous or could be either, set confidence below 0.80."
+    )
+    data = await _call_structured(
+        system,
+        f"The caller described their issue as:\n<caller_speech>\n{description}\n</caller_speech>",
+        "classify_caller",
+        properties,
+    )
+    if data is None:
+        return keyword_result or CallerClassification("INTERNAL_IT", 0.50)
+
+    caller_type = data.get("caller_type")
+    if caller_type not in ("INTERNAL_IT", "PATIENT_SUPPORT"):
+        return keyword_result or CallerClassification("INTERNAL_IT", 0.50)
+
+    confidence = data.get("confidence")
+    if not isinstance(confidence, (int, float)):
+        confidence = 0.70
+    confidence = max(0.0, min(1.0, float(confidence)))
+
+    patient_cat = data.get("patient_category")
+    if patient_cat not in PATIENT_CATEGORIES:
+        patient_cat = "Other Patient Support" if caller_type == "PATIENT_SUPPORT" else None
+
+    if keyword_result and keyword_result.caller_type != caller_type and keyword_result.confidence > confidence:
+        return keyword_result
+
+    return CallerClassification(caller_type, confidence, patient_cat)
+
+
+async def interpret_caller_type_answer(utterance: str) -> CallerClassification:
+    """Interpret the answer to 'Are you calling about a patient service or an IT issue?'"""
+    lowered = (utterance or "").lower()
+    patient_words = {"patient", "appointment", "portal", "website", "medical", "prescription", "insurance", "billing"}
+    it_words = {"it", "computer", "laptop", "printer", "email", "outlook", "vpn", "password", "teams", "technical"}
+    if any(w in lowered for w in patient_words) and not any(w in lowered for w in it_words):
+        return CallerClassification("PATIENT_SUPPORT", 0.95)
+    if any(w in lowered for w in it_words) and not any(w in lowered for w in patient_words):
+        return CallerClassification("INTERNAL_IT", 0.95)
+
+    properties = {
+        "caller_type": {
+            "type": "string",
+            "enum": ["INTERNAL_IT", "PATIENT_SUPPORT"],
+            "description": (
+                "INTERNAL_IT: the caller said IT, computer, technical. "
+                "PATIENT_SUPPORT: the caller said patient, appointment, portal, website."
+            ),
+        },
+        "patient_category": {
+            "type": ["string", "null"],
+            "enum": [*PATIENT_CATEGORIES, None],
+        },
+    }
+    data = await _call_structured(
+        _SYSTEM + "The caller was asked whether they need help with a patient service or an employee IT issue.",
+        _user_prompt(
+            "Are you calling about a patient service such as appointments or the patient portal, "
+            "or is this about an employee IT issue?",
+            utterance,
+        ),
+        "classify_caller_answer",
+        properties,
+    )
+    if data is None:
+        return CallerClassification("INTERNAL_IT", 0.60)
+
+    caller_type = data.get("caller_type")
+    if caller_type not in ("INTERNAL_IT", "PATIENT_SUPPORT"):
+        return CallerClassification("INTERNAL_IT", 0.60)
+
+    patient_cat = data.get("patient_category")
+    if patient_cat not in PATIENT_CATEGORIES:
+        patient_cat = "Other Patient Support" if caller_type == "PATIENT_SUPPORT" else None
+
+    return CallerClassification(caller_type, 0.95, patient_cat)

@@ -109,6 +109,22 @@ def _voice_flow_defaults(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _default_caller_classification(monkeypatch):
+    """Stub caller type classification to INTERNAL_IT by default.
+
+    The orchestrator now classifies every caller after their first description.
+    Existing tests predate this step and would fail without a stub (the real
+    function calls the LLM). Tests that exercise classification override this."""
+    from app.voice import nlu as _nlu
+
+    async def _it(*_args, **_kwargs):
+        return _nlu.CallerClassification("INTERNAL_IT", 0.95)
+
+    monkeypatch.setattr(_nlu, "classify_caller_type", _it)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _hermetic_email_defaults(monkeypatch):
     """Default every test to the SendGrid provider with the internal mail API
     unconfigured, whatever this machine's backend/.env says.

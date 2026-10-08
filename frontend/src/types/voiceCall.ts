@@ -9,6 +9,7 @@ import type { Priority } from "./ticket";
 export type VoiceCallState =
   | "GREETING"
   | "COLLECT_DESCRIPTION"
+  | "CLASSIFY_CALLER_TYPE"
   | "COLLECT_DETAILS"
   | "COLLECT_NAME"
   | "CONFIRM_NAME"

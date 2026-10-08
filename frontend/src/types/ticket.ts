@@ -43,6 +43,7 @@ export interface Ticket extends TicketListItem {
   /** Voice tickets: what the call came in from, and the number the caller confirmed. */
   caller_number?: string | null;
   callback_number?: string | null;
+  caller_type?: "INTERNAL_IT" | "PATIENT_SUPPORT" | null;
   email: string | null;
   description: string;
   ai_summary: string | null;

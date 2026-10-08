@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.db.models import AISummaryStatus, Priority, TicketSource, TicketStatus
+from app.db.models import AISummaryStatus, CallerType, Priority, TicketSource, TicketStatus
 
 
 class CategoryRead(BaseModel):
@@ -68,6 +68,7 @@ class TicketRead(BaseModel):
     # Added for voice tickets; null for web tickets and calls that never confirmed one.
     caller_number: str | None = None
     callback_number: str | None = None
+    caller_type: CallerType | None = None
     email: str | None
     category: CategoryRead
     priority: Priority

@@ -12,6 +12,7 @@ from app.db.models import (
     OPERATIONAL_SOURCES,
     VALID_STATUS_TRANSITIONS,
     AISummaryStatus,
+    CallerType,
     Category,
     Priority,
     Ticket,
@@ -57,8 +58,9 @@ async def create_ticket(
     source: TicketSource = TicketSource.WEB,
     caller_number: str | None = None,
     callback_number: str | None = None,
+    caller_type: "CallerType | None" = None,
 ) -> Ticket:
-    """`caller_number` / `callback_number` are set by the voice flow only (see Ticket)."""
+    """`caller_number` / `callback_number` / `caller_type` are set by the voice flow only."""
     category = await db.get(Category, payload.category_id)
     if category is None or not category.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown or inactive category")
@@ -77,6 +79,7 @@ async def create_ticket(
             phone_number=payload.phone_number,
             caller_number=caller_number,
             callback_number=callback_number,
+            caller_type=caller_type,
             email=payload.email,
             category_id=payload.category_id,
             priority=priority,

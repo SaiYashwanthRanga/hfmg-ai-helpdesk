@@ -40,7 +40,8 @@ DOMAIN_TERMS = [
 ]
 
 _STATE_HINTS: dict[str, str] = {
-    "COLLECT_DESCRIPTION": "The caller describes an IT problem at a medical office.",
+    "COLLECT_DESCRIPTION": "The caller describes a problem at a medical office -- either an IT issue or a patient service issue.",
+    "CLASSIFY_CALLER_TYPE": "The caller says whether they need help with a patient service or an employee IT issue.",
     "COLLECT_DETAILS": "The caller says when the problem started and whether they can still work.",
     "COLLECT_NAME": "The caller says their first and last name and their department, for example: Maria Lopez, billing.",
     "COLLECT_PHONE": "The caller says a ten-digit US phone number, for example: 845-555-0142.",
@@ -76,6 +77,7 @@ _STATE_HINTS: dict[str, str] = {
 _STATE_GATHER_HINTS: dict[str, list[str]] = {
     "COLLECT_EMAIL": ["at hfmg dot net", "hfmg dot net", "dot net", "at", "dot", "underscore", "skip"],
     "COLLECT_PHONE": ["oh", "double"],
+    "CLASSIFY_CALLER_TYPE": ["patient", "IT", "appointment", "computer", "employee", "portal"],
     "CONFIRM_CALLBACK_NUMBER": ["yes", "no", "that's right", "that's not right"],
     "COLLECT_ALTERNATE_CALLBACK_NUMBER": ["oh", "double"],
     "COLLECT_NAME": ["billing", "front desk", "radiology", "finance", "HR", "lab", "reception", "family medicine"],

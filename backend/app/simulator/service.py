@@ -276,6 +276,8 @@ def derive_intent(
     answer = model_output.get("answer")
     if state_before == VoiceCallState.COLLECT_DESCRIPTION:
         return "report_issue"
+    if state_before == VoiceCallState.CLASSIFY_CALLER_TYPE:
+        return "classify_caller_type"
     if state_before == VoiceCallState.COLLECT_DETAILS:
         return "provide_details"
     if state_before == VoiceCallState.CONFIRM_NAME:

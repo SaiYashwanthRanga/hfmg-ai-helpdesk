@@ -9,7 +9,7 @@ pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 async def test_description_prompt_carries_it_vocabulary():
     prompt = context.stt_prompt("COLLECT_DESCRIPTION")
-    assert "describes an IT problem" in prompt
+    assert "IT issue or a patient service issue" in prompt
     assert "Outlook" in prompt and "VPN" in prompt
 
 

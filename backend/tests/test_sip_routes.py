@@ -33,7 +33,7 @@ async def test_start_greets_and_creates_session(client, db_session):
 
     assert response.status_code == 200
     body = response.json()
-    assert "Horizon Family Medical Group IT Help Desk" in " ".join(body["lines"])
+    assert "Horizon Family Medical Group" in " ".join(body["lines"])
     assert body["expect_reply"] is True
 
     session = (
@@ -139,7 +139,7 @@ async def test_start_returns_description_stt_prompt(client):
     body = response.json()
     assert set(body) == {"lines", "expect_reply", "ticket_id", "stt_prompt"}
     assert body["stt_prompt"] == speech_context.stt_prompt("COLLECT_DESCRIPTION")
-    assert "describes an IT problem" in body["stt_prompt"]
+    assert "IT issue or a patient service issue" in body["stt_prompt"]
 
 
 async def test_turn_returns_prompt_for_the_next_answer(client, monkeypatch):
