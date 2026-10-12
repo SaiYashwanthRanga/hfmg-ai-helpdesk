@@ -5,6 +5,10 @@ from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+#: Seconds of the gateway's per-attempt HTTP timeout kept free to deliver a 409 or a replay.
+TURN_RESPONSE_MARGIN_SECONDS = 2.0
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -109,6 +113,15 @@ class Settings(BaseSettings):
     voice_confirm_callback: bool = True
     # Callback-number attempts before the agent carries on without one.
     voice_max_phone_attempts: int = 2
+    # The SIP gateway's HTTP timeout for one /turn attempt (its setting, mirrored here so a
+    # mismatch is caught at startup instead of showing up as calls that hang up).
+    voice_gateway_attempt_timeout_seconds: float = 8.0
+    # A /turn that carries a turn_id waits at most this long for the call's earlier turn
+    # (usually its own first attempt) to finish; then it gets 409 turn_in_progress and the
+    # gateway retries with the same turn_id. Must leave TURN_RESPONSE_MARGIN_SECONDS of the
+    # gateway's attempt timeout to deliver that answer, or a replay, before it gives up.
+    # Requests without a turn_id (legacy gateway) wait as long as they always did.
+    voice_turn_lock_wait_seconds: float = 5.0
     # HFMG's departments, comma-separated. Empty = the built-in placeholder list
     # in app/voice/departments.py, which is NOT HFMG's real org chart.
     voice_departments: str = ""
@@ -151,6 +164,19 @@ class Settings(BaseSettings):
 
     # LLM_PROVIDER=fake only (load tests, demos): simulated model latency.
     fake_llm_latency_ms: int = 300
+
+    @model_validator(mode="after")
+    def _turn_lock_wait_fits_the_gateway_timeout(self) -> "Settings":
+        """A duplicate that waits longer than the gateway will wait for its answer is answered
+        to nobody: the gateway has already timed out and retried."""
+        latest = self.voice_gateway_attempt_timeout_seconds - TURN_RESPONSE_MARGIN_SECONDS
+        if not 0 < self.voice_turn_lock_wait_seconds <= latest:
+            raise ValueError(
+                f"VOICE_TURN_LOCK_WAIT_SECONDS={self.voice_turn_lock_wait_seconds:g} must be above 0 and at most "
+                f"{latest:g} (VOICE_GATEWAY_ATTEMPT_TIMEOUT_SECONDS={self.voice_gateway_attempt_timeout_seconds:g} "
+                f"minus {TURN_RESPONSE_MARGIN_SECONDS:g}s to deliver the answer)."
+            )
+        return self
 
     @model_validator(mode="after")
     def _simulator_never_in_production(self) -> "Settings":

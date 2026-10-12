@@ -12,6 +12,9 @@ engine = create_async_engine(
     pool_pre_ping=True,
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,
+    # A failed INSERT's error text otherwise includes its bound values (caller name,
+    # description), which would reach the logs.
+    hide_parameters=True,
 )
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 

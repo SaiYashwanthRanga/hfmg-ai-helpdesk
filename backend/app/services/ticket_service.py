@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -16,6 +17,7 @@ from app.db.models import (
     Category,
     Priority,
     Ticket,
+    TicketNumberCounter,
     TicketSource,
     TicketStatus,
 )
@@ -25,18 +27,21 @@ settings = get_settings()
 
 
 async def _next_ticket_number(db: AsyncSession) -> str:
-    """Generate a human-facing ticket number like HFMG-2026-000482.
+    """Allocate a human-facing ticket number like HFMG-2026-000482.
 
-    Counts existing tickets for the current year rather than a DB sequence,
-    which keeps the MVP schema to just two tables. Revisit with a real
-    Postgres sequence (see DATABASE_DESIGN.md 3.1.1) once concurrent ticket
-    creation volume makes the count-based approach a contention risk.
+    One atomic upsert on the year's counter row: concurrent callers, in any process,
+    queue on that row's lock and each get the next value. The increment belongs to the
+    caller's transaction, so a rollback leaves no gap, and a lock held until commit is
+    why callers create a ticket as late in their transaction as they can.
     """
     year = datetime.now(timezone.utc).year
-    prefix = f"HFMG-{year}-"
-    count_stmt = select(func.count()).select_from(Ticket).where(Ticket.ticket_number.startswith(prefix))
-    count = (await db.execute(count_stmt)).scalar_one()
-    return f"{prefix}{count + 1:06d}"
+    stmt = pg_insert(TicketNumberCounter).values(year=year, last_value=1)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[TicketNumberCounter.year],
+        set_={"last_value": TicketNumberCounter.last_value + 1},
+    ).returning(TicketNumberCounter.last_value)
+    value = (await db.execute(stmt)).scalar_one()
+    return f"HFMG-{year}-{value:06d}"
 
 
 def _simulator_ticket_number() -> str:
@@ -59,8 +64,13 @@ async def create_ticket(
     caller_number: str | None = None,
     callback_number: str | None = None,
     caller_type: "CallerType | None" = None,
+    commit: bool = True,
 ) -> Ticket:
-    """`caller_number` / `callback_number` / `caller_type` are set by the voice flow only."""
+    """`caller_number` / `callback_number` / `caller_type` are set by the voice flow only.
+
+    `commit=False` flushes instead, leaving the transaction open: the voice flow uses it so
+    the ticket and the call's "ticket filed" flag are committed together, under the call's
+    row lock."""
     category = await db.get(Category, payload.category_id)
     if category is None or not category.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown or inactive category")
@@ -89,7 +99,10 @@ async def create_ticket(
             ai_summary_status=AISummaryStatus.PENDING if settings.enable_ai_summary else AISummaryStatus.DISABLED,
         )
         db.add(ticket)
-        await db.commit()
+        if commit:
+            await db.commit()
+        else:
+            await db.flush()
     # Re-fetch rather than a partial refresh() so every column (including
     # server-generated ones like updated_at) is loaded before this leaves
     # the async session — a lazy load triggered later from sync Pydantic

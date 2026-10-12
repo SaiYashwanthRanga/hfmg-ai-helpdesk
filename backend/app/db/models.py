@@ -2,7 +2,20 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, SmallInteger, String, Text, func, text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import CITEXT, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import Enum as SQLEnum
@@ -117,6 +130,20 @@ class Category(Base):
     tickets: Mapped[list["Ticket"]] = relationship(back_populates="category")
 
 
+class TicketNumberCounter(Base):
+    """Last ticket number issued per year: HFMG-<year>-<last_value>.
+
+    Incremented with one atomic upsert (ticket_service._next_ticket_number), so concurrent
+    creators in any number of processes are serialized by this row's lock and get distinct
+    numbers. The lock is held until the creating transaction ends.
+    """
+
+    __tablename__ = "ticket_number_counters"
+
+    year: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    last_value: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 class Ticket(Base):
     __tablename__ = "tickets"
 
@@ -217,6 +244,29 @@ class VoiceCallSession(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class VoiceTurn(Base):
+    """The recorded outcome of one /turn that carried a gateway-supplied turn_id.
+
+    Written in the same transaction as the turn's conversation state, ticket and reply, so
+    a row exists exactly when the turn's effects are committed. A repeat of the turn_id
+    replays `response` instead of running the turn again. There is no 'processing' row: a
+    turn in progress holds the call's row lock, and a crash or rollback leaves no trace.
+    """
+
+    __tablename__ = "voice_turns"
+    __table_args__ = (UniqueConstraint("session_id", "turn_id", name="uq_voice_turns_session_turn"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("voice_call_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    turn_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    # SHA-256 of the caller's utterance: the same turn_id with different content is rejected.
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    response: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class VoiceSimulatorSession(Base):

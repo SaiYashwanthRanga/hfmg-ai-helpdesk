@@ -1382,7 +1382,7 @@ async def _create_ticket(
     source = TicketSource.SIMULATOR if session.is_simulated else TicketSource.PHONE
     return await ticket_service.create_ticket(
         db, payload, source=source, caller_number=caller_number,
-        callback_number=callback_number, caller_type=caller_type_value,
+        callback_number=callback_number, caller_type=caller_type_value, commit=False,
     )
 
 

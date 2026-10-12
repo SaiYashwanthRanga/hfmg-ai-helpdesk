@@ -195,9 +195,10 @@ ESCALATION_READ_BACK = (
     "Your callback request is ticket number {ticket_number}. Someone will reach out to you shortly."
 )
 
+# Said only when nothing could be saved, so it must not promise a ticket or a callback.
 SYSTEM_ERROR = (
-    "I'm sorry, I'm having a technical problem on my end. "
-    "I've logged a callback request and someone from IT will reach out to you shortly."
+    "I'm sorry, I'm having a technical problem on my end and wasn't able to save your request. "
+    "Please try calling back in a few minutes."
 )
 
 # --- caller type classification (low confidence) ------------------------------------

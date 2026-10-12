@@ -68,7 +68,9 @@ All caller-facing copy lives in one module (`app/voice/scripts.py`) so it can be
 - Read-back: *"Your callback request is ticket number {spelled_ticket_number}. Someone will reach out to you shortly."*
 
 ### Fallback (system error)
-> *"I'm sorry — I'm having a technical problem on my end. I've logged a callback request and someone from IT will reach out to you shortly."*
+> *"I'm sorry, I'm having a technical problem on my end and wasn't able to save your request. Please try calling back in a few minutes."*
+
+Used only when nothing could be saved (including when the system-error escalation itself failed), so it never promises a ticket or a callback.
 
 ### Pronunciation rules
 - **Ticket numbers** are spelled character-by-character with pauses: `HFMG-2026-000482` → *"H-F-M-G, 2-0-2-6, 0-0-0-4-8-2"*. Rendered with SSML `<say-as interpret-as="characters">` plus `<break time="300ms"/>` between groups. Never read as "four hundred eighty-two."

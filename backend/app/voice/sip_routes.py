@@ -8,19 +8,21 @@ output to JSON.
 
 import hmac
 import logging
+import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.db.base import get_db
 from app.db.models import EscalationReason, VoiceCallSession, VoiceCallState
 from app.speech import context as speech_context
-from app.voice import orchestrator, scripts
+from app.voice import orchestrator, scripts, turns
 from app.voice.tasks import dispatch_ticket_tasks
-from app.voice.session import get_or_create_session, get_session
+from app.voice.session import CallBusy, get_or_create_session, get_session, record_turn
 
 logger = logging.getLogger("hfmg.voice.sip")
 
@@ -54,6 +56,9 @@ class TurnRequest(BaseModel):
     call_id: str
     utterance: str = ""
     confidence: float | None = None
+    # One stable ID per logical turn, reused on every retry of it (docs/TURN_ID_CONTRACT.md).
+    # Absent from a gateway that predates it; such a request is processed every time it arrives.
+    turn_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._:-]{1,64}$")
 
 
 class StatusRequest(BaseModel):
@@ -85,8 +90,118 @@ def _to_response(outcome: orchestrator.TurnOutcome, session: VoiceCallSession) -
     )
 
 
-def _error_response() -> TurnResponse:
-    return TurnResponse(lines=[scripts.SYSTEM_ERROR], expect_reply=False)
+class TurnReply(TurnResponse):
+    """A /turn response. `turn_id` echoes the request's, and is present only when the request
+    had one, so a gateway that does not send turn_ids gets exactly the body it always did
+    (the route serializes with exclude_unset)."""
+
+    turn_id: str | None = None
+
+
+def _reply(response: TurnResponse, turn_id: str | None) -> TurnReply:
+    fields = response.model_dump()
+    return TurnReply(**fields, turn_id=turn_id) if turn_id else TurnReply(**fields)
+
+
+def _error_response(turn_id: str | None = None) -> TurnReply:
+    return _reply(TurnResponse(lines=[scripts.SYSTEM_ERROR], expect_reply=False, ticket_id=None, stt_prompt=None), turn_id)
+
+
+@dataclass
+class _Finished:
+    """How a /turn ended: the reply, the ticket (if any) whose summary/email to start, and
+    what the log line needs."""
+
+    response: TurnReply
+    dispatch_ticket_id: uuid.UUID | None
+    state: str
+    misunderstandings: int
+
+
+def _lock_wait(body: TurnRequest) -> float | None:
+    """Only a request that can be replayed (it has a turn_id) gives up waiting for the call."""
+    return settings.voice_turn_lock_wait_seconds if body.turn_id else None
+
+
+def _new_ticket(outcome_ticket_id: uuid.UUID | None, ticket_before: uuid.UUID | None) -> uuid.UUID | None:
+    """The ticket created on this turn, if any. A turn that only reads back an existing ticket
+    must not summarize/email it again."""
+    return outcome_ticket_id if outcome_ticket_id not in (None, ticket_before) else None
+
+
+async def _replay(
+    db: AsyncSession, http_response: Response, body: TurnRequest, recorded: turns.RecordedTurn
+) -> TurnReply:
+    """Answer a repeated turn_id from its saved response; nothing is run, saved or dispatched."""
+    saved = recorded.response
+    same_content = recorded.fingerprint == turns.fingerprint(body.utterance)
+    await db.rollback()  # nothing to save; releases the call's lock
+    if not same_content:
+        logger.warning("sip call=%s turn_id=%s reused with different content; rejected", body.call_id, body.turn_id)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "turn_payload_conflict",
+                "message": "This turn_id was already used for a different utterance on this call.",
+            },
+        )
+    http_response.headers["Idempotent-Replayed"] = "true"
+    logger.info("sip call=%s turn_id=%s replayed", body.call_id, body.turn_id)
+    return TurnReply(**{**saved, "turn_id": body.turn_id})
+
+
+async def _escalate_after_failed_turn(
+    db: AsyncSession, body: TurnRequest, content: str | None, ticket_before: uuid.UUID | None
+) -> _Finished | None:
+    """Hand a call whose turn failed to a person, on a transaction that is known to be good.
+
+    The failed turn may have left the transaction aborted (a database error) or holding
+    half-done work (a ticket flushed but the call not yet marked as filed). Neither may
+    be committed, nor reused: roll back first, which discards the turn's changes and
+    releases the call's lock, then lock and reload the call as it was last committed.
+    The turn's utterance is re-recorded so the callback ticket's transcript has it.
+
+    With a turn_id, the escalation's reply is saved under it, so a retry replays it. And the
+    turn is looked up again first: if the failure was an uncertain commit (it did go
+    through), or an identical request finished in the gap, that saved reply is returned
+    instead of escalating over it. In the first case this request never started the
+    ticket's summary/email, so it does; in the second the other request did, and it may be
+    repeated once. That is the only path where a notification can be duplicated.
+
+    Returns None, with nothing committed, if the escalation cannot be completed; the
+    caller then gets the plain error line rather than a promise of a callback.
+    """
+    try:
+        await db.rollback()
+        session = await get_session(db, body.call_id, lock=True, wait_seconds=_lock_wait(body))
+        if session is None:
+            return None
+        if body.turn_id:
+            recorded = await turns.find(db, session.id, body.turn_id)
+            if recorded is not None and recorded.fingerprint == content:
+                saved = TurnReply(**{**recorded.response, "turn_id": body.turn_id})
+                await db.rollback()
+                logger.warning(
+                    "sip call=%s turn_id=%s was committed despite the error; replaying it", body.call_id, body.turn_id
+                )
+                created = uuid.UUID(saved.ticket_id) if saved.ticket_id else None
+                return _Finished(saved, _new_ticket(created, ticket_before), "replayed", 0)
+        record_turn(session, role="caller", text=(body.utterance or "").strip(), confidence=body.confidence)
+        outcome = await orchestrator.escalate(db, session, EscalationReason.SYSTEM_ERROR)
+        reply = _reply(_to_response(outcome, session), body.turn_id)
+        if body.turn_id:
+            turns.save(db, session.id, body.turn_id, content, reply.model_dump(exclude_unset=True))
+        await db.commit()
+        return _Finished(
+            reply, _new_ticket(outcome.ticket_id, ticket_before), session.state.value, session.misunderstanding_count
+        )
+    except Exception:
+        logger.exception("Escalation also failed for SIP call %s", body.call_id)
+        try:
+            await db.rollback()
+        except Exception:
+            logger.exception("Rollback after failed escalation also failed for SIP call %s", body.call_id)
+        return None
 
 
 @router.post("/start", response_model=TurnResponse)
@@ -114,45 +229,69 @@ async def start_call(body: StartCallRequest, db: AsyncSession = Depends(get_db))
     return _to_response(outcome, session)
 
 
-@router.post("/turn", response_model=TurnResponse)
+@router.post("/turn", response_model=TurnReply, response_model_exclude_unset=True)
 async def turn(
     body: TurnRequest,
     background_tasks: BackgroundTasks,
+    http_response: Response,
     db: AsyncSession = Depends(get_db),
-) -> TurnResponse:
-    session = await get_session(db, body.call_id)
+) -> TurnReply:
+    try:
+        session = await get_session(db, body.call_id, lock=True, wait_seconds=_lock_wait(body))
+    except CallBusy:
+        await db.rollback()
+        logger.warning("sip call=%s turn_id=%s still in progress", body.call_id, body.turn_id)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "turn_in_progress",
+                "message": "An earlier request for this call is still being processed. Retry with the same turn_id.",
+            },
+            headers={"Retry-After": "1"},
+        )
     if session is None:
         logger.warning("Turn for unknown SIP call %s", body.call_id)
-        return _error_response()
+        return _error_response(body.turn_id)
+
+    content = turns.fingerprint(body.utterance) if body.turn_id else None
+    if body.turn_id:
+        recorded = await turns.find(db, session.id, body.turn_id)
+        if recorded is not None:
+            return await _replay(db, http_response, body, recorded)
 
     ticket_before = session.ticket_id
     try:
         outcome = await orchestrator.handle_turn(
             db, session, utterance=body.utterance, confidence=body.confidence
         )
+        reply = _reply(_to_response(outcome, session), body.turn_id)
+        if body.turn_id:
+            # Same transaction as the conversation state and any ticket: all of it or none.
+            turns.save(db, session.id, body.turn_id, content, reply.model_dump(exclude_unset=True))
         await db.commit()
+        done = _Finished(
+            reply, _new_ticket(outcome.ticket_id, ticket_before), session.state.value, session.misunderstanding_count
+        )
     except Exception:
-        logger.exception("Turn failed for SIP call %s; escalating", body.call_id)
-        try:
-            outcome = await orchestrator.escalate(db, session, EscalationReason.SYSTEM_ERROR)
-            await db.commit()
-        except Exception:
-            logger.exception("Escalation also failed for SIP call %s", body.call_id)
-            return _error_response()
+        logger.exception("Turn failed for SIP call %s; rolling back and escalating", body.call_id)
+        recovered = await _escalate_after_failed_turn(db, body, content, ticket_before)
+        if recovered is None:
+            return _error_response(body.turn_id)
+        done = recovered
 
-    # Only for a ticket created on this turn. A replayed turn, or an escalation after
-    # the ticket exists, returns the existing ticket id and must not summarize/email again.
-    if outcome.ticket_id is not None and outcome.ticket_id != ticket_before:
-        await dispatch_ticket_tasks(db, background_tasks, outcome.ticket_id)
+    # Only for a ticket created on this turn (see _new_ticket); a replay never gets here.
+    if done.dispatch_ticket_id is not None:
+        await dispatch_ticket_tasks(db, background_tasks, done.dispatch_ticket_id)
 
     logger.info(
-        "sip call=%s state=%s misunderstandings=%s stt_confidence=%s",
+        "sip call=%s turn_id=%s state=%s misunderstandings=%s stt_confidence=%s",
         body.call_id,
-        session.state.value,
-        session.misunderstanding_count,
+        body.turn_id,
+        done.state,
+        done.misunderstandings,
         body.confidence,
     )
-    return _to_response(outcome, session)
+    return done.response
 
 
 @router.post("/status", status_code=status.HTTP_204_NO_CONTENT)
@@ -162,7 +301,7 @@ async def call_status(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Finalize the session when the gateway reports the call has ended."""
-    session = await get_session(db, body.call_id)
+    session = await get_session(db, body.call_id, lock=True)
     if session is None:
         return
 
