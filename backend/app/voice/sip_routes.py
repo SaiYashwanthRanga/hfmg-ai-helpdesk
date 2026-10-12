@@ -221,9 +221,12 @@ async def start_call(
     db: AsyncSession = Depends(get_db),
     directory: UserDirectoryService = Depends(get_user_directory),
 ) -> TurnResponse:
-    session = await get_or_create_session(
+    await get_or_create_session(
         db, call_sid=body.call_id, from_number=body.from_number, to_number=body.to_number
     )
+    # Serialize with any other /start or /turn for this call, so the call starts (and the directory
+    # is consulted) exactly once however many starts arrive together.
+    session = await get_session(db, body.call_id, lock=True)
     if session.state != VoiceCallState.GREETING:
         # A retried /start (the gateway lost our first response). Never reset a
         # call that has already begun: replay the greeting if nothing else has
@@ -330,9 +333,11 @@ async def call_status(
 
     session.state = VoiceCallState.ABANDONED
 
+    # Reachable, as in orchestrator._caller_leaving: a number the caller gave or a real caller ID.
+    # (session.from_number is "unknown" when none was sent, so it must not be tested for truthiness.)
     has_description = bool(session.collected.get("description"))
-    has_phone = bool(session.collected.get("phone_number") or session.from_number)
-    if has_description and has_phone:
+    reachable = bool(session.collected.get("phone_number")) or caller_id_is_usable(session.from_number)
+    if has_description and reachable:
         ticket = await orchestrator.salvage_abandoned_call(db, session)
         await db.commit()
         await dispatch_ticket_tasks(db, background_tasks, ticket.id)

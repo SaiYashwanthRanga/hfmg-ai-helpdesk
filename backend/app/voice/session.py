@@ -8,16 +8,34 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import VoiceCallSession, VoiceCallState
+from app.services.user_directory import normalize_phone
 
 # Caller ID values the gateway or carrier sends when the number is withheld or unavailable.
 _UNUSABLE_CALLER_IDS = {"", "anonymous", "unknown", "restricted", "private", "+266696687"}
+_COLUMN_WIDTH = 32  # voice_call_sessions.from_number / to_number
 
 
 def caller_id_is_usable(from_number: str) -> bool:
+    """A caller ID that is a real telephone number: at least ten digits, and not a placeholder
+    word or a run of one repeated digit ("0000000000"). A short value such as an extension is
+    not a telephone number and is never treated as one."""
     normalized = (from_number or "").strip().lower()
     if normalized in _UNUSABLE_CALLER_IDS:
         return False
-    return sum(c.isdigit() for c in normalized) >= 10
+    digits = "".join(c for c in normalized if c.isdigit())
+    if len(digits) < 10:
+        return False
+    national = digits[1:] if len(digits) == 11 and digits.startswith("1") else digits
+    return len(set(national)) > 1
+
+
+def _fit_caller_id(raw: str | None) -> str:
+    """The caller ID as stored: a SIP/tel URI, or anything too long for the column, is reduced to
+    the telephone number it carries (or cut to fit); everything else is kept exactly as sent."""
+    text_ = (raw or "").strip()
+    if len(text_) > _COLUMN_WIDTH or "@" in text_ or text_.lower().startswith(("sip:", "sips:", "tel:")):
+        return normalize_phone(text_) or text_[:_COLUMN_WIDTH]
+    return text_
 
 
 class CallBusy(Exception):
@@ -62,12 +80,13 @@ async def get_or_create_session(
 
     Safe against two simultaneous first requests: the insert yields to an existing row
     (the unique call_id) instead of raising, and the row that won is read back."""
+    caller = _fit_caller_id(from_number)
     values = dict(
         call_id=call_sid,
-        from_number=from_number or "unknown",
-        to_number=to_number or "unknown",
+        from_number=caller or "unknown",
+        to_number=(to_number or "unknown")[:_COLUMN_WIDTH],
         state=VoiceCallState.GREETING,
-        collected={"phone_number": from_number} if caller_id_is_usable(from_number) else {},
+        collected={"phone_number": caller} if caller_id_is_usable(caller) else {},
         turns=[],
     )
     await db.execute(pg_insert(VoiceCallSession).values(**values).on_conflict_do_nothing(index_elements=["call_id"]))
