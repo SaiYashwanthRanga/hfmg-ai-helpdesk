@@ -74,6 +74,8 @@ class VoiceCallState(str, enum.Enum):
     CLASSIFY_CALLER_TYPE = "CLASSIFY_CALLER_TYPE"
     # When it started / whether the caller can work (asked only if not volunteered).
     COLLECT_DETAILS = "COLLECT_DETAILS"
+    # A directory entry matched the caller ID: "Am I speaking with <name>?" (never authentication).
+    CONFIRM_IDENTITY = "CONFIRM_IDENTITY"
     COLLECT_NAME = "COLLECT_NAME"
     # Name read back spelled; on "no", the caller spells first and last name.
     CONFIRM_NAME = "CONFIRM_NAME"

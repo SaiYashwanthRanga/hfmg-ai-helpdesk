@@ -19,10 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.db.base import get_db
 from app.db.models import EscalationReason, VoiceCallSession, VoiceCallState
+from app.services.user_directory import UserDirectoryService, get_user_directory
 from app.speech import context as speech_context
 from app.voice import orchestrator, scripts, turns
 from app.voice.tasks import dispatch_ticket_tasks
-from app.voice.session import CallBusy, get_or_create_session, get_session, record_turn
+from app.voice.session import CallBusy, caller_id_is_usable, get_or_create_session, get_session, record_turn
 
 logger = logging.getLogger("hfmg.voice.sip")
 
@@ -204,8 +205,22 @@ async def _escalate_after_failed_turn(
         return None
 
 
+def _directory_lookup(directory: UserDirectoryService, session: VoiceCallSession):
+    """Look the caller ID up once, when the call starts. None (no lookup) when the gateway sent no
+    usable caller ID, so the normal identity questions apply. Only the outcome's status is logged."""
+    if not caller_id_is_usable(session.from_number):
+        return None
+    result = directory.find_by_phone(session.from_number)
+    logger.info("sip call=%s directory=%s", session.call_id, result.status.value)
+    return result
+
+
 @router.post("/start", response_model=TurnResponse)
-async def start_call(body: StartCallRequest, db: AsyncSession = Depends(get_db)) -> TurnResponse:
+async def start_call(
+    body: StartCallRequest,
+    db: AsyncSession = Depends(get_db),
+    directory: UserDirectoryService = Depends(get_user_directory),
+) -> TurnResponse:
     session = await get_or_create_session(
         db, call_sid=body.call_id, from_number=body.from_number, to_number=body.to_number
     )
@@ -221,7 +236,7 @@ async def start_call(body: StartCallRequest, db: AsyncSession = Depends(get_db))
         )
 
     try:
-        outcome = await orchestrator.start_call(session)
+        outcome = await orchestrator.start_call(session, directory_lookup=_directory_lookup(directory, session))
         await db.commit()
     except Exception:
         logger.exception("Failed to start SIP call %s", body.call_id)
@@ -235,6 +250,7 @@ async def turn(
     background_tasks: BackgroundTasks,
     http_response: Response,
     db: AsyncSession = Depends(get_db),
+    directory: UserDirectoryService = Depends(get_user_directory),
 ) -> TurnReply:
     try:
         session = await get_session(db, body.call_id, lock=True, wait_seconds=_lock_wait(body))
@@ -262,7 +278,7 @@ async def turn(
     ticket_before = session.ticket_id
     try:
         outcome = await orchestrator.handle_turn(
-            db, session, utterance=body.utterance, confidence=body.confidence
+            db, session, utterance=body.utterance, confidence=body.confidence, directory=directory
         )
         reply = _reply(_to_response(outcome, session), body.turn_id)
         if body.turn_id:

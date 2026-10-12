@@ -126,6 +126,11 @@ class Settings(BaseSettings):
     # in app/voice/departments.py, which is NOT HFMG's real org chart.
     voice_departments: str = ""
 
+    # Employee directory (the phone system's users.csv export), read once at startup.
+    # Empty = no directory: lookups answer "unavailable". The file holds employee names,
+    # numbers and addresses: keep it out of the repository (backend/data/ is git-ignored).
+    user_directory_csv_path: str = ""
+
     # --- AI Call Simulator (VOICE_SIMULATOR_DESIGN.md) ---
     # Off by default. The API has no authentication, so when on, anyone who
     # can reach it can spend OpenAI credit and create (SIMULATOR) tickets.

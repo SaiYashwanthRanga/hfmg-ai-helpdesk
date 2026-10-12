@@ -99,6 +99,7 @@ This document defines the conversation state machine: every state, every transit
 | `GREETING` | Open-ended: "How can I assist you today?" | `COLLECT_DESCRIPTION` |
 | `COLLECT_DESCRIPTION` | Problem description (often already answered by the greeting) | `COLLECT_DETAILS` / `COLLECT_NAME` / later states, whichever is the first thing still missing |
 | `COLLECT_DETAILS` | "When did this start, and is it stopping you from working?" — **only if not volunteered**; optional, silence or an unclear answer moves on | `COLLECT_NAME` / later states |
+| `CONFIRM_IDENTITY` | **Employee IT calls only**, in place of the name question, when the caller ID matched exactly one live directory entry with a name that can be said aloud: "I found a directory entry for X. Am I speaking with X?" Yes → that name is **caller-confirmed** (not authenticated) and the call moves on; no → the proposal is discarded and `COLLECT_NAME` asks. Unclear or silent → asked once more, then treated as "no". An email, phone number or extension given instead is looked up once more (at most two proposals per call). Never counts toward escalation. See 2.2 | `COLLECT_NAME` / `COLLECT_PHONE` / later states |
 | `COLLECT_NAME` | Caller's name and department (department asked once; optional) | `CONFIRM_NAME` |
 | `CONFIRM_NAME` | Name read back **spelled**; "no" → spell first name, then last name (decoded letter by letter). Optional, never counts as a misunderstanding. `VOICE_CONFIRM_NAME=false` skips it | `COLLECT_PHONE` / `COLLECT_EMAIL` |
 | `COLLECT_PHONE` | Callback number — **only entered when caller ID is unavailable**. A retry says what was wrong ("I only caught 5 digits"); after two tries the call carries on without a number (noted on the ticket), it never escalates over this | `COLLECT_EMAIL` |
@@ -116,6 +117,35 @@ This document defines the conversation state machine: every state, every transit
 | `ABANDONED` | — (caller hung up) | terminal |
 
 Terminal states end with `<Hangup/>`. The session row persists for audit and metrics.
+
+### 2.2 Employee directory (`USER_DIRECTORY_CSV_PATH`)
+
+On the first `/start` of a call, if the gateway sent a usable caller ID, it is looked up once in the
+employee directory (`app/services/user_directory.py`); only the outcome is kept, in that call's
+session (`collected["directory"]`). The greeting, `/start` and `/turn` request and response shapes are
+unchanged. A retried `/start` never repeats the lookup.
+
+| Lookup outcome | What the caller experiences |
+|---|---|
+| One live entry with a name the agent can say | After the issue is described, **instead of** the name question: "Am I speaking with X?" (`CONFIRM_IDENTITY`) |
+| One entry that is a shared line, a room, a role, or deactivated | The normal name question. The entry is kept for audit only and never proposed |
+| Several entries share the number (`ambiguous`) | The normal name question. Which entries matched is not kept; none is ever picked |
+| `not_found`, `unavailable`, or no usable caller ID | The normal name question; no lookup at all without a caller ID |
+
+Rules that do not bend:
+
+- A match is a **proposal**. Only the caller's spoken yes makes it the caller's name, and even then it is
+  *caller-confirmed*, never authenticated: nothing is authorized by caller ID or by that yes, and the ticket
+  says so (`Identity: directory entry confirmed by the caller; not authenticated`).
+- The decision is deterministic (the directory service's result plus the rule-based yes/no): no model call.
+- Patients and other non-employee callers never see it: the question exists only in the employee IT flow, and
+  directory membership never classifies a call.
+- The directory's Name column holds phone-system labels ("1001 Exec First Last", "Lab Slate Hill"), so the name said
+  aloud is derived conservatively (`app/voice/directory_identity.py`): an extension prefix and the entry's own
+  site/team words are stripped, and the result must be exactly two plain words. Anything else is asked, not guessed.
+- Confirmed values (name, extension, teams, location, active) are kept in call context and written to the ticket's
+  intake details. The directory's email is **not** put on the ticket (many entries are placeholders or use a
+  misspelled domain); the usual email question still applies. The directory itself is never modified.
 
 ### 2.1 Strict extraction: asking about impact (`VOICE_STRICT_EXTRACTION=true`)
 

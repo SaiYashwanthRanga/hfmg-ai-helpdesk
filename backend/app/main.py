@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -8,6 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from app.api.v1.router import api_router
 from app.core.config import get_settings
+from app.services.user_directory import UserDirectoryService
 from app.simulator.routes import AudioSizeLimitMiddleware
 
 logging.basicConfig(
@@ -19,7 +21,18 @@ logger = logging.getLogger("hfmg.main")
 
 settings = get_settings()
 
-app = FastAPI(title="HFMG AI Help Desk API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Load the employee directory once, off the event loop. A missing or bad file leaves it
+    unavailable (logged); it never stops the API from starting."""
+    directory = UserDirectoryService()
+    await directory.load(settings.user_directory_csv_path)
+    app.state.user_directory = directory
+    yield
+
+
+app = FastAPI(title="HFMG AI Help Desk API", version="0.1.0", lifespan=lifespan)
 
 # Refuses an oversized simulator audio upload before any body parsing.
 # Registered before CORS so CORS wraps it and the 413 stays readable in a browser.

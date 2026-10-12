@@ -201,6 +201,13 @@ SYSTEM_ERROR = (
     "Please try calling back in a few minutes."
 )
 
+# --- directory identity proposal (internal IT calls) ----------------------------------
+# A directory match is only proposed; it counts for nothing until the caller says yes.
+IDENTITY_CONFIRM = "I found a directory entry for {name}. Am I speaking with {name}?"
+IDENTITY_REASK = "Sorry, I didn't catch that. Am I speaking with {name}? Please say yes or no."
+IDENTITY_DECLINED = "Sorry about that."
+IDENTITY_NOT_CONFIRMED = "That's okay."
+
 # --- caller type classification (low confidence) ------------------------------------
 CLASSIFY_CALLER_TYPE_ASK = (
     "Just so I can help you in the right way: are you calling about a patient service "

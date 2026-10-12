@@ -35,7 +35,8 @@ from app.db.models import (
 )
 from app.schemas.ticket import TicketCreate
 from app.services import ticket_service
-from app.voice import departments, names, nlu, reply, scripts
+from app.services.user_directory import LookupResult, UserDirectoryService
+from app.voice import departments, directory_identity, names, nlu, reply, scripts
 from app.voice import facts as facts_mod
 from app.voice import priority as priority_rules
 from app.services.ticket_text import DETAILS_MARKER, INTAKE_MARKER, TRANSCRIPT_MARKER
@@ -51,6 +52,11 @@ CLASSIFICATION_CONFIDENCE_THRESHOLD = 0.80
 MAX_SUMMARY_CORRECTIONS = 2
 #: Read-backs of a name before the agent accepts the caller's own spelling.
 MAX_NAME_ROUNDS = 2
+#: Directory names proposed to the caller in one call (the caller-ID match, then at most one
+#: more from an identifier they give) before the agent just asks who is calling.
+MAX_IDENTITY_ROUNDS = 2
+#: Re-asks of one proposal after an answer that was neither yes nor no.
+MAX_IDENTITY_UNCLEAR = 1
 
 
 class TurnOutcome:
@@ -97,8 +103,16 @@ def _is_patient_call(session: VoiceCallSession) -> bool:
     return (session.collected or {}).get("caller_type") == "PATIENT_SUPPORT"
 
 
-async def start_call(session: VoiceCallSession) -> TurnOutcome:
-    """Turn 0: greet and wait for the caller to describe their problem."""
+async def start_call(session: VoiceCallSession, *, directory_lookup: LookupResult | None = None) -> TurnOutcome:
+    """Turn 0: greet and wait for the caller to describe their problem.
+
+    `directory_lookup` is the result of looking the caller ID up in the employee directory
+    (None when there was no usable caller ID, or no directory is wired in). It is only kept on
+    this call's session; the greeting is unchanged, and the caller is asked to confirm a
+    proposed name later, if the call turns out to be an employee IT call.
+    """
+    if directory_lookup is not None:
+        update_collected(session, directory=directory_identity.compact_lookup(directory_lookup))
     session.state = VoiceCallState.COLLECT_DESCRIPTION
     record_turn(session, role="agent", text=scripts.GREETING)
     return TurnOutcome(_ask(session, scripts.GREETING))
@@ -108,6 +122,7 @@ _GOODBYE_STATES = (
     VoiceCallState.COLLECT_DESCRIPTION,
     VoiceCallState.CLASSIFY_CALLER_TYPE,
     VoiceCallState.COLLECT_DETAILS,
+    VoiceCallState.CONFIRM_IDENTITY,
     VoiceCallState.COLLECT_NAME,
     VoiceCallState.CONFIRM_NAME,
     VoiceCallState.COLLECT_PHONE,
@@ -127,8 +142,12 @@ async def handle_turn(
     *,
     utterance: str,
     confidence: float | None = None,
+    directory: UserDirectoryService | None = None,
 ) -> TurnOutcome:
-    """Interpret one caller utterance and advance the conversation."""
+    """Interpret one caller utterance and advance the conversation.
+
+    `directory` is only used to look up an identifier the caller gives while confirming who
+    they are; without it that step simply treats the answer as "no"."""
     utterance = (utterance or "").strip()
     record_turn(session, role="caller", text=utterance, confidence=confidence)
 
@@ -148,6 +167,8 @@ async def handle_turn(
         if session.state == VoiceCallState.CLASSIFY_CALLER_TYPE:
             _apply_classification(session, nlu.CallerClassification("INTERNAL_IT", 0.60))
             return await _next_step(db, session)
+        if session.state == VoiceCallState.CONFIRM_IDENTITY:
+            return await _identity_unclear(db, session)  # silence is not a yes
         if session.state in (VoiceCallState.COLLECT_DETAILS, VoiceCallState.CONFIRM_NAME):
             # Optional information / confirmation: silence moves the call on
             # rather than counting as a misunderstanding.
@@ -166,6 +187,7 @@ async def handle_turn(
         VoiceCallState.COLLECT_DESCRIPTION: _handle_description,
         VoiceCallState.CLASSIFY_CALLER_TYPE: _handle_caller_type_clarification,
         VoiceCallState.COLLECT_DETAILS: _handle_details,
+        VoiceCallState.CONFIRM_IDENTITY: lambda d, s, u: _handle_identity_confirmation(d, s, u, directory),
         VoiceCallState.COLLECT_NAME: _handle_name,
         VoiceCallState.CONFIRM_NAME: _handle_name_confirmation,
         VoiceCallState.COLLECT_PHONE: _handle_phone,
@@ -408,6 +430,140 @@ async def _handle_name(db: AsyncSession, session: VoiceCallSession, utterance: s
         # The name is required; the department alone is not enough.
         return await _handle_failure(db, session)
     return await _next_step(db, session)
+
+
+# --- directory identity proposal ----------------------------------------------------------
+#
+# A directory match (by caller ID, or by an identifier the caller gives) is only ever a
+# proposal: "Am I speaking with <name>?". A spoken yes marks that name as caller-confirmed.
+# That is not authentication, and nothing here sets an authenticated/authorized flag. All of
+# it is rule-based (no model call), and everything it knows is in this call's own `collected`.
+
+
+def _pending_identity_name(session: VoiceCallSession) -> str | None:
+    """The name to propose now, if there is one: a live directory entry with a sayable name that
+    the caller has not rejected or confirmed, and the call is still within its proposal budget."""
+    c = session.collected
+    directory = c.get("directory") or {}
+    name = directory.get("proposed_name")
+    if not name or directory.get("rejected") or c.get("identity_confirmed"):
+        return None
+    if c.get("identity_rounds", 0) >= MAX_IDENTITY_ROUNDS:
+        return None
+    return name
+
+
+def _ask_identity(session: VoiceCallSession, name: str, *, acknowledgement: str | None = None) -> TurnOutcome:
+    update_collected(session, identity_rounds=session.collected.get("identity_rounds", 0) + 1, identity_unclear=0)
+    session.state = VoiceCallState.CONFIRM_IDENTITY
+    prompt = scripts.IDENTITY_CONFIRM.format(name=name)
+    return TurnOutcome(_speak(session, _ask(session, f"{acknowledgement} {prompt}" if acknowledgement else prompt)))
+
+
+def _spoken_digits(utterance: str) -> str:
+    """The digits in an utterance, as digits or digit words ("double zero" is "00")."""
+    digits: list[str] = []
+    repeat = 1
+    for token in re.findall(r"[a-z]+|\d", (utterance or "").lower()):
+        if token in ("double", "triple"):
+            repeat = 2 if token == "double" else 3
+            continue
+        digit = token if token.isdigit() else nlu._DIGIT_WORDS.get(token)
+        if digit is not None:
+            digits.extend([digit] * repeat)
+        repeat = 1
+    return "".join(digits)
+
+
+def _identifier_in(utterance: str) -> str | None:
+    """An email address, a ten-digit phone number or an extension (3-6 digits) the caller gave
+    while answering the identity question; None if they only said yes, no or something else."""
+    text = re.sub(r"^\W*no\b[\s,.]*", "", utterance or "", flags=re.IGNORECASE)
+    email = nlu.quick_email(text)
+    if email:
+        return email
+    phone = nlu.quick_phone(text)
+    if phone:
+        return phone
+    digits = _spoken_digits(text)
+    return digits if 3 <= len(digits) <= 6 else None
+
+
+def _discard_proposal(session: VoiceCallSession) -> None:
+    """The caller said no (or never said yes): forget the proposed identity entirely."""
+    status = (session.collected.get("directory") or {}).get("status", "matched")
+    update_collected(session, directory={"status": status, "rejected": True}, identity_unclear=0)
+
+
+async def _handle_identity_confirmation(
+    db: AsyncSession, session: VoiceCallSession, utterance: str, directory: UserDirectoryService | None
+) -> TurnOutcome:
+    if nlu.mentions_escalation(utterance):
+        return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
+
+    identifier = _identifier_in(utterance)
+    if identifier is not None:
+        return await _identity_from_identifier(db, session, identifier, directory)
+
+    verdict = nlu.quick_yes_no(utterance, strict=True)
+    if verdict is True:
+        return await _identity_confirmed(db, session)
+    if verdict is False:
+        _discard_proposal(session)
+        return await _next_step(db, session, acknowledgement=scripts.IDENTITY_DECLINED)
+    return await _identity_unclear(db, session)
+
+
+async def _identity_confirmed(db: AsyncSession, session: VoiceCallSession) -> TurnOutcome:
+    directory = session.collected.get("directory") or {}
+    name, entry = directory.get("proposed_name"), directory.get("entry") or {}
+    update_collected(
+        session,
+        caller_name=name,
+        name_confidence="high",
+        name_confirm_pending=False,
+        name_confirmed_as=name,
+        identity_confirmed=True,
+        identity_assurance="caller_confirmed_directory_match",  # never "authenticated"
+        directory_identity=entry,
+        identity_unclear=0,
+    )
+    return await _next_step(db, session)
+
+
+async def _identity_unclear(db: AsyncSession, session: VoiceCallSession) -> TurnOutcome:
+    """Neither yes nor no (or silence): ask once more, then stop asking and treat it as not confirmed."""
+    unclear = session.collected.get("identity_unclear", 0) + 1
+    name = _pending_identity_name(session) or (session.collected.get("directory") or {}).get("proposed_name")
+    if unclear > MAX_IDENTITY_UNCLEAR or not name:
+        _discard_proposal(session)
+        return await _next_step(db, session, acknowledgement=scripts.IDENTITY_NOT_CONFIRMED)
+    update_collected(session, identity_unclear=unclear)
+    session.state = VoiceCallState.CONFIRM_IDENTITY
+    return TurnOutcome(_speak(session, _ask(session, scripts.IDENTITY_REASK.format(name=name))))
+
+
+async def _identity_from_identifier(
+    db: AsyncSession, session: VoiceCallSession, identifier: str, directory: UserDirectoryService | None
+) -> TurnOutcome:
+    """The caller gave another identifier instead of answering. One more lookup, and the result
+    is itself only a proposal, subject to the same rules and the same budget."""
+    collected = session.collected
+    current = ((collected.get("directory") or {}).get("entry") or {}).get("source_row")
+    result = directory.find_by_identifier(identifier) if directory is not None else None
+    found = directory_identity.compact_lookup(result) if result is not None else None
+    sayable = (
+        found is not None
+        and found.get("proposed_name")
+        and found["entry"]["source_row"] != current
+        and collected.get("identity_rounds", 0) < MAX_IDENTITY_ROUNDS
+    )
+    if sayable:
+        update_collected(session, directory=found)
+        return _ask_identity(session, found["proposed_name"], acknowledgement=scripts.IDENTITY_DECLINED)
+    # Not found, ambiguous, a shared line, the same entry again, or no directory: ask who is calling.
+    _discard_proposal(session)
+    return await _next_step(db, session, acknowledgement=scripts.IDENTITY_DECLINED)
 
 
 # --- name confirmation -----------------------------------------------------------
@@ -922,6 +1078,11 @@ async def _next_step(
     if not collected.get("caller_name"):
         if patient:
             return ask(VoiceCallState.COLLECT_NAME, scripts.PATIENT_NAME_ASK)
+        proposed = _pending_identity_name(session)
+        if proposed:
+            # A directory entry matched the caller ID: ask, never assume. Employee IT calls only,
+            # and only here, where the name is about to be asked for anyway.
+            return _ask_identity(session, proposed, acknowledgement=acknowledgement)
         _mark_asked(session, "department")  # asked together with the name
         return ask(VoiceCallState.COLLECT_NAME, scripts.pick(scripts.NAME_ASK_OPTIONS, len(session.turns or [])))
 
@@ -1221,6 +1382,7 @@ async def _handle_anything_else(
             "department_verified", "phone_number", "phone_spoken", "phone_skipped", "email",
             "callback_confirmed", "callback_number", "callback_fallback",
             "ticket_ids", "caller_type", "patient_category",
+            "directory", "identity_confirmed", "identity_assurance", "directory_identity", "identity_rounds",
         )
         session.collected = {k: session.collected.get(k) for k in keep if session.collected.get(k) is not None}
         session.collected["asked"] = ["department", "email"]
@@ -1403,8 +1565,15 @@ def _intake_details(collected: dict) -> str:
     if priority:
         priority_line = f"{priority.title()}" + (f": {reason}" if reason else "")
 
+    who = collected.get("directory_identity") or {}
+    confirmed = bool(collected.get("identity_confirmed"))
     lines = [
         ("Department", department),
+        # The caller said yes to a directory entry. That is all it is: not authentication.
+        ("Identity", "directory entry confirmed by the caller; not authenticated" if confirmed else None),
+        ("Extension", who.get("extension") if confirmed else None),
+        ("Location", who.get("location") if confirmed else None),
+        ("Teams", ", ".join(who.get("teams") or [])[:300] if confirmed else None),
         ("Started", collected.get("started")),
         ("Work blocked", None if blocked is None else ("yes" if blocked else "no")),
         ("Impact", collected.get("impact")),
