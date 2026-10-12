@@ -74,6 +74,24 @@ def _known(part: str) -> bool:
     return word in COMMON_FIRST or word in COMMON_LAST
 
 
+#: Below this recognizer confidence the name is probably wrong, not just unconfirmed: ask for the
+#: spelling straight away instead of reading back a likely mishearing and waiting for a "no".
+VERY_LOW_STT_CONFIDENCE = 0.6
+
+
+def needs_spelling(
+    name: str | None, *, spelled: bool = False, model_confidence: str | None = None, stt_confidence: float | None = None
+) -> bool:
+    """True when the agent should ask for the name's spelling right away. Only on positive evidence
+    of a poor hearing (the recognizer's own score, or the model flagging it as doubtful while the
+    recognizer was also not sure): never because a name is merely unusual."""
+    if spelled or not parts(name) or stt_confidence is None:
+        return False
+    if stt_confidence < VERY_LOW_STT_CONFIDENCE:
+        return True
+    return model_confidence == "low" and stt_confidence < LOW_STT_CONFIDENCE
+
+
 def name_confidence(
     name: str | None,
     *,

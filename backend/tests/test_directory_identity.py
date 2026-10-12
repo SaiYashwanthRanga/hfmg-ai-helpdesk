@@ -101,7 +101,12 @@ class DirCall(PatientCall):
         return await self.turn(f"{name}, {department}")
 
     async def skip_email(self):
-        return await self.turn("skip")
+        """Decline email. A caller whose directory entry has a usable address is first offered it
+        ("I have ... on file"); "skip" declines that offer and the usual question follows."""
+        outcome = await self.turn("skip")
+        if not outcome["ticket_id"]:
+            outcome = await self.turn("skip")
+        return outcome
 
 
 @pytest.fixture
@@ -582,6 +587,7 @@ async def test_filing_makes_one_ticket_and_a_retried_final_turn_does_not_make_an
     await call.report()
     await call.turn("yes")
     await call.department("Maria Example")
+    await call.turn("no")  # not the address on file: the usual email question follows
     body = {"call_id": "dir-dup", "utterance": "skip", "turn_id": "turn-final"}
 
     first = await client.post(f"{SIP}/turn", json=body, headers=AUTH)

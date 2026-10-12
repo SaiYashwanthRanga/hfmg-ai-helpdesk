@@ -72,6 +72,31 @@ def person_name(entry: DirectoryEntry) -> str | None:
     return " ".join(tokens)
 
 
+def directory_email_for(name: str, email: str | None) -> str | None:
+    """An address from the caller's confirmed directory entry that is safe to offer, else None.
+
+    The address is returned exactly as it is on file (never repaired: hmfg.net stays hmfg.net), and
+    only when it is in the usual shape and belongs to this person: its username must contain the last
+    name and either the first name or the first initial. That also keeps out shared mailboxes and
+    placeholders ("0301user@", "helpdesk@"), which are nobody's name.
+    The directory has entries whose email belongs to someone else; those are never offered.
+    """
+    if not email or not name:
+        return None
+    address = email.strip().lower()
+    local, _, domain = address.partition("@")
+    if not local or not domain:
+        return None
+    words = [re.sub(r"[^a-z]", "", part.lower()) for part in name.split()]
+    if len(words) != 2 or min(len(w) for w in words) < 2:
+        return None
+    first, last = words
+    letters = re.sub(r"[^a-z]", "", local)
+    if last not in letters:
+        return None
+    return address if (first in letters or letters.startswith(first[0])) else None
+
+
 def entry_context(entry: DirectoryEntry) -> dict:
     """The directory-provided values kept with the call once the caller has confirmed."""
     return {

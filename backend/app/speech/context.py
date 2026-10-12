@@ -44,7 +44,11 @@ _STATE_HINTS: dict[str, str] = {
     "CLASSIFY_CALLER_TYPE": "The caller says whether they need help with a patient service or an employee IT issue.",
     "COLLECT_DETAILS": "The caller says when the problem started and whether they can still work.",
     "CONFIRM_IDENTITY": "The caller answers yes or no, or says their extension, phone number or email address.",
-    "COLLECT_NAME": "The caller says their first and last name and their department, for example: Maria Lopez, billing.",
+    "COLLECT_NAME": (
+        "The caller says their first and last name and their department, for example: Maria Lopez, billing. "
+        "Names may be unusual or from any language: write them as spoken, do not translate them or change "
+        "them into common words."
+    ),
     "COLLECT_PHONE": "The caller says a ten-digit US phone number, for example: 845-555-0142.",
     "CONFIRM_CALLBACK_NUMBER": "The caller answers yes or no, or says a different ten-digit US phone number.",
     "COLLECT_ALTERNATE_CALLBACK_NUMBER": "The caller says a ten-digit US phone number, for example: 845-555-0142.",
@@ -61,15 +65,29 @@ _STATE_HINTS: dict[str, str] = {
     ),
     "SPELL_EMAIL": (
         "The caller is spelling the part of their email address before the at sign, one letter at a "
-        "time, and may say dot or underscore. Write every letter separately, separated by spaces, "
-        "exactly as heard, for example: R A N G A dot S A I. Do not join letters into words."
+        "time, and may say dot, underscore, hyphen or numbers. Write every letter separately, separated "
+        "by spaces, and write dot, underscore and hyphen as those words, exactly as heard, for example: "
+        "R A N G A dot S A I. Do not join letters into words."
+    ),
+    # Correcting only the domain of an address: letters of the name, then dot, then the ending.
+    "SPELL_EMAIL_DOMAIN": (
+        "The caller is saying the part of an email address after the at sign, for example: H F M G dot net. "
+        "They may spell the name one letter at a time. Write each letter separately, write dot as the word "
+        "dot, and keep exactly the letters heard. The ending is usually net, com or org."
     ),
     # Strict extraction's clarification questions (state COLLECT_DETAILS + a pending question).
     "CLARIFY_BLOCKED": "The caller answers yes or no, or says whether they can still work.",
     "CLARIFY_SCOPE": "The caller says whether anyone else is affected: just them, their team, or everyone.",
     "CLARIFY_PATIENT_CARE": "The caller answers yes or no about whether patients can be checked in or seen.",
     "CONFIRM_EMAIL": "The caller answers yes or no.",
-    "CONFIRM_NAME": "The caller answers yes or no, or spells their name letter by letter.",
+    "CONFIRM_EMAIL_PART": (
+        "The caller says which part of the email address was wrong: the part before the at sign (the "
+        "username), the part after it (the domain), or both."
+    ),
+    "CONFIRM_NAME": (
+        "The caller answers yes or no, or spells their name letter by letter. Names may be unusual or from "
+        "any language: write them as spoken."
+    ),
     "CONFIRM_SUMMARY": "The caller answers yes or no, or says what to change, such as their name, department, or when it started.",
     "CONFIRM_CATEGORY": "The caller answers yes or no.",
     "ANYTHING_ELSE": "The caller answers yes or no, or describes another problem.",
@@ -94,7 +112,7 @@ _STATE_GATHER_HINTS: dict[str, list[str]] = {
 def transcription_prompt(state: str | None) -> str:
     """A short prompt: English only, vocabulary, then what this answer usually looks like."""
     hint = _STATE_HINTS.get(state or "", "")
-    if state in ("SPELL_NAME", "SPELL_EMAIL"):
+    if state in ("SPELL_NAME", "SPELL_EMAIL", "SPELL_EMAIL_DOMAIN"):
         # Vocabulary would pull letters toward words; spelling gets the rule only.
         return f"English phone call to the HFMG IT help desk. {hint}"
     return f"English phone call to the HFMG IT help desk. Vocabulary: {', '.join(DOMAIN_TERMS)}. {hint}".strip()
@@ -105,8 +123,11 @@ def recognition_mode(state: str | None, collected: dict | None) -> str | None:
     (and model): the email step always asks for spelling, and a name
     correction asks the caller to spell first and last name."""
     collected = collected or {}
+    email_fix = collected.get("email_fix") or {}
     if state == "COLLECT_EMAIL":
-        return "SPELL_EMAIL"
+        return "SPELL_EMAIL_DOMAIN" if email_fix.get("step") == "domain" else "SPELL_EMAIL"
+    if state == "CONFIRM_EMAIL" and email_fix.get("step") == "which":
+        return "CONFIRM_EMAIL_PART"
     if state == "CONFIRM_NAME" and collected.get("name_spell_step"):
         return "SPELL_NAME"
     if state == "COLLECT_DETAILS" and collected.get("pending_question"):

@@ -383,8 +383,13 @@ _SPELLING_FILLER = {
     "yes", "yeah", "sure", "and", "then", "capital", "small", "lowercase", "uppercase",
     # Corrections said around the spelling: "No, it's Y A S H..."
     "no", "nope", "not", "wrong", "incorrect", "correct", "right", "actually", "sorry", "sir", "madam",
+    # Around an email address: "my username is ... and the domain is ...", "... please"
+    "username", "domain", "please", "thanks",
 }
-_EMAIL_SYMBOLS = {"dot": ".", "period": ".", "point": ".", "underscore": "_", "dash": "-", "hyphen": "-"}
+_EMAIL_SYMBOLS = {
+    "dot": ".", "period": ".", "point": ".", "underscore": "_", "underline": "_",
+    "dash": "-", "hyphen": "-", "minus": "-",
+}
 _DIGIT_NAMES = {"zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6",
                 "seven": "7", "eight": "8", "nine": "9"}
 
@@ -465,6 +470,95 @@ def decode_email_local(text: str) -> str | None:
     decoded, _ = _decode(lowered, symbols=True)
     decoded = decoded.strip(".-_")
     return decoded if decoded and re.fullmatch(r"[a-z0-9][a-z0-9._%+-]*", decoded) else None
+
+
+# --- spoken email addresses ---------------------------------------------------------------
+#
+# What a caller says, or the recognizer writes, for an address: "john dot smith at h f m g dot net",
+# "j smith underscore two at hfmg.net", "my username is x and the domain is y". The address is only
+# ever assembled from what was said. Nothing is added, nothing is "fixed" (hmfg.net and hfmg.net are
+# different domains and stay as heard), and a part that cannot be read is left unread so the agent can
+# ask for that part alone. The caller always hears the result read back.
+
+_AT_PHRASE = re.compile(
+    r"\bat\s+the\s+rate(?:\s+of)?\b|\bat\s+(?:sign|symbol)\b|\bat\b|@"
+    r"|\b(?:and\s+)?(?:the\s+)?domain(?:\s+name)?\s+(?:is\s+)?"
+)
+#: Words that mean the caller is talking, not dictating: leave these to the language model.
+_NOT_AN_ADDRESS = frozenset({
+    "think", "believe", "guess", "maybe", "probably", "well", "like", "just", "mean", "correction", "wait", "hold",
+    "hello", "hi", "hey", "can", "could", "would", "should", "will", "what", "which", "how", "sorry", "actually",
+})
+_LOCAL_OK = re.compile(r"^[a-z0-9][a-z0-9._%+-]*$")
+_DOMAIN_OK = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$")
+
+
+def _spoken_symbols(text: str) -> str:
+    """Put the punctuation a recognizer wrote into words, so one decoder reads everything.
+    A "." "_" or "-" between characters is part of the address; at the end of a word it is
+    sentence punctuation and is dropped. Hyphen-spelled letters ("N-G-U-Y-E-N") stay letters."""
+    lowered = (text or "").lower().replace("full stop", " dot ").replace("under score", " underscore ")
+    lowered = _HYPHEN_SPELLED.sub(lambda m: m.group(0).replace("-", " "), lowered)
+    lowered = re.sub(r"(?<=\S)\.(?=\S)", " dot ", lowered)
+    lowered = re.sub(r"(?<=\S)_(?=\S)", " underscore ", lowered)
+    return re.sub(r"(?<=\S)-(?=\S)", " hyphen ", lowered)
+
+
+def _dictation(text: str) -> str | None:
+    """The text ready to decode, or None if it is a correction or ordinary speech."""
+    prepared = _spoken_symbols(text)
+    if _SPELLED_CORRECTION.search(prepared) or _NOT_AN_ADDRESS.intersection(re.findall(r"[a-z']+", prepared)):
+        return None
+    return prepared
+
+
+def _local_part(decoded: str) -> str | None:
+    value = decoded.strip(".-_")
+    return value if _LOCAL_OK.match(value) else None
+
+
+def _domain_part(decoded: str) -> str | None:
+    value = decoded.strip(".-")
+    return value if _DOMAIN_OK.match(value) else None
+
+
+def split_spoken_email(text: str) -> tuple[str | None, str | None]:
+    """(username, domain) from a spoken or transcribed address. Either may be None if that side
+    could not be read; both None if there is no "at" (or "the domain is") to divide them."""
+    prepared = _dictation(text)
+    if prepared is None:
+        return None, None
+    markers = list(_AT_PHRASE.finditer(prepared))
+    if not markers:
+        return None, None
+    marker = markers[-1]  # the last "at": the domain follows it
+    return (
+        _local_part(_decode(prepared[: marker.start()], symbols=True)[0]),
+        _domain_part(_decode(prepared[marker.end():], symbols=True)[0]),
+    )
+
+
+def parse_email_section(text: str, kind: str) -> str | None:
+    """Only the username ("local") or only the domain, said on its own to correct that part.
+    If the caller says the whole address, the part asked for is taken from it."""
+    prepared = _dictation(text)
+    if prepared is None:
+        return None
+    if _AT_PHRASE.search(prepared):
+        local, domain = split_spoken_email(text)
+        return local if kind == "local" else domain
+    decoded = _decode(prepared, symbols=True)[0]
+    return _local_part(decoded) if kind == "local" else _domain_part(decoded)
+
+
+def clean_email(raw: str | None) -> str | None:
+    """An address in the usual shape, lower-cased, exactly as given: no repair of any kind
+    (used for an address already on file, which is never "corrected")."""
+    text = (raw or "").strip()
+    if text.lower().startswith("mailto:"):
+        text = text[7:]
+    text = text.lower()
+    return text if _EMAIL_RE.match(text) else None
 
 
 def is_greeting(utterance: str) -> bool:
@@ -1186,6 +1280,20 @@ async def interpret_phone(utterance: str) -> TurnResult:
 _DECLINE_WORDS = {"skip", "no", "none", "nope", "nothing", "na"}
 
 
+def interpret_email_section(utterance: str, kind: str) -> TurnResult:
+    """Just the username (kind="local") or just the domain (kind="domain"), said to correct that
+    one part of an address that was read back wrong. Rule-based, no model call: a part that cannot
+    be read is a failure, and the agent asks for that part again rather than guessing."""
+    started = time.perf_counter()
+    if mentions_escalation(utterance):
+        return TurnResult(escalation_requested=True)
+    section = parse_email_section(utterance, kind)
+    _record_rule(f"record_email_{kind}", started, utterance, {"section": section})
+    if section is None:
+        return TurnResult()
+    return TurnResult(value=section, confidence="high", unable_to_determine=False)
+
+
 async def interpret_email(utterance: str) -> TurnResult:
     """The agent asks callers to spell the part before the @ (almost everyone
     is @hfmg.net): transcribers turn spoken names into other words
@@ -1195,7 +1303,18 @@ async def interpret_email(utterance: str) -> TurnResult:
     if email_declined(utterance) and not mentions_escalation(utterance):
         _record_rule("record_email", started, utterance, {"declined": True})
         return TurnResult(unable_to_determine=False, extras={"declined": True})
-    quick = quick_email(utterance)
+    typed = "@" in utterance  # the recognizer wrote an address, rather than the caller dictating one
+    quick = quick_email(utterance) if typed else None
+    if not quick and not mentions_escalation(utterance):
+        # Username and domain both dictated ("john dot smith underscore two at h f m g dot net"):
+        # read as said. This comes before the quick rules below, which join the words together and
+        # would read "two" as letters and "at the rate of" as part of the domain.
+        local, domain = split_spoken_email(utterance)
+        spoken = normalize_email(f"{local}@{domain}") if local and domain else None
+        if spoken:
+            _record_rule("record_email", started, utterance, {"email": spoken, "dictated": True})
+            return TurnResult(value=spoken, confidence="high", unable_to_determine=False)
+    quick = quick or quick_email(utterance)
     if quick:
         _record_rule("record_email", started, utterance, {"email": quick})
         return TurnResult(value=quick, confidence="high", unable_to_determine=False)

@@ -134,6 +134,18 @@ EMAIL_ASK = (
 EMAIL_ASK_NO_NAME = "What's your HFMG email? Just spell the part before the at sign, or say skip."
 EMAIL_CONFIRM = "I have {email}. Is that correct?"
 EMAIL_RETRY = "Let's try once more. Please spell the part before the at sign, slowly, one letter at a time."
+# A wrong read-back: find out which part, then ask for that part alone.
+EMAIL_WHICH_PART = "Sorry about that. Was it the part before the at sign that was wrong, the part after it, or both?"
+EMAIL_FIX_LOCAL = "Okay, just the part before the at sign. Please spell it slowly, one letter at a time."
+EMAIL_FIX_DOMAIN = (
+    "Okay, just the part after the at sign. Please say it, spelling the name one letter at a time, "
+    "then dot and the ending."
+)
+EMAIL_FIX_AGAIN = "Sorry, I didn't catch that."
+# An address already on file for a caller who confirmed who they are: offered, never assumed.
+EMAIL_DIRECTORY_CONFIRM = "I have {email} on file for you. Is that still the best email for updates?"
+# Asking for the name's spelling straight away when the recognizer was unsure of what it heard.
+NAME_SPELL_LEAD = "I want to be sure I get your name right."
 
 # Names are read back spelled, because a misheard name sounds right when said
 # back ("Yashwandh" is pronounced like "Yashwanth"). Only names we're unsure
@@ -148,6 +160,7 @@ NAME_RECONFIRM = "Thanks. So that's {spelled}. Is that right?"
 NAME_ACCEPT_AS_SPOKEN = "Okay, I'll note it the way you spelled it."
 NAME_SPELL_FIRST = "Sorry about that. Could you spell your first name for me, one letter at a time?"
 NAME_SPELL_LAST = "Thanks. And your last name, one letter at a time?"
+NAME_SPELL_FIRST_ASK = "Could you spell your first name for me, one letter at a time?"
 
 # --- the read-back before a ticket is created -------------------------------------
 SUMMARY_INTRO_OPTIONS = (
@@ -261,13 +274,22 @@ def spelled_name(name: str) -> str:
     return ", ".join(" ".join(part.upper()) for part in name.split() if part)
 
 
+_SAID_PUNCTUATION = {".": "dot", "_": "underscore", "-": "hyphen", "+": "plus", "%": "percent"}
+
+
+def _spell(text: str) -> str:
+    return " ".join(_SAID_PUNCTUATION.get(char, char) for char in text)
+
+
 def spoken_email(email: str) -> str:
     """Render jsmith@hfmg.net as "j s m i t h at h f m g dot net".
 
-    The domain name is spelled out but the TLD is spoken as a word, which is
-    how people read addresses aloud.
+    Every character is said, and punctuation as a word ("j.smith" is "j dot s m i t h"): a lone
+    "." or "_" is a pause to the speech synthesizer, so the caller could not hear a wrong one.
+    The domain name is spelled out but the ending (net, com) is spoken as a word, which is how
+    people read addresses aloud.
     """
     local, _, domain = email.partition("@")
     parts = domain.split(".")
-    spelled = [" ".join(part) for part in parts[:-1]] + parts[-1:]
-    return f"{' '.join(local)} at {' dot '.join(spelled)}"
+    spelled = [_spell(part) for part in parts[:-1]] + parts[-1:]
+    return f"{_spell(local)} at {' dot '.join(spelled)}"

@@ -19,6 +19,7 @@ import logging
 import re
 import uuid
 
+from pydantic import EmailStr, TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -227,18 +228,25 @@ def _set_name(
 
     Only names we are unsure of cost the caller a turn (app/voice/names.py).
     """
+    stt_confidence = _last_caller_confidence(session)
     confidence = names.name_confidence(
         name,
         spelled=spelled,
         model_confidence=model_confidence,
-        stt_confidence=_last_caller_confidence(session),
+        stt_confidence=stt_confidence,
     )
     already_confirmed = (session.collected.get("name_confirmed_as") or "").lower() == name.lower()
+    pending = bool(settings.voice_confirm_name and confidence == "low" and not already_confirmed)
     update_collected(
         session,
         caller_name=name,
         name_confidence=confidence,
-        name_confirm_pending=bool(settings.voice_confirm_name and confidence == "low" and not already_confirmed),
+        name_confirm_pending=pending,
+        # The recognizer itself was unsure what it heard: ask for the spelling now, don't read back a guess.
+        name_spell_first=pending
+        and names.needs_spelling(
+            name, spelled=spelled, model_confidence=model_confidence, stt_confidence=stt_confidence
+        ),
     )
 
 
@@ -1094,6 +1102,11 @@ async def _next_step(
 
     # --- name confirmation (IT only; patient flow keeps it simple) ---
     if not patient and settings.voice_confirm_name and collected.get("name_confirm_pending"):
+        if collected.get("name_spell_first"):
+            update_collected(session, name_spell_first=False, name_spell_step="first", name_reconfirm=False)
+            session.state = VoiceCallState.CONFIRM_NAME
+            prompt = f"{scripts.NAME_SPELL_LEAD} {scripts.NAME_SPELL_FIRST_ASK}"
+            return TurnOutcome(_speak(session, _ask(session, f"{acknowledgement} {prompt}" if acknowledgement else prompt)))
         spelled = scripts.spelled_name(collected["caller_name"])
         prompt = scripts.pick(scripts.NAME_CONFIRM_OPTIONS, len(session.turns or [])).format(spelled=spelled)
         return ask(VoiceCallState.CONFIRM_NAME, prompt)
@@ -1110,7 +1123,43 @@ async def _next_step(
     return await _finish_collection(db, session, preamble=acknowledgement)
 
 
-def _ask_for_email(session: VoiceCallSession, *, acknowledgement: str | None = None) -> TurnOutcome:
+_EMAIL_CHECK = TypeAdapter(EmailStr)
+
+
+def _ticket_accepts_email(email: str | None) -> bool:
+    """The ticket form rejects some addresses that are the right shape (reserved names such as .test).
+    An address it cannot hold is never read back, offered or confirmed: filing the ticket would fail."""
+    try:
+        _EMAIL_CHECK.validate_python(email)
+    except ValueError:
+        return False
+    return True
+
+
+#: Corrections of one part of an address (the username or the domain) in one call, before the agent
+#: gives up on email. Independent of the attempts for a full re-dictation (voice_max_email_attempts).
+MAX_EMAIL_FIXES = 3
+
+
+def _directory_email_offer(session: VoiceCallSession) -> str | None:
+    """An address from the caller's confirmed directory entry that can be offered, exactly as on
+    file. Offered for the caller's yes, never filled in: see directory_identity.directory_email_for."""
+    c = session.collected
+    if not c.get("identity_confirmed") or c.get("email"):
+        return None
+    offered = directory_identity.directory_email_for(c.get("caller_name") or "", (c.get("directory_identity") or {}).get("email"))
+    return offered if offered and _ticket_accepts_email(offered) else None
+
+
+def _ask_for_email(
+    session: VoiceCallSession, *, acknowledgement: str | None = None, offer: bool = True
+) -> TurnOutcome:
+    offered = _directory_email_offer(session) if offer else None
+    if offered:
+        update_collected(session, email_candidate=offered, email_source="directory")
+        session.state = VoiceCallState.CONFIRM_EMAIL
+        prompt = scripts.EMAIL_DIRECTORY_CONFIRM.format(email=scripts.spoken_email(offered))
+        return TurnOutcome(_speak(session, _ask(session, f"{acknowledgement} {prompt}" if acknowledgement else prompt)))
     first_name = (session.collected.get("caller_name") or "").split(" ")[0]
     prompt = (
         scripts.EMAIL_ASK.format(first_name=first_name) if first_name else scripts.EMAIL_ASK_NO_NAME
@@ -1122,6 +1171,9 @@ def _ask_for_email(session: VoiceCallSession, *, acknowledgement: str | None = N
 
 
 async def _handle_email(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
+    fix = session.collected.get("email_fix")
+    if fix and fix.get("step") in ("local", "domain"):
+        return await _handle_email_section(db, session, utterance, fix)
     result = await nlu.interpret_email(utterance)
 
     if _wants_human(utterance, result):
@@ -1132,7 +1184,7 @@ async def _handle_email(db: AsyncSession, session: VoiceCallSession, utterance: 
 
     session.email_attempt_count += 1
 
-    if result.failed:
+    if result.failed or not _ticket_accepts_email(result.value):
         # Email is optional, so a failure here never counts toward escalation.
         if session.email_attempt_count >= settings.voice_max_email_attempts:
             return await _finish_collection(db, session, preamble=scripts.EMAIL_GIVE_UP)
@@ -1147,6 +1199,13 @@ async def _handle_email(db: AsyncSession, session: VoiceCallSession, utterance: 
 async def _handle_email_confirmation(
     db: AsyncSession, session: VoiceCallSession, utterance: str
 ) -> TurnOutcome:
+    collected = session.collected
+    if collected.get("email_source") == "directory":
+        return await _handle_directory_email_answer(db, session, utterance)
+    fix = collected.get("email_fix")
+    if fix and fix.get("step") == "which":
+        return await _handle_email_which_part(db, session, utterance, fix)
+
     result = await nlu.interpret_yes_no("Is that email correct?", utterance)
 
     if _wants_human(utterance, result):
@@ -1155,12 +1214,137 @@ async def _handle_email_confirmation(
     if result.yes_no is True:
         return await _finish_collection(db, session)
 
-    # Wrong or unclear -- drop it and either retry or move on.
-    update_collected(session, email=None)
+    # Wrong or unclear: find out which part, and ask for that part alone.
+    return await _start_email_fix(db, session, utterance)
+
+
+# --- correcting one part of an email address ----------------------------------------------------------
+#
+# A wrong read-back is usually wrong in one place. The caller is asked which part (or says it in the
+# same breath), and only that part is asked for again; the other part is kept exactly as confirmed
+# so far. Everything is rule-based, the corrected address is read back in full, and nothing is
+# changed except what the caller said.
+
+
+def _which_email_part(utterance: str) -> str | None:
+    """"local" (before the at sign, the username), "domain" (after it), "both", or None if not said."""
+    text = " ".join((utterance or "").lower().split())
+    words = set(re.findall(r"[a-z']+", text))
+    local = bool(words & {"before", "first", "front", "username", "beginning"} or "user name" in text)
+    domain = bool(words & {"after", "domain", "end", "ending", "second"})
+    both = bool(words & {"both", "everything", "entire", "whole"} or "start over" in text or "from the top" in text)
+    if both or (local and domain):
+        return "both"
+    return "local" if local else "domain" if domain else None
+
+
+async def _retry_email_from_scratch(db: AsyncSession, session: VoiceCallSession) -> TurnOutcome:
+    update_collected(session, email=None, email_fix=None)
     if session.email_attempt_count >= settings.voice_max_email_attempts:
         return await _finish_collection(db, session, preamble=scripts.EMAIL_GIVE_UP)
     session.state = VoiceCallState.COLLECT_EMAIL
     return TurnOutcome(_speak(session, _ask(session, scripts.EMAIL_RETRY)))
+
+
+async def _start_email_fix(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
+    collected = session.collected
+    local, _, domain = (collected.get("email") or "").partition("@")
+    update_collected(session, email=None)  # an address the caller rejected is not kept
+    if not local or not domain:
+        return await _retry_email_from_scratch(db, session)
+    if collected.get("email_fixes", 0) >= MAX_EMAIL_FIXES:
+        return await _finish_collection(db, session, preamble=scripts.EMAIL_GIVE_UP)
+    fix = {"local": local, "domain": domain, "tries": 0}
+    part = _which_email_part(utterance)
+    if part == "both":
+        return await _retry_email_from_scratch(db, session)
+    if part is None and nlu.looks_spelled(utterance):
+        part = "local"  # "no, it's s a i": the corrected username, spelled in the same breath
+    if part in ("local", "domain"):
+        return await _begin_email_section(db, session, utterance, fix, part)
+    update_collected(session, email_fix={**fix, "step": "which"})
+    session.state = VoiceCallState.CONFIRM_EMAIL
+    return TurnOutcome(_speak(session, _ask(session, scripts.EMAIL_WHICH_PART)))
+
+
+async def _handle_email_which_part(
+    db: AsyncSession, session: VoiceCallSession, utterance: str, fix: dict
+) -> TurnOutcome:
+    if nlu.mentions_escalation(utterance):
+        return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
+    part = _which_email_part(utterance)
+    if part is None and nlu.looks_spelled(utterance):
+        part = "local"
+    if part in ("local", "domain"):
+        return await _begin_email_section(db, session, utterance, fix, part)
+    return await _retry_email_from_scratch(db, session)  # both, or still not clear: start the address over
+
+
+async def _begin_email_section(
+    db: AsyncSession, session: VoiceCallSession, utterance: str, fix: dict, part: str
+) -> TurnOutcome:
+    update_collected(session, email_fix={**fix, "step": part, "tries": 0})
+    corrected = None
+    if part == "local" and nlu.looks_spelled(utterance):
+        corrected = nlu.parse_email_section(utterance, "local")
+    elif part == "domain" and re.search(r"\bdot\b|\bperiod\b|\bpoint\b|\.", utterance.lower()):
+        corrected = nlu.parse_email_section(utterance, "domain")
+    if corrected:
+        return await _apply_email_section(db, session, part, corrected)
+    session.state = VoiceCallState.COLLECT_EMAIL
+    prompt = scripts.EMAIL_FIX_LOCAL if part == "local" else scripts.EMAIL_FIX_DOMAIN
+    return TurnOutcome(_speak(session, _ask(session, prompt)))
+
+
+async def _handle_email_section(
+    db: AsyncSession, session: VoiceCallSession, utterance: str, fix: dict
+) -> TurnOutcome:
+    part = fix["step"]
+    result = nlu.interpret_email_section(utterance, part)
+    if _wants_human(utterance, result):
+        return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
+    if result.failed:
+        tries = fix.get("tries", 0) + 1
+        if tries >= 2:  # the part could not be understood twice: start the address over
+            return await _retry_email_from_scratch(db, session)
+        update_collected(session, email_fix={**fix, "tries": tries})
+        prompt = scripts.EMAIL_FIX_LOCAL if part == "local" else scripts.EMAIL_FIX_DOMAIN
+        return TurnOutcome(_speak(session, _ask(session, f"{scripts.EMAIL_FIX_AGAIN} {prompt}")))
+    return await _apply_email_section(db, session, part, result.value)
+
+
+async def _apply_email_section(db: AsyncSession, session: VoiceCallSession, part: str, section: str) -> TurnOutcome:
+    """Put the corrected part together with the other part as it was, and read the whole address back."""
+    fix = session.collected["email_fix"]
+    local, domain = (section, fix["domain"]) if part == "local" else (fix["local"], section)
+    email = nlu.normalize_email(f"{local}@{domain}")
+    update_collected(session, email_fix=None, email_fixes=session.collected.get("email_fixes", 0) + 1)
+    if email is None or not _ticket_accepts_email(email):  # the parts do not make an address: ask again
+        return await _retry_email_from_scratch(db, session)
+    update_collected(session, email=email)
+    session.state = VoiceCallState.CONFIRM_EMAIL
+    prompt = scripts.EMAIL_CONFIRM.format(email=scripts.spoken_email(email))
+    return TurnOutcome(_speak(session, _ask(session, prompt)))
+
+
+async def _handle_directory_email_answer(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
+    """The caller was offered the address on file for them. Yes uses it; anything else forgets it and
+    asks the usual question (or takes a new address if they said one in the same breath)."""
+    collected = session.collected
+    local, domain = nlu.split_spoken_email(utterance)
+    if local and domain:
+        update_collected(session, email_candidate=None, email_source=None)
+        session.state = VoiceCallState.COLLECT_EMAIL
+        return await _handle_email(db, session, utterance)
+    result = await nlu.interpret_yes_no("Is that still the best email?", utterance)
+    if _wants_human(utterance, result):
+        return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
+    candidate = collected.get("email_candidate")
+    if result.yes_no is True and candidate:
+        update_collected(session, email=candidate, email_candidate=None, email_source="directory_confirmed")
+        return await _finish_collection(db, session)
+    update_collected(session, email_candidate=None, email_source=None)
+    return _ask_for_email(session, acknowledgement="Okay.", offer=False)
 
 
 # --- the read-back before creating a ticket -------------------------------------

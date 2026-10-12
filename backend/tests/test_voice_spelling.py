@@ -295,7 +295,7 @@ async def test_spelled_email_end_to_end(db_session, monkeypatch, confirm_names):
     await orchestrator.handle_turn(db_session, session, utterance="Yes.")
     out = await orchestrator.handle_turn(db_session, session, utterance="R A N G A dot S A I Y A S H W A N T H")
     assert session.collected["email"] == "ranga.saiyashwanth@hfmg.net"
-    assert "r a n g a . s a i y a s h w a n t h at h f m g dot net" in out.text
+    assert "r a n g a dot s a i y a s h w a n t h at h f m g dot net" in out.text  # punctuation is said, so it can be checked
     await orchestrator.handle_turn(db_session, session, utterance="Yes, correct.")
     await db_session.commit()
     ticket = await db_session.get(Ticket, session.ticket_id)
