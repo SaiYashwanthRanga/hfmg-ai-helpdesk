@@ -9,6 +9,7 @@ keeps the async discipline established for the LLM provider (app/llm/).
 import asyncio
 import logging
 import random
+from collections.abc import Sequence
 
 import httpx
 
@@ -43,7 +44,7 @@ class SendGridProvider:
     async def send(
         self,
         *,
-        to: str,
+        to: str | Sequence[str],
         from_email: str,
         subject: str,
         body: str,
@@ -58,7 +59,8 @@ class SendGridProvider:
         attempts = (max_retries if max_retries is not None else settings.sendgrid_max_retries) + 1
 
         payload = {
-            "personalizations": [{"to": [{"email": to}]}],
+            # One entry per address: one personalization, so it is one email to all of them.
+            "personalizations": [{"to": [{"email": address} for address in ([to] if isinstance(to, str) else to)]}],
             "from": {"email": from_email},
             "subject": subject,
             "content": [{"type": "text/plain", "value": body}],

@@ -7,6 +7,7 @@ input) from being interpreted as markup in the recipient's mail client.
 """
 
 import html
+from collections.abc import Sequence
 
 from app.core.config import get_settings
 from app.services import hfmg_mail_service
@@ -32,7 +33,7 @@ class HfmgInternalMailProvider:
     async def send(
         self,
         *,
-        to: str,
+        to: str | Sequence[str],
         from_email: str,
         subject: str,
         body: str,
@@ -43,7 +44,7 @@ class HfmgInternalMailProvider:
         # send as; EMAIL_FROM is a SendGrid-era default, so it loses to it.
         sender = get_settings().default_from_email or from_email
         return await hfmg_mail_service.send_email(
-            to=[to],
+            to=to,  # one address or a list; the service sends one To part per address
             subject=_single_line(subject),
             body_html=_plain_to_html(body),
             from_email=sender,

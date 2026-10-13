@@ -90,6 +90,11 @@ async def send_ticket_notification(ticket: Ticket, event: str) -> None:
             )
             return
 
+        recipients = settings.helpdesk_recipients
+        if not recipients:
+            logger.warning("HELPDESK_EMAIL is empty; skipping %s notification for %s", event, ticket.ticket_number)
+            return
+
         subject_template = _EVENT_SUBJECTS.get(event, "Ticket {ticket_number} update")
         subject = subject_template.format(
             ticket_number=ticket.ticket_number, category=ticket.category.name, status=ticket.status.value
@@ -106,14 +111,15 @@ async def send_ticket_notification(ticket: Ticket, event: str) -> None:
         )
 
         sent = await provider.send(
-            to=settings.helpdesk_email,
+            to=recipients,
             from_email=settings.email_from,
             subject=subject,
             body=body,
         )
 
         if sent:
-            logger.info("Sent %s notification for %s", event, ticket.ticket_number)
+            # The count, never the addresses: a quick check that every configured recipient was included.
+            logger.info("Sent %s notification for %s to %d recipient(s)", event, ticket.ticket_number, len(recipients))
         else:
             # No exception detail or body here by design -- the provider already
             # logged the failure class (status code / error type) without content.

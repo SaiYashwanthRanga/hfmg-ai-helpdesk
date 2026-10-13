@@ -5,6 +5,7 @@ strings, so swapping providers means adding one module and changing
 EMAIL_PROVIDER -- no changes to notification logic.
 """
 
+from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
 
@@ -22,7 +23,7 @@ class IEmailProvider(Protocol):
     async def send(
         self,
         *,
-        to: str,
+        to: str | Sequence[str],  # one address, or several that all receive the same email
         from_email: str,
         subject: str,
         body: str,

@@ -217,6 +217,18 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
+    @property
+    def helpdesk_recipients(self) -> list[str]:
+        """HELPDESK_EMAIL as a list: one or more addresses separated by commas or semicolons. Spaces, blank
+        entries and repeats (ignoring case) are dropped; the order is kept. Each address is its own
+        recipient -- sent as one string, "a@x,b@y" is a single invalid address and nobody gets the email."""
+        recipients: list[str] = []
+        for part in self.helpdesk_email.replace(";", ",").split(","):
+            address = part.strip()
+            if address and address.lower() not in (r.lower() for r in recipients):
+                recipients.append(address)
+        return recipients
+
 
 @lru_cache
 def get_settings() -> Settings:

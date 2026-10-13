@@ -237,7 +237,7 @@ async def test_notification_uses_fixed_from_and_to(monkeypatch):
 
     await email_module.send_ticket_notification(_make_ticket(), "created")
 
-    assert captured["to"] == "helpdesk@hfmg.net"
+    assert captured["to"] == ["helpdesk@hfmg.net"]  # HELPDESK_EMAIL, read as a list of recipients
     assert captured["from_email"] == "reminder@hfmg.net"
 
 
