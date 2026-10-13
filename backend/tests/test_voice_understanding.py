@@ -206,15 +206,16 @@ async def test_callback_request_keeps_the_problem_and_asks_for_a_number(db_sessi
     monkeypatch.setattr(nlu, "interpret_description", _async(described))
     out = await orchestrator.handle_turn(db_session, session, utterance="...I need IT experts to call back me.")
 
-    # No caller ID: ask for a number before promising a callback.
+    # No caller ID: ask for a number before promising a callback. The caller asked before their problem was
+    # classified, so who they are is not known yet: the neutral wording.
     assert session.state == VoiceCallState.COLLECT_PHONE
-    assert scripts.ESCALATION_PHONE_ASK in out.text
+    assert scripts.NEUTRAL_ESCALATION_PHONE_ASK in out.text
     assert session.collected["description"].startswith("Outlook password")
 
     out = await orchestrator.handle_turn(db_session, session, utterance="two one four, eight eight five, nine zero eight nine")
     await db_session.commit()
     assert session.state == VoiceCallState.ESCALATED
-    assert "call you back at 2 1 4" in out.text
+    assert "with your number, 2 1 4" in out.text and "call you back" in out.text
     assert "trouble understanding" not in out.text
     ticket = await db_session.get(Ticket, session.ticket_id)
     assert ticket.phone_number == "+12148859089"
@@ -230,7 +231,7 @@ async def test_callback_request_without_a_usable_number_still_escalates_politely
     out = await orchestrator.handle_turn(db_session, session, utterance="mumble")
     assert session.state == VoiceCallState.ESCALATED
     assert session.misunderstanding_count == 0  # asked once, never retried
-    assert scripts.ESCALATION_CALLER_REQUESTED_NO_NUMBER in out.text
+    assert scripts.NEUTRAL_ESCALATION_NO_NUMBER in out.text
     assert "trouble understanding" not in out.text
 
 
@@ -240,7 +241,7 @@ async def test_caller_id_means_no_number_question_on_escalation(db_session, monk
     monkeypatch.setattr(nlu, "interpret_description", _async(nlu.TurnResult(escalation_requested=True)))
     out = await orchestrator.handle_turn(db_session, session, utterance="real person please")
     assert session.state == VoiceCallState.ESCALATED
-    assert "call you back at 8 4 5" in out.text
+    assert "with your number, 8 4 5" in out.text and "call you back" in out.text
 
 
 async def test_other_category_is_never_confirmed(db_session, monkeypatch):

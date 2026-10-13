@@ -69,6 +69,12 @@ OPERATIONAL_SOURCES = tuple(s for s in TicketSource if s is not TicketSource.SIM
 
 class VoiceCallState(str, enum.Enum):
     GREETING = "GREETING"
+    # "Are you a patient or an employee?" -- asked first when VOICE_ASK_CALLER_TYPE is on.
+    IDENTIFY_CALLER = "IDENTIFY_CALLER"
+    # Patient flow: what the caller needs (book, change, cancel, check, trouble booking, other), then
+    # one optional question about it. Employees never enter these states.
+    PATIENT_INTENT = "PATIENT_INTENT"
+    PATIENT_DETAILS = "PATIENT_DETAILS"
     COLLECT_DESCRIPTION = "COLLECT_DESCRIPTION"
     # Low-confidence classification: "Are you calling about a patient service or an IT issue?"
     CLASSIFY_CALLER_TYPE = "CLASSIFY_CALLER_TYPE"

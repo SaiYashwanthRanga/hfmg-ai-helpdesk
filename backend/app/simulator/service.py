@@ -427,7 +427,7 @@ async def start_session(db: AsyncSession, request: schemas.StartRequest) -> sche
     db.add(options)
 
     llm_started = time.perf_counter()
-    outcome = await orchestrator.start_call(call)
+    outcome = await orchestrator.start_call(call, identify_caller=False)  # the simulator tests the employee IT intake
     llm_ms = _ms(llm_started)
     text = outcome.text
 

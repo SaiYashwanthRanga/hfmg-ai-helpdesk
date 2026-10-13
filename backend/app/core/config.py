@@ -113,6 +113,10 @@ class Settings(BaseSettings):
     voice_confirm_callback: bool = True
     # Callback-number attempts before the agent carries on without one.
     voice_max_phone_attempts: int = 2
+    # Open the call by asking "are you a patient or an employee?" and route to the patient request
+    # flow or the employee IT flow. Off = the older behaviour: the caller describes the problem first
+    # and the type is worked out from that (CLASSIFY_CALLER_TYPE).
+    voice_ask_caller_type: bool = True
     # The SIP gateway's HTTP timeout for one /turn attempt (its setting, mirrored here so a
     # mismatch is caught at startup instead of showing up as calls that hang up).
     voice_gateway_attempt_timeout_seconds: float = 8.0

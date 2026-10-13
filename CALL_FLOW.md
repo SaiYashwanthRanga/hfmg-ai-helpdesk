@@ -99,12 +99,15 @@ This document defines the conversation state machine: every state, every transit
 | `GREETING` | Open-ended: "How can I assist you today?" | `COLLECT_DESCRIPTION` |
 | `COLLECT_DESCRIPTION` | Problem description (often already answered by the greeting) | `COLLECT_DETAILS` / `COLLECT_NAME` / later states, whichever is the first thing still missing |
 | `COLLECT_DETAILS` | "When did this start, and is it stopping you from working?" — **only if not volunteered**; optional, silence or an unclear answer moves on | `COLLECT_NAME` / later states |
+| `IDENTIFY_CALLER` | The opening question when `VOICE_ASK_CALLER_TYPE=true`: "May I know if you are a patient or an employee?" A clear answer routes the call; an unclear one is asked about once, then the call carries on in the older way (describe the problem). Silence and "hello?" never count as failures. See 2.3 | `PATIENT_INTENT` (patient) / `COLLECT_DESCRIPTION` (employee) |
+| `PATIENT_INTENT` | **Patients only.** "Are you calling about booking an appointment or an existing appointment?" Recognizes book, reschedule, cancel, check, trouble booking, or another request; asked about once if unclear, then kept in the caller's own words | `PATIENT_DETAILS` / `COLLECT_NAME` |
+| `PATIENT_DETAILS` | **Patients only.** One optional question about the request (which appointment, a preferred time). "No" or "I don't know" moves on | `COLLECT_NAME` |
 | `CONFIRM_IDENTITY` | **Employee IT calls only**, in place of the name question, when the caller ID matched exactly one live directory entry with a name that can be said aloud: "I found a directory entry for X. Am I speaking with X?" Yes → that name is **caller-confirmed** (not authenticated) and the call moves on; no → the proposal is discarded and `COLLECT_NAME` asks. Unclear or silent → asked once more, then treated as "no". An email, phone number or extension given instead is looked up once more (at most two proposals per call). Never counts toward escalation. See 2.2 | `COLLECT_NAME` / `COLLECT_PHONE` / later states |
 | `COLLECT_NAME` | Caller's name and department (department asked once; optional) | `CONFIRM_NAME` |
 | `CONFIRM_NAME` | Name read back **spelled**; "no" → spell first name, then last name (decoded letter by letter). Optional, never counts as a misunderstanding. `VOICE_CONFIRM_NAME=false` skips it | `COLLECT_PHONE` / `COLLECT_EMAIL` |
 | `COLLECT_PHONE` | Callback number — **only entered when caller ID is unavailable**. A retry says what was wrong ("I only caught 5 digits"); after two tries the call carries on without a number (noted on the ticket), it never escalates over this | `COLLECT_EMAIL` |
-| `CONFIRM_CALLBACK_NUMBER` | "I have your callback number as X. If our IT team needs to reach you regarding this ticket, they will call this number. Is this the best number to contact you on?" — entered from the end of collection, whether the number came from caller ID or was spoken. A number offered with the "no" ("No, it's 214…") is read back directly: "I have your callback number as Y. Is that correct?". Unclear twice → the number we have stands. `VOICE_CONFIRM_CALLBACK=false` skips it | `CONFIRM_SUMMARY` / `COLLECT_ALTERNATE_CALLBACK_NUMBER` |
-| `COLLECT_ALTERNATE_CALLBACK_NUMBER` | "What number would you like our IT team to call instead?" A retry says what was wrong ("I only caught 5 digits"); a refusal ("I'd rather not") or `VOICE_MAX_PHONE_ATTEMPTS` failed tries keeps the number we had, noted on the ticket | `CONFIRM_CALLBACK_NUMBER` / `CONFIRM_SUMMARY` |
+| `CONFIRM_CALLBACK_NUMBER` | "I have your callback number as X. If our IT team needs to reach you regarding this ticket, they will call this number. Is this the best number to contact you on?" (a patient call hears "support team" and "your request" instead, see 2.3) — entered from the end of collection, whether the number came from caller ID or was spoken. A number offered with the "no" ("No, it's 214…") is read back directly: "I have your callback number as Y. Is that correct?". Unclear twice → the number we have stands. `VOICE_CONFIRM_CALLBACK=false` skips it | `CONFIRM_SUMMARY` / `COLLECT_ALTERNATE_CALLBACK_NUMBER` |
+| `COLLECT_ALTERNATE_CALLBACK_NUMBER` | "What number would you like our IT team to call instead?" (a patient call hears "support team" instead, see 2.3) A retry says what was wrong ("I only caught 5 digits"); a refusal ("I'd rather not") or `VOICE_MAX_PHONE_ATTEMPTS` failed tries keeps the number we had, noted on the ticket | `CONFIRM_CALLBACK_NUMBER` / `CONFIRM_SUMMARY` |
 | `COLLECT_EMAIL` | The part of the HFMG email **before the @, spelled** (a full address said aloud still works); `@hfmg.net` is added. Optional | `CONFIRM_EMAIL` / `CONFIRM_CATEGORY` |
 | `CONFIRM_EMAIL` | "Did I get that right?" read-back | `CONFIRM_SUMMARY` / back to `COLLECT_EMAIL` |
 | `CONFIRM_SUMMARY` | The whole ticket read back — name, department, the problem, since when, **priority and the reason for it**, (the callback number is not repeated here once it has been confirmed in `CONFIRM_CALLBACK_NUMBER`; it is still read here when `VOICE_CONFIRM_CALLBACK=false` and the caller spoke it). "No" → "What should I change?"; "yes, but…" is a correction, not a yes. Two corrections at most, then it is filed and noted. `VOICE_CONFIRM_SUMMARY=false` skips it | `CREATING_TICKET` |
@@ -117,6 +120,232 @@ This document defines the conversation state machine: every state, every transit
 | `ABANDONED` | — (caller hung up) | terminal |
 
 Terminal states end with `<Hangup/>`. The session row persists for audit and metrics.
+
+### 2.3 Patient or employee first (`VOICE_ASK_CALLER_TYPE`)
+
+The first thing the caller hears is *"Thank you for calling the helpdesk. May I know if you are a patient or an
+employee?"* The answer is read by rules (`app/voice/caller_routing.py`): who the caller says they are first
+("I'm a patient", "I work at the clinic"), then the bare words, then what the call is about ("an appointment",
+"my printer"). Cues for both sides are never guessed at; the caller is asked. The language model
+(`classify_caller_type`) is consulted only when the answer has no cue at all ("I'm Dr. Patel's nurse"), and only
+trusted when it is sure. The type is stored on the call (`PATIENT_SUPPORT` = patient, `INTERNAL_IT` = employee),
+never asked again, and cannot be shared between calls.
+
+| Caller | What happens |
+|---|---|
+| **Employee** | Straight into the existing IT flow, unchanged: problem, when it started, name and department, directory confirmation, email, ticket, summary, notification. If the answer already holds the problem ("I'm an employee, my printer is jammed") it is used, not asked for again |
+| **Patient** | `PATIENT_INTENT` → one optional `PATIENT_DETAILS` question → name → callback number (confirmed) → a **patient support request** in the patient categories. No IT questions, no IT language model, no IT intake details, no IT ticket |
+
+**What the patient flow can and cannot do.** There is no appointment or scheduling system behind this line. The
+agent collects the request and passes it to the support team for a call back, says so once ("I can't book,
+change, or look up appointments myself on this call, but I can pass your request to our team"), and never says
+an appointment was booked, changed, cancelled or found. Only the request itself and the details the caller
+chooses to give are kept; no medical details are asked for.
+
+A caller who says "actually, I'm an employee" (or a patient) at the first question of the other flow is moved
+to the right one, and the other flow's answers are dropped. Only an explicit "I'm a ..." counts, and never after
+a ticket exists; a sentence that merely mentions a patient or an appointment does not.
+
+The call simulator is unaffected: it tests the employee IT intake and opens at the problem question.
+
+Worked examples of each path (employee, patient, unclear and ambiguous answers, and a correction) are under
+[Example Call Transcripts](#example-call-transcripts) below.
+
+#### Example Call Transcripts
+
+> **Agent lines reflect the scripts in `scripts.py`; caller lines are invented examples, not recordings of real
+> calls. Some agent responses may rotate between equivalent scripted wordings.**
+
+Reading the transcripts:
+
+- **Agent** lines are the scripted wording, as the caller would hear it. **Caller (example)** lines are made up.
+- Text in *(italic parentheses)* is a note, not speech. Ticket and request numbers are read out digit by digit
+  (`H F M G, 2 0 2 6, 0 0 0 0 0 1`) and email addresses are read back in spoken form (`d s a m p l e at h f m g dot net`).
+- The examples assume the settings in `backend/.env.example` (`VOICE_ASK_CALLER_TYPE`, `VOICE_CONFIRM_CALLBACK` and
+  `VOICE_CONFIRM_SUMMARY` on). The caller types are `INTERNAL_IT` (employee) and `PATIENT_SUPPORT` (patient).
+- Tickets and patient requests are local records. There is no Freshservice integration and no appointment or
+  scheduling system behind this line.
+
+**Rules the examples show**
+
+- **The opening answer is read by rules, in order**: who the caller says they are ("I'm a patient", "I work here"),
+  the bare words ("patient", "employee"), then what the call is about ("an appointment", "my printer"). A clear cue
+  on one side routes the call, so a topic can route it at the opening question (example 4). Cues for both sides
+  are never guessed at: the caller is asked (example 4).
+- **The language model is the last resort** at the opening: it is consulted only when the answer has no cue at all,
+  and its answer is used only when it is sure (`CLASSIFICATION_CONFIDENCE_THRESHOLD`).
+- **An unclear answer is asked about once more; then the call falls back** to "tell me how I can help you", and the
+  type is worked out from the problem described, as before this feature (examples 3 and 4). "Hello?" and silence
+  are never counted as an unclear answer.
+- **A correction needs an explicit "I'm a ..."** ("actually, I'm an employee"). A sentence that only *mentions* the
+  other side, such as a patient saying "my printer is jammed", never changes who is calling. A correction is
+  honoured only at the other flow's first question (the patient's request or its one details question, or the
+  employee's problem question before a problem is recorded) and never once a ticket or request exists for the call
+  (example 5).
+- **The type is stored on the call and never asked again.** The patient flow never reaches the IT language model or
+  creates an IT ticket; the employee flow is the existing IT flow, unchanged.
+
+##### 1. Employee with an IT problem, caller ID matched in the directory
+
+> **Agent:** Thank you for calling the helpdesk. May I know if you are a patient or an employee?
+> **Caller (example):** I'm an employee.
+> **Agent:** Thanks. Please briefly tell me what IT problem you're having.
+> **Caller (example):** My Outlook won't open, it just spins.
+> **Agent:** Sorry to hear about your Outlook. When did this start, and is it stopping you from working?
+> **Caller (example):** It started this morning, but I can still work.
+> **Agent:** I found a directory entry for Dana Sample. Am I speaking with Dana Sample?
+> **Caller (example):** Yes.
+> **Agent:** Thanks, Dana. And which department are you with?
+> **Caller (example):** Billing.
+> **Agent:** Thanks, Dana. What's your HFMG email? Just spell the part before the at sign, or say skip.
+> **Caller (example):** d s a m p l e
+> **Agent:** I have d s a m p l e at h f m g dot net. Is that correct?
+> **Caller (example):** Yes.
+> **Agent:** I have your callback number as 8 4 5, 5 5 5, 0 3 0 1. If our IT team needs to reach you regarding this ticket, they will call this number. Is this the best number to contact you on?
+> **Caller (example):** Yes.
+> **Agent:** Okay Dana, let me make sure I have this right. You're in Billing, and you're having trouble with your Outlook. It started this morning. Since you can still work, I'll log it as medium priority. Is that all correct?
+> **Caller (example):** Yes.
+> **Agent:** Great, I'm filing that now. Your ticket number is *(read out digit by digit)*. I've sent it to our IT team and they'll follow up with you. Is there anything else I can help you with?
+> **Caller (example):** No, thanks.
+> **Agent:** Thank you for calling Horizon Family Medical Group. Goodbye.
+
+*Behind the scenes.* The call is stored as `INTERNAL_IT` and the existing IT flow runs unchanged. The directory entry
+for the caller ID is only a proposal: the details question still comes first, and the caller's "yes" makes the name
+*caller-confirmed*, never authenticated (see 2.2). The caller ID is also the callback number being confirmed, so no
+phone question is asked. The ticket is a local record, and the helpdesk notification email lists the caller,
+callback number, email, issue, summary and ticket number.
+
+*Variations.*
+
+- **The directory entry has a usable email** (and the confirmed name matches it): the email question is replaced by
+  *"I have d a n a dot s a m p l e at e x a m p l e dot org on file for you. Is that still the best email for
+  updates?"* (`EMAIL_DIRECTORY_CONFIRM`). Only a yes uses it; a caller who declines it is asked for their own.
+- **No directory match** (not found, ambiguous, shared line, deactivated, or no usable caller ID): the identity
+  question is replaced by the normal name question, *"May I have your name and department?"* or *"Who am I
+  speaking with, and which department are you in?"*.
+- **The first answer already holds the problem** ("I'm an employee, my printer is jammed"): the problem question is
+  skipped and the agent goes straight on: *"Got it, your printer. When did this start, and can you still get your
+  work done?"*
+- **The caller says "skip" at the email question**: no email is kept, and the notification shows `Email: Not provided`.
+
+##### 2. Patient asking about an appointment
+
+> **Agent:** Thank you for calling the helpdesk. May I know if you are a patient or an employee?
+> **Caller (example):** I'm a patient.
+> **Agent:** How can I help you today? Are you calling about booking an appointment or an existing appointment?
+> **Caller (example):** I need to reschedule my appointment.
+> **Agent:** I can't book, change, or look up appointments myself on this call, but I can pass your request to our team so they can call you back. Which appointment is it? The date and the doctor would help.
+> **Caller (example):** Thursday with Dr. Patel.
+> **Agent:** May I have your name, please?
+> **Caller (example):** Maria Lopez.
+> **Agent:** I have your callback number as 8 4 5, 5 5 5, 0 1 4 2. If our support team needs to reach you regarding your request, they will call this number. Is this the best number to contact you on?
+> **Caller (example):** Yes.
+> **Agent:** Let me create a support request for you. Your request number is *(read out digit by digit)*. I've sent it to our support team and someone will follow up with you. Is there anything else I can help you with?
+> **Caller (example):** No.
+> **Agent:** Thank you for calling Horizon Family Medical Group. Goodbye.
+
+*Behind the scenes.* The call is stored as `PATIENT_SUPPORT`. A **patient support request** is filed in the patient
+categories: no IT questions are asked, the IT language model is never run, and no IT ticket or IT intake details
+are created. Nothing is booked, changed, cancelled or looked up: the agent says so once and passes the request to the
+support team for a call back. No medical details are asked for.
+
+*Variations.*
+
+- **The one optional question depends on the request**: booking, *"Do you have a preferred day or time, or a
+  particular doctor?"*; changing or cancelling, *"Which appointment is it? The date and the doctor would help."*;
+  checking, *"Which appointment are you asking about? The date and the doctor would help."*; trouble booking
+  online, *"What happens when you try to book? For example, an error message, or the page not loading."* A request
+  with no such question goes straight to the name.
+- **The first answer already holds the request** ("I'm a patient and I need to cancel my appointment"): the
+  "How can I help you today?" question is skipped.
+- **The request is not clear**: *"Sorry, I want to be sure I help with the right thing. Is it about booking a new
+  appointment, changing or cancelling one, or checking an existing appointment?"* is asked once; if it is still
+  not clear, the request is kept in the caller's own words for the team.
+- **The callback questions are worded for who is calling.** A patient hears "our support team" and "your request"
+  (`PATIENT_CALLBACK_CONFIRM`); an employee hears "our IT team" and "this ticket" (`CALLBACK_CONFIRM`, example 1).
+  If the caller says no to the number, the follow-up is *"What number would you like our support team to call
+  instead?"* for a patient (`PATIENT_CALLBACK_ASK_OTHER`) and *"What number would you like our IT team to call
+  instead?"* for an employee (`CALLBACK_ASK_OTHER`); it is asked again in the same wording if the caller turns down
+  the number they offered. The read-back of the number, the yes / no handling, the retry prompts and the limit on
+  tries are the same for both. The wording follows the caller type already stored on the call, which these steps
+  only read: a call with no type, or one that is not exactly `PATIENT_SUPPORT`, gets the employee wording.
+- **The patient asks for a person, or says goodbye early**: the same callback request or saved request as for an
+  employee, worded for the support team and a request number (see the table in section 6).
+
+##### 3. Unclear answer to the opening caller-type question
+
+> **Agent:** Thank you for calling the helpdesk. May I know if you are a patient or an employee?
+> **Caller (example):** Um, hello?
+> **Agent:** Hello. Are you a patient, or an employee?
+> **Caller (example):** Uh, I'm calling about something.
+> **Agent:** Sorry, I didn't catch that. Are you a patient, or an employee?
+> **Caller (example):** I work at the clinic.
+> **Agent:** Thanks. Please briefly tell me what IT problem you're having.
+
+*Behind the scenes.* "Hello?" is a greeting, so it is answered with a gentler repeat and not counted as an unclear
+answer. "I'm calling about something" has no cue on either side, so it is the one case where the language model may
+be asked, and a model that is not sure changes nothing. That counts as the first unclear answer, so the question is
+asked once more. "I work at the clinic" is an explicit statement and routes the call to the employee flow.
+
+*Variations.*
+
+- **Still unclear after the second ask**: the agent carries on rather than leave the caller stuck.
+  *(Caller: "Well, it's complicated, you know.")* **Agent:** *"No problem. Please tell me briefly how I can help you
+  today."* The type is then worked out from the problem described (the older flow, see example 4).
+- **"I want to talk to a person"** at any of these questions escalates, as everywhere else in the call.
+
+##### 4. Ambiguous caller intent requiring clarification
+
+> **Agent:** Thank you for calling the helpdesk. May I know if you are a patient or an employee?
+> **Caller (example):** My appointment screen is frozen on my work computer.
+> **Agent:** Sorry, I didn't catch that. Are you a patient, or an employee?
+> **Caller (example):** I work here.
+> **Agent:** Thanks. Please briefly tell me what IT problem you're having.
+
+*Behind the scenes.* The sentence has a cue for each side ("appointment" and "work computer"), so the rules do not
+pick one and the language model is not asked either: cues for both sides are a question for the caller, never a
+guess. The answer "I work here" routes the call to the employee flow (`INTERNAL_IT`).
+
+*Variations.*
+
+- **A cue on one side routes the call without asking**, even when the caller might have meant the other: *"My
+  portal isn't working."* is read as a patient request ("portal" is a patient cue), and the agent goes on with
+  *"I can't book, change, or look up appointments myself on this call, but I can pass your request to our team so
+  they can call you back. May I have your name, please?"* "It's about an appointment." routes the same way;
+  "My printer is jammed." routes to the employee flow.
+- **The older flow** (`VOICE_ASK_CALLER_TYPE=false`, or after the fallback in example 3) works the type out from the
+  problem described, and only there does the agent ask the classification question, when the language model's
+  confidence is below 0.80:
+
+  > **Agent:** Thank you for calling Horizon Family Medical Group support. Please briefly tell me how I can help you today.
+  > **Caller (example):** My portal isn't working.
+  > **Agent:** Got it, your portal. Just so I can help you in the right way: are you calling about a patient service such as appointments or the patient portal, or is this about an employee IT issue?
+  > **Caller (example):** The patient portal, I'm a patient.
+  > **Agent:** Let me get that noted for you. May I have your name, please?
+
+##### 5. Caller correcting their identity mid-call
+
+> **Agent:** How can I help you today? Are you calling about booking an appointment or an existing appointment?
+> **Caller (example):** Actually, I'm an employee. My laptop won't turn on.
+> **Agent:** Sorry to hear about your laptop. When did this start, and is it stopping you from working?
+
+*(Earlier in the call the caller had said "I'm a patient", so the call was `PATIENT_SUPPORT`.)*
+
+*Behind the scenes.* "I'm an employee" is an explicit statement made at the patient flow's first question, so the
+call moves to `INTERNAL_IT`, the patient answers are dropped, and the problem in the same sentence is used instead of
+being asked for again. The call is not a patient request any more: it follows the employee IT flow from here.
+
+*Variations.*
+
+- **A correction with no problem in it**: *(Caller: "Actually, I'm an employee.")* **Agent:** *"Okay, thanks for
+  letting me know. Thanks. Please briefly tell me what IT problem you're having."* The same works the other way
+  round, from the employee's problem question to the patient flow.
+- **A mention is not a correction**: a patient who answers the first question with *"My printer is jammed."* is not
+  moved to the employee flow. The agent asks the patient question again: *"Sorry, I want to be sure I help with the
+  right thing. Is it about booking a new appointment, changing or cancelling one, or checking an existing
+  appointment?"* and the call stays `PATIENT_SUPPORT`.
+- **Too late**: once a request has been filed for the call, "actually, I'm an employee" no longer changes the type of
+  that call, and it also does not apply later in the flow, after the first question.
 
 ### 2.2 Employee directory (`USER_DIRECTORY_CSV_PATH`)
 
@@ -244,6 +473,42 @@ The caller always leaves with a ticket number, even on escalation. Nothing is lo
 - **No false apology.** A caller who asked for a person is never told "I'm having trouble understanding"; with no number they hear *"Of course. I'll ask a member of our IT team to follow up with you."*
 - **Greetings aren't failures.** "Hi." or "Hello, is this the help desk?" gets *"Sure. Can you tell me briefly what's going wrong?"* without a model call or a misunderstanding count (once per call).
 - **"Is this about Other?" is never asked:** the catch-all category is not confirmed.
+
+The quoted lines above are the employee wording. A patient, or a caller whose type is not known yet, hears the
+wording below.
+
+**Wording by caller type.** The escalation works exactly as above for every caller (same callback request, same
+note, same priority rule, same notification email, same hang-up); only the words change. A patient hears about
+"our support team" and a "request", never the IT team or a ticket. A caller whose type is **not known** hears
+neutral lines: "our team" and a "request", with no guess at who they are and no promise that a call has been
+arranged. That is a caller who asks for a person at the opening "patient or employee?" question, a caller in the
+older flow (`VOICE_ASK_CALLER_TYPE=false`) who asks before their problem is classified, or a call whose stored type
+is not exactly `INTERNAL_IT` or `PATIENT_SUPPORT`.
+
+| Situation | Employee (`INTERNAL_IT`) hears | Patient (`PATIENT_SUPPORT`) hears | Not known hears |
+|---|---|---|---|
+| Asked for a person, number on file | "Of course. I'll have a member of our IT team call you back at X. Let me get that request logged. One moment." | "Of course. I'll have a member of our support team call you back at X. One moment while I log that." | "Of course. I'll pass your request to our team with your number, X, so they can call you back. One moment while I log that." |
+| Asked for a person, no number yet (asked once) | "Of course. What's the best number for our IT team to call you back on?" | "Of course. What's the best number for our support team to call you back on?" | "Of course. What's the best number for our team to reach you on?" |
+| Asked for a person, still no number | "Of course. I'll ask a member of our IT team to follow up with you. Let me get that request logged. One moment." | "Of course. I'll ask a member of our support team to follow up with you." | "Of course. I'll pass your request to our team." |
+| Could not be understood, number on file | "…I'll have someone from our IT team call you back at X directly." | "…I'll have someone from our support team call you back at X directly." | "…I'll pass your request to our team with your number, X, so they can call you back." |
+| Could not be understood, no number | "…I'll log a request for our IT team to follow up." | "…I'll log a request for our support team to follow up." | "…I'll pass your request to our team." |
+| Then | "Your callback request is ticket number N. Someone will reach out to you shortly." | "Your request number is N." | "Your request number is N." |
+| Says goodbye mid-call after the details were saved | "No problem. I've saved what you told me. Your ticket number is N. Take care." | "No problem. I've saved what you told me. Your request number is N. Take care." | the employee line (unchanged) |
+
+The patient and neutral read-backs give only the number: the line before already says what happens next, and when
+there is no number to call nobody can promise to reach the caller. The caller type is only read here, never set or
+guessed. The callback-number questions (`CONFIRM_CALLBACK_NUMBER`, `COLLECT_ALTERNATE_CALLBACK_NUMBER`) and the
+goodbye line still give a call with no known type the employee wording.
+
+**A stored caller type that is not a `CallerType`** (for example `"PATIENT"`, `"patient_support"`, or a value
+written by older code) never stops a ticket being created: the ticket is saved with no caller type (NULL, "unknown"),
+the call's own record is left as it was, the problem is logged, and it is never treated as a patient request.
+
+**What "escalation" means in this system.** The callback request is a ticket saved in this application's own
+database, numbered `HFMG-…`, and the helpdesk is told about it by the notification email. That is all the
+hand-off there is: the call is not transferred to a person, no human has accepted it when the caller hears the
+line, and there is no Freshservice (or other external ticketing) integration. "I'll have a member of our team call
+you back" means the request and the number are passed on for a call back, not that a call has been arranged.
 
 ## 7. Email Handling (Optional Field)
 

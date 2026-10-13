@@ -8,6 +8,9 @@ import type { Priority } from "./ticket";
 // (when it started / can you work) was added with the voice accuracy work.
 export type VoiceCallState =
   | "GREETING"
+  | "IDENTIFY_CALLER"
+  | "PATIENT_INTENT"
+  | "PATIENT_DETAILS"
   | "COLLECT_DESCRIPTION"
   | "CLASSIFY_CALLER_TYPE"
   | "COLLECT_DETAILS"

@@ -9,6 +9,35 @@ GREETING = (
     "Please briefly tell me how I can help you today."
 )
 
+# --- who is calling: asked first (VOICE_ASK_CALLER_TYPE) --------------------------------------------
+GREETING_IDENTIFY = "Thank you for calling the helpdesk. May I know if you are a patient or an employee?"
+IDENTIFY_CLARIFY = "Sorry, I didn't catch that. Are you a patient, or an employee?"
+IDENTIFY_AFTER_HELLO = "Hello. Are you a patient, or an employee?"
+IDENTIFY_FALLBACK = "No problem. Please tell me briefly how I can help you today."
+EMPLOYEE_ASK = "Thanks. Please briefly tell me what IT problem you're having."
+TYPE_CORRECTED = "Okay, thanks for letting me know."
+
+# --- patients: what they need. There is no appointment system behind this line: the agent collects
+# the request and passes it to the support team, and says so; it never says anything was booked,
+# changed, cancelled or found.
+PATIENT_INTENT_ASK = "How can I help you today? Are you calling about booking an appointment or an existing appointment?"
+PATIENT_INTENT_CLARIFY = (
+    "Sorry, I want to be sure I help with the right thing. Is it about booking a new appointment, "
+    "changing or cancelling one, or checking an existing appointment?"
+)
+PATIENT_INTENT_ASK_AGAIN = "What else can I help you with? Is it about booking an appointment or an existing appointment?"
+PATIENT_DETAILS_ASK = {
+    "BOOK": "Do you have a preferred day or time, or a particular doctor?",
+    "RESCHEDULE": "Which appointment is it? The date and the doctor would help.",
+    "CANCEL": "Which appointment is it? The date and the doctor would help.",
+    "CHECK": "Which appointment are you asking about? The date and the doctor would help.",
+    "TROUBLE": "What happens when you try to book? For example, an error message, or the page not loading.",
+}
+PATIENT_LIMITATION = (
+    "I can't book, change, or look up appointments myself on this call, "
+    "but I can pass your request to our team so they can call you back."
+)
+
 # Re-prompts are progressively simpler and never repeat the previous wording --
 # a verbatim repeat is the clearest signal to a caller that they are stuck.
 DESCRIPTION_ASK = "Sure. Can you tell me briefly what's going wrong?"
@@ -119,7 +148,15 @@ CALLBACK_CONFIRM = (
     "I have your callback number as {number}. If our IT team needs to reach you regarding this ticket, "
     "they will call this number. Is this the best number to contact you on?"
 )
+# The same question for a patient call (caller_type PATIENT_SUPPORT): a patient is not talking to the IT
+# team and has a request, not a ticket. The read-back of the number is the same.
+PATIENT_CALLBACK_CONFIRM = (
+    "I have your callback number as {number}. If our support team needs to reach you regarding your request, "
+    "they will call this number. Is this the best number to contact you on?"
+)
 CALLBACK_ASK_OTHER = "What number would you like our IT team to call instead?"
+# The same question for a patient call (caller_type PATIENT_SUPPORT).
+PATIENT_CALLBACK_ASK_OTHER = "What number would you like our support team to call instead?"
 CALLBACK_CONFIRM_NEW = "I have your callback number as {number}. Is that correct?"
 CALLBACK_REPEAT = "Sorry, I didn't catch a yes or a no."
 CALLBACK_KEEP_CURRENT = "No problem, we'll use {number}."
@@ -208,6 +245,24 @@ ESCALATION_READ_BACK = (
     "Your callback request is ticket number {ticket_number}. Someone will reach out to you shortly."
 )
 
+# The same escalation lines for a caller who has not said (or been classified as) patient or employee yet,
+# e.g. "can I talk to a person?" at the opening question. Neutral: no IT team, no ticket, no guessing who is
+# calling, and no promise that a call has been arranged -- the request and number are passed on.
+NEUTRAL_ESCALATION = (
+    "Of course. I'll pass your request to our team with your number, {phone}, so they can call you back. "
+    "One moment while I log that."
+)
+NEUTRAL_ESCALATION_PHONE_ASK = "Of course. What's the best number for our team to reach you on?"
+NEUTRAL_ESCALATION_NO_NUMBER = "Of course. I'll pass your request to our team."
+NEUTRAL_ESCALATION_MISUNDERSTOOD = (
+    "I'm sorry, I'm having trouble understanding, and I don't want to keep you. "
+    "I'll pass your request to our team with your number, {phone}, so they can call you back."
+)
+NEUTRAL_ESCALATION_NO_CALLBACK_NUMBER = (
+    "I'm sorry, I'm having trouble understanding. I'll pass your request to our team."
+)
+NEUTRAL_ESCALATION_READ_BACK = "Your request number is {ticket_number}."
+
 # Said only when nothing could be saved, so it must not promise a ticket or a callback.
 SYSTEM_ERROR = (
     "I'm sorry, I'm having a technical problem on my end and wasn't able to save your request. "
@@ -247,6 +302,21 @@ PATIENT_ESCALATION = (
 )
 PATIENT_ESCALATION_NO_NUMBER = (
     "Of course. I'll ask a member of our support team to follow up with you."
+)
+# The rest of the escalation and leaving lines for a patient call: the employee lines with "support team"
+# for "IT team" and "request" for "ticket". The read-back only gives the number: the line before it already
+# says what happens next, and with no number to call nobody can promise to reach the caller.
+PATIENT_ESCALATION_PHONE_ASK = "Of course. What's the best number for our support team to call you back on?"
+PATIENT_ESCALATION_MISUNDERSTOOD = (
+    "I'm sorry, I'm having trouble understanding, and I don't want to keep you. "
+    "I'll have someone from our support team call you back at {phone} directly."
+)
+PATIENT_ESCALATION_NO_CALLBACK_NUMBER = (
+    "I'm sorry, I'm having trouble understanding. I'll log a request for our support team to follow up."
+)
+PATIENT_ESCALATION_READ_BACK = "Your request number is {ticket_number}."
+PATIENT_LEAVING_WITH_REQUEST = (
+    "No problem. I've saved what you told me. Your request number is {ticket_number}. Take care."
 )
 
 

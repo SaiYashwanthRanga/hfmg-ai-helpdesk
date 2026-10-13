@@ -96,7 +96,9 @@ async def test_summary_is_generated_once_and_shared_by_email_and_dashboard(
     assert body == (
         '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px">'
         "Caller:<br>\nAnn<br>\n<br>\nCallback Number:<br>\n+15550001111<br>\n<br>\n"
-        f"Issue:<br>\nThe back office has no wifi.<br>\n<br>\nSummary:<br>\n{SUMMARY}</div>"
+        "Email:<br>\nNot provided<br>\n<br>\n"
+        f"Issue:<br>\nThe back office has no wifi.<br>\n<br>\nSummary:<br>\n{SUMMARY}<br>\n<br>\n"
+        f"Ticket Number:<br>\n{created['ticket_number']}</div>"
     )
     assert stored["ai_summary"] in body  # the emailed text is the stored text
     # The ticket itself keeps everything the email leaves out.
@@ -136,7 +138,9 @@ async def test_failed_summary_still_sends_issue_only_without_a_second_request(
     assert sent_emails[0]["body_html"] == (
         '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px">'
         "Caller:<br>\nAnn<br>\n<br>\nCallback Number:<br>\n+15550001111<br>\n<br>\n"
-        "Issue:<br>\nThe back office has no wifi.</div>"
+        "Email:<br>\nNot provided<br>\n<br>\n"
+        "Issue:<br>\nThe back office has no wifi.<br>\n<br>\n"
+        f"Ticket Number:<br>\n{created['ticket_number']}</div>"
     )
 
 

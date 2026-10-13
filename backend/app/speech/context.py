@@ -40,6 +40,12 @@ DOMAIN_TERMS = [
 ]
 
 _STATE_HINTS: dict[str, str] = {
+    "IDENTIFY_CALLER": "The caller says whether they are a patient or an employee, for example: I'm a patient, or I work at the clinic.",
+    "PATIENT_INTENT": (
+        "The patient says what they need: booking an appointment, rescheduling, cancelling, or checking an "
+        "existing appointment."
+    ),
+    "PATIENT_DETAILS": "The patient says which appointment, with the date and the doctor, or a preferred day and time.",
     "COLLECT_DESCRIPTION": "The caller describes a problem at a medical office -- either an IT issue or a patient service issue.",
     "CLASSIFY_CALLER_TYPE": "The caller says whether they need help with a patient service or an employee IT issue.",
     "COLLECT_DETAILS": "The caller says when the problem started and whether they can still work.",
@@ -96,6 +102,8 @@ _STATE_HINTS: dict[str, str] = {
 _STATE_GATHER_HINTS: dict[str, list[str]] = {
     "COLLECT_EMAIL": ["at hfmg dot net", "hfmg dot net", "dot net", "at", "dot", "underscore", "skip"],
     "COLLECT_PHONE": ["oh", "double"],
+    "IDENTIFY_CALLER": ["patient", "employee", "staff", "I work here", "appointment"],
+    "PATIENT_INTENT": ["appointment", "book", "reschedule", "cancel", "check", "doctor"],
     "CLASSIFY_CALLER_TYPE": ["patient", "IT", "appointment", "computer", "employee", "portal"],
     "CONFIRM_IDENTITY": ["yes", "no", "that's right", "that's not me", "extension"],
     "CONFIRM_CALLBACK_NUMBER": ["yes", "no", "that's right", "that's not right"],

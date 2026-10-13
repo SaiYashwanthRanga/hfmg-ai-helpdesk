@@ -231,9 +231,13 @@ async def start_call(
         # A retried /start (the gateway lost our first response). Never reset a
         # call that has already begun: replay the greeting if nothing else has
         # happened yet, otherwise just keep listening.
-        only_greeted = session.state == VoiceCallState.COLLECT_DESCRIPTION and len(session.turns) <= 1
+        only_greeted = (
+            session.state in (VoiceCallState.COLLECT_DESCRIPTION, VoiceCallState.IDENTIFY_CALLER)
+            and len(session.turns) <= 1
+        )
+        greeting = scripts.GREETING_IDENTIFY if session.state == VoiceCallState.IDENTIFY_CALLER else scripts.GREETING
         return TurnResponse(
-            lines=[scripts.GREETING] if only_greeted else [],
+            lines=[greeting] if only_greeted else [],
             expect_reply=True,
             stt_prompt=_stt_prompt(session, True),
         )

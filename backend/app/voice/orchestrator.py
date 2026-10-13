@@ -37,7 +37,7 @@ from app.db.models import (
 from app.schemas.ticket import TicketCreate
 from app.services import ticket_service
 from app.services.user_directory import LookupResult, UserDirectoryService
-from app.voice import departments, directory_identity, names, nlu, reply, scripts
+from app.voice import caller_routing, departments, directory_identity, names, nlu, reply, scripts
 from app.voice import facts as facts_mod
 from app.voice import priority as priority_rules
 from app.services.ticket_text import DETAILS_MARKER, INTAKE_MARKER, TRANSCRIPT_MARKER
@@ -104,22 +104,37 @@ def _is_patient_call(session: VoiceCallSession) -> bool:
     return (session.collected or {}).get("caller_type") == "PATIENT_SUPPORT"
 
 
-async def start_call(session: VoiceCallSession, *, directory_lookup: LookupResult | None = None) -> TurnOutcome:
-    """Turn 0: greet and wait for the caller to describe their problem.
+async def start_call(
+    session: VoiceCallSession,
+    *,
+    directory_lookup: LookupResult | None = None,
+    identify_caller: bool | None = None,
+) -> TurnOutcome:
+    """Turn 0: greet, and ask who is calling (or, with the step off, wait for the problem).
 
     `directory_lookup` is the result of looking the caller ID up in the employee directory
     (None when there was no usable caller ID, or no directory is wired in). It is only kept on
-    this call's session; the greeting is unchanged, and the caller is asked to confirm a
-    proposed name later, if the call turns out to be an employee IT call.
+    this call's session; the caller is asked to confirm a proposed name later, if the call turns
+    out to be an employee IT call.
+
+    `identify_caller` overrides VOICE_ASK_CALLER_TYPE for this call (the call simulator, which
+    tests the employee IT intake, passes False).
     """
     if directory_lookup is not None:
         update_collected(session, directory=directory_identity.compact_lookup(directory_lookup))
+    if settings.voice_ask_caller_type if identify_caller is None else identify_caller:
+        session.state = VoiceCallState.IDENTIFY_CALLER
+        record_turn(session, role="agent", text=scripts.GREETING_IDENTIFY)
+        return TurnOutcome(_ask(session, scripts.GREETING_IDENTIFY))
     session.state = VoiceCallState.COLLECT_DESCRIPTION
     record_turn(session, role="agent", text=scripts.GREETING)
     return TurnOutcome(_ask(session, scripts.GREETING))
 
 
 _GOODBYE_STATES = (
+    VoiceCallState.IDENTIFY_CALLER,
+    VoiceCallState.PATIENT_INTENT,
+    VoiceCallState.PATIENT_DETAILS,
     VoiceCallState.COLLECT_DESCRIPTION,
     VoiceCallState.CLASSIFY_CALLER_TYPE,
     VoiceCallState.COLLECT_DETAILS,
@@ -170,6 +185,12 @@ async def handle_turn(
             return await _next_step(db, session)
         if session.state == VoiceCallState.CONFIRM_IDENTITY:
             return await _identity_unclear(db, session)  # silence is not a yes
+        if session.state == VoiceCallState.IDENTIFY_CALLER:
+            return await _identify_unclear(db, session)  # silence is not an answer, and is not a failure
+        if session.state == VoiceCallState.PATIENT_INTENT:
+            return await _handle_patient_intent(db, session, "")
+        if session.state == VoiceCallState.PATIENT_DETAILS:
+            return await _next_step(db, session)  # the question is optional: move on
         if session.state in (VoiceCallState.COLLECT_DETAILS, VoiceCallState.CONFIRM_NAME):
             # Optional information / confirmation: silence moves the call on
             # rather than counting as a misunderstanding.
@@ -184,7 +205,14 @@ async def handle_turn(
     if session.state in _GOODBYE_STATES and nlu.is_goodbye(utterance):
         return await _caller_leaving(db, session)
 
+    corrected = await _maybe_switch_caller_type(db, session, utterance)
+    if corrected is not None:
+        return corrected
+
     handlers = {
+        VoiceCallState.IDENTIFY_CALLER: _handle_identify_caller,
+        VoiceCallState.PATIENT_INTENT: _handle_patient_intent,
+        VoiceCallState.PATIENT_DETAILS: _handle_patient_details,
         VoiceCallState.COLLECT_DESCRIPTION: _handle_description,
         VoiceCallState.CLASSIFY_CALLER_TYPE: _handle_caller_type_clarification,
         VoiceCallState.COLLECT_DETAILS: _handle_details,
@@ -258,6 +286,154 @@ def _set_department(session: VoiceCallSession, raw: str | None) -> None:
 
 
 # --- state handlers -------------------------------------------------------
+
+
+# --- who is calling, and the patient request flow -----------------------------------------------------------
+#
+# The call opens with "are you a patient or an employee?". A patient is taken through a short request
+# flow (what they need, one optional question, name, callback number) and the request is filed as a
+# patient support request for the team to call back about. There is no appointment system behind this
+# line, so nothing is ever booked, changed, cancelled or looked up, and the agent says so. An employee
+# goes straight into the existing IT flow, unchanged. Caller type is kept per call, in `collected`, and
+# only the states of its own flow can be reached: patient states never run the IT language model or
+# create an IT ticket, and the IT states never run patient handling.
+
+_PATIENT_STATES = (VoiceCallState.PATIENT_INTENT, VoiceCallState.PATIENT_DETAILS)
+_NO_DETAILS = {"no", "nope", "none", "nothing", "skip", "i don't know", "i dont know", "not sure", "no idea", "don't know"}
+
+
+def _with(acknowledgement: str | None, prompt: str) -> str:
+    return f"{acknowledgement} {prompt}" if acknowledgement else prompt
+
+
+async def _route_caller(
+    db: AsyncSession, session: VoiceCallSession, utterance: str, caller_type: str, *, acknowledgement: str | None = None
+) -> TurnOutcome:
+    """The caller type is known: store it and start that flow. If the same sentence already carries the
+    request ("I'm an employee, my printer is jammed", "I need to cancel my appointment") it is used,
+    so the caller is never asked for it twice."""
+    update_collected(session, identified_by_routing=True, identify_attempts=0)
+    _apply_classification(session, nlu.CallerClassification(caller_type, 1.0))
+    if caller_type == caller_routing.PATIENT:
+        intent = caller_routing.patient_intent(utterance)
+        if intent:
+            return await _set_patient_intent(db, session, intent, utterance, acknowledgement=acknowledgement)
+        session.state = VoiceCallState.PATIENT_INTENT
+        return TurnOutcome(_speak(session, _ask(session, _with(acknowledgement, scripts.PATIENT_INTENT_ASK))))
+    session.state = VoiceCallState.COLLECT_DESCRIPTION
+    if caller_routing.states_it_problem(utterance):
+        return await _handle_description(db, session, utterance)
+    return TurnOutcome(_speak(session, _ask(session, _with(acknowledgement, scripts.EMPLOYEE_ASK))))
+
+
+async def _handle_identify_caller(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
+    if nlu.mentions_escalation(utterance):
+        return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
+    caller_type = caller_routing.identify_caller(utterance)
+    if caller_type:
+        return await _route_caller(db, session, utterance, caller_type)
+    if nlu.is_greeting(utterance):  # "Hello?": ask again, without counting it as an unclear answer
+        return TurnOutcome(_speak(session, _ask(session, scripts.IDENTIFY_AFTER_HELLO)))
+    if not caller_routing.has_any_cue(utterance) and len(utterance.split()) >= 2:
+        # Nothing the rules can read ("I'm Dr. Patel's nurse"): the language model may know. Cues for both
+        # sides are never sent here: that is a question for the caller, not a guess.
+        classification = await nlu.classify_caller_type(utterance)
+        if classification.confidence >= CLASSIFICATION_CONFIDENCE_THRESHOLD:
+            return await _route_caller(db, session, utterance, classification.caller_type)
+    return await _identify_unclear(db, session)
+
+
+async def _identify_unclear(db: AsyncSession, session: VoiceCallSession) -> TurnOutcome:
+    """Not clear who is calling: ask once more. If it still is not, carry on as the older flow did (describe
+    the problem, and the type is worked out from that) rather than leave the caller stuck."""
+    attempts = session.collected.get("identify_attempts", 0) + 1
+    update_collected(session, identify_attempts=attempts)
+    if attempts >= 2:
+        update_collected(session, identify_attempts=0)
+        session.state = VoiceCallState.COLLECT_DESCRIPTION
+        return TurnOutcome(_speak(session, _ask(session, scripts.IDENTIFY_FALLBACK)))
+    session.state = VoiceCallState.IDENTIFY_CALLER
+    return TurnOutcome(_speak(session, _ask(session, scripts.IDENTIFY_CLARIFY)))
+
+
+async def _maybe_switch_caller_type(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome | None:
+    """A caller who says "actually, I'm a patient" (or an employee) at the start of the other flow is
+    moved to the right one. Only an explicit "I'm a ..." counts, only before anything was filed, and
+    only while the other flow is still at its first question: a sentence that merely mentions a patient
+    or an appointment never changes who is calling."""
+    c = session.collected
+    if not c.get("identified_by_routing") or c.get("ticket_ids"):
+        return None
+    first_question = session.state in _PATIENT_STATES or (
+        session.state == VoiceCallState.COLLECT_DESCRIPTION and not c.get("description")
+    )
+    said = caller_routing.identity_statement(utterance) if first_question else None
+    if said is None or said == c.get("caller_type"):
+        return None
+    update_collected(session, **{key: None for key in (
+        "patient_intent", "patient_details", "patient_category", "patient_intent_tries", "patient_limitation_told",
+        "description", "short_issue", "category", "category_confidence", "started", "work_blocked",
+        "affected_scope", "patient_care_affected", "model_priority", "pending_question",
+    )})
+    return await _route_caller(db, session, utterance, said, acknowledgement=scripts.TYPE_CORRECTED)
+
+
+def _limitation(session: VoiceCallSession, acknowledgement: str | None) -> str | None:
+    """Say once, before asking more of a patient, what this line cannot do."""
+    if session.collected.get("patient_limitation_told"):
+        return acknowledgement
+    update_collected(session, patient_limitation_told=True)
+    return _with(acknowledgement, scripts.PATIENT_LIMITATION)
+
+
+async def _set_patient_intent(
+    db: AsyncSession, session: VoiceCallSession, intent: str, utterance: str, *, acknowledgement: str | None = None
+) -> TurnOutcome:
+    words = " ".join((utterance or "").split())[:300]
+    description = f"Patient request: {caller_routing.INTENT_LABELS[intent]}."
+    if words:
+        description = f'{description} Caller said: "{words}"'
+    update_collected(
+        session,
+        patient_intent=intent,
+        patient_category=caller_routing.patient_category(intent, utterance),
+        description=description,
+        patient_details=None,
+    )
+    question = scripts.PATIENT_DETAILS_ASK.get(intent)
+    if question:
+        session.state = VoiceCallState.PATIENT_DETAILS
+        return TurnOutcome(_speak(session, _ask(session, _with(_limitation(session, acknowledgement), question))))
+    return await _next_step(db, session, acknowledgement=_limitation(session, acknowledgement))
+
+
+async def _handle_patient_intent(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
+    if nlu.mentions_escalation(utterance):
+        return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
+    intent = caller_routing.patient_intent(utterance)
+    if intent:
+        return await _set_patient_intent(db, session, intent, utterance)
+    tries = session.collected.get("patient_intent_tries", 0) + 1
+    update_collected(session, patient_intent_tries=tries)
+    if tries <= 1:
+        session.state = VoiceCallState.PATIENT_INTENT
+        return TurnOutcome(_speak(session, _ask(session, scripts.PATIENT_INTENT_CLARIFY)))
+    # Still not clear: keep the request in the caller's own words for the team. Nothing is guessed.
+    return await _set_patient_intent(db, session, caller_routing.OTHER, utterance)
+
+
+async def _handle_patient_details(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
+    """One optional question about the request (which appointment, a preferred time). Whatever the caller
+    says is kept as they said it; "no" or "I don't know" simply moves on."""
+    if nlu.mentions_escalation(utterance):
+        return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
+    text = " ".join((utterance or "").split())
+    if text and text.lower().strip(" .!,") not in _NO_DETAILS:
+        details = text[:300]
+        update_collected(
+            session, patient_details=details, description=f"{session.collected.get('description') or ''} Details: {details}".strip()
+        )
+    return await _next_step(db, session)
 
 
 async def _handle_description(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
@@ -778,14 +954,19 @@ def _ask_callback_confirmation(session: VoiceCallSession, *, preamble: str | Non
             number=scripts.spoken_phone_number(collected["callback_candidate"])
         )
     else:
-        prompt = scripts.CALLBACK_CONFIRM.format(number=scripts.spoken_phone_number(collected["phone_number"]))
+        # The caller type was settled earlier and is only read here. Anything but a confirmed patient
+        # (including a call with no type) gets the employee wording, as every other step does.
+        template = scripts.PATIENT_CALLBACK_CONFIRM if _is_patient_call(session) else scripts.CALLBACK_CONFIRM
+        prompt = template.format(number=scripts.spoken_phone_number(collected["phone_number"]))
     body = _say_then_ask(session, preamble, prompt) if preamble else _ask(session, prompt)
     return TurnOutcome(_speak(session, body))
 
 
 def _ask_alternate_callback(session: VoiceCallSession) -> TurnOutcome:
     session.state = VoiceCallState.COLLECT_ALTERNATE_CALLBACK_NUMBER
-    return TurnOutcome(_speak(session, _ask(session, scripts.CALLBACK_ASK_OTHER)))
+    # Worded like the confirmation that led here: the caller type is only read, never set.
+    prompt = scripts.PATIENT_CALLBACK_ASK_OTHER if _is_patient_call(session) else scripts.CALLBACK_ASK_OTHER
+    return TurnOutcome(_speak(session, _ask(session, prompt)))
 
 
 async def _callback_settled(
@@ -1190,7 +1371,7 @@ async def _handle_email(db: AsyncSession, session: VoiceCallSession, utterance: 
             return await _finish_collection(db, session, preamble=scripts.EMAIL_GIVE_UP)
         return TurnOutcome(_speak(session, _ask(session, scripts.EMAIL_RETRY)))
 
-    update_collected(session, email=result.value)
+    update_collected(session, email=result.value, email_confirmed=False)  # read back first: not the caller's yet
     session.state = VoiceCallState.CONFIRM_EMAIL
     prompt = scripts.EMAIL_CONFIRM.format(email=scripts.spoken_email(result.value))
     return TurnOutcome(_speak(session, _ask(session, prompt)))
@@ -1212,6 +1393,7 @@ async def _handle_email_confirmation(
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
 
     if result.yes_no is True:
+        update_collected(session, email_confirmed=True)  # only now may the address reach a ticket
         return await _finish_collection(db, session)
 
     # Wrong or unclear: find out which part, and ask for that part alone.
@@ -1321,7 +1503,7 @@ async def _apply_email_section(db: AsyncSession, session: VoiceCallSession, part
     update_collected(session, email_fix=None, email_fixes=session.collected.get("email_fixes", 0) + 1)
     if email is None or not _ticket_accepts_email(email):  # the parts do not make an address: ask again
         return await _retry_email_from_scratch(db, session)
-    update_collected(session, email=email)
+    update_collected(session, email=email, email_confirmed=False)  # the whole address is read back again
     session.state = VoiceCallState.CONFIRM_EMAIL
     prompt = scripts.EMAIL_CONFIRM.format(email=scripts.spoken_email(email))
     return TurnOutcome(_speak(session, _ask(session, prompt)))
@@ -1341,7 +1523,9 @@ async def _handle_directory_email_answer(db: AsyncSession, session: VoiceCallSes
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
     candidate = collected.get("email_candidate")
     if result.yes_no is True and candidate:
-        update_collected(session, email=candidate, email_candidate=None, email_source="directory_confirmed")
+        update_collected(
+            session, email=candidate, email_confirmed=True, email_candidate=None, email_source="directory_confirmed"
+        )
         return await _finish_collection(db, session)
     update_collected(session, email_candidate=None, email_source=None)
     return _ask_for_email(session, acknowledgement="Okay.", offer=False)
@@ -1563,15 +1747,20 @@ async def _handle_anything_else(
         # the caller is, and don't ask for department or email again.
         keep = (
             "caller_name", "name_confidence", "name_confirmed_as", "name_unverified", "department",
-            "department_verified", "phone_number", "phone_spoken", "phone_skipped", "email",
+            "department_verified", "phone_number", "phone_spoken", "phone_skipped", "email", "email_confirmed",
             "callback_confirmed", "callback_number", "callback_fallback",
             "ticket_ids", "caller_type", "patient_category",
             "directory", "identity_confirmed", "identity_assurance", "directory_identity", "identity_rounds",
+            "identified_by_routing", "patient_limitation_told",
         )
         session.collected = {k: session.collected.get(k) for k in keep if session.collected.get(k) is not None}
         session.collected["asked"] = ["department", "email"]
         session.collected["ticket_filed"] = False  # the next issue gets its own ticket
         session.email_attempt_count = 0
+        if session.collected.get("identified_by_routing") and _is_patient_call(session):
+            # A second request from a patient starts at "what do you need?", not at the IT question.
+            session.state = VoiceCallState.PATIENT_INTENT
+            return TurnOutcome(_speak(session, _ask(session, scripts.PATIENT_INTENT_ASK_AGAIN)))
         session.state = VoiceCallState.COLLECT_DESCRIPTION
         return TurnOutcome(_speak(session, _ask(session, scripts.DESCRIPTION_ASK)))
 
@@ -1610,7 +1799,8 @@ async def _caller_leaving(db: AsyncSession, session: VoiceCallSession) -> TurnOu
             )
         _record_ticket(session, ticket)
         session.state = VoiceCallState.COMPLETED
-        line = scripts.LEAVING_WITH_TICKET.format(ticket_number=scripts.spoken_ticket_number(ticket.ticket_number))
+        leaving = scripts.PATIENT_LEAVING_WITH_REQUEST if _is_patient_call(session) else scripts.LEAVING_WITH_TICKET
+        line = leaving.format(ticket_number=scripts.spoken_ticket_number(ticket.ticket_number))
         return TurnOutcome(_speak(session, reply.say_and_hangup(line)), ticket.id)
 
     session.state = VoiceCallState.ABANDONED
@@ -1714,12 +1904,20 @@ async def _create_ticket(
         collected.get("patient_category") or "Other Patient Support"
     ) if patient else collected.get("category")
 
-    caller_type_value = CallerType(collected["caller_type"]) if collected.get("caller_type") else None
+    # Stored as given only when it is a real CallerType. Anything else (a value written by older code, or a
+    # corrupted session) is saved as unknown (NULL) rather than crashing the call before its ticket exists;
+    # the call's own `collected` is left exactly as it was.
+    caller_type_value = _known_caller_type(collected.get("caller_type"))
+    if caller_type_value is None and collected.get("caller_type"):
+        logger.warning("Unrecognised caller type on call %s; ticket saved without one", getattr(session, "call_id", "?"))
 
     payload = TicketCreate(
         caller_name=collected.get("caller_name") or "Unknown caller (voice)",
         phone_number=phone,
-        email=collected.get("email"),
+        # An address the caller has not said yes to (a ticket made while it is still being read back,
+        # because they hung up or asked for a person) is not an address we have: the notification
+        # then says "Not provided".
+        email=collected.get("email") if collected.get("email_confirmed") else None,
         category_id=await _category_id(db, category_name),
         priority=priority,
         description=description[:10_000],
@@ -1834,7 +2032,7 @@ async def escalate(
     ):
         update_collected(session, callback_number_asked=True, escalation_pending=True)
         session.state = VoiceCallState.COLLECT_PHONE
-        return TurnOutcome(_speak(session, _ask(session, scripts.ESCALATION_PHONE_ASK)))
+        return TurnOutcome(_speak(session, _ask(session, _escalation_lines(session)["phone_ask"])))
 
     session.escalated = True
     session.escalation_reason = reason
@@ -1859,24 +2057,65 @@ async def escalate(
 
     phone = session.collected.get("callback_number") or session.collected.get("phone_number") or phone
 
+    lines = _escalation_lines(session)
     if phone:
-        opener = (
-            scripts.ESCALATION_CALLER_REQUESTED
-            if reason == EscalationReason.CALLER_REQUESTED
-            else scripts.ESCALATION_MISUNDERSTOOD
-        ).format(phone=scripts.spoken_phone_number(phone))
+        template = lines["requested"] if reason == EscalationReason.CALLER_REQUESTED else lines["misunderstood"]
+        opener = template.format(phone=scripts.spoken_phone_number(phone))
     elif reason == EscalationReason.CALLER_REQUESTED:
         # The caller was perfectly clear; never tell them we didn't understand.
-        opener = scripts.ESCALATION_CALLER_REQUESTED_NO_NUMBER
+        opener = lines["no_number"]
     else:
-        opener = scripts.ESCALATION_NO_CALLBACK_NUMBER
+        opener = lines["misunderstood_no_number"]
 
-    read_back = scripts.ESCALATION_READ_BACK.format(
-        ticket_number=scripts.spoken_ticket_number(ticket.ticket_number)
-    )
+    read_back = lines["read_back"].format(ticket_number=scripts.spoken_ticket_number(ticket.ticket_number))
     return TurnOutcome(
-        _speak(session, reply.say_and_hangup(opener, read_back, scripts.GOODBYE)), ticket.id
+        _speak(session, reply.say_and_hangup(opener, read_back, lines["goodbye"])), ticket.id
     )
+
+
+# Who the escalation lines speak to. A patient hears about the support team and a request, an employee about
+# the IT team and a ticket. A caller whose type is not known -- not asked yet, not classified yet, or a stored
+# value that is not a CallerType -- hears neutral lines: the type is never guessed here, only read.
+_ESCALATION_LINES = {
+    CallerType.PATIENT_SUPPORT.value: {
+        "requested": scripts.PATIENT_ESCALATION,
+        "phone_ask": scripts.PATIENT_ESCALATION_PHONE_ASK,
+        "no_number": scripts.PATIENT_ESCALATION_NO_NUMBER,
+        "misunderstood": scripts.PATIENT_ESCALATION_MISUNDERSTOOD,
+        "misunderstood_no_number": scripts.PATIENT_ESCALATION_NO_CALLBACK_NUMBER,
+        "read_back": scripts.PATIENT_ESCALATION_READ_BACK,
+        "goodbye": scripts.PATIENT_GOODBYE,
+    },
+    CallerType.INTERNAL_IT.value: {
+        "requested": scripts.ESCALATION_CALLER_REQUESTED,
+        "phone_ask": scripts.ESCALATION_PHONE_ASK,
+        "no_number": scripts.ESCALATION_CALLER_REQUESTED_NO_NUMBER,
+        "misunderstood": scripts.ESCALATION_MISUNDERSTOOD,
+        "misunderstood_no_number": scripts.ESCALATION_NO_CALLBACK_NUMBER,
+        "read_back": scripts.ESCALATION_READ_BACK,
+        "goodbye": scripts.GOODBYE,
+    },
+    None: {
+        "requested": scripts.NEUTRAL_ESCALATION,
+        "phone_ask": scripts.NEUTRAL_ESCALATION_PHONE_ASK,
+        "no_number": scripts.NEUTRAL_ESCALATION_NO_NUMBER,
+        "misunderstood": scripts.NEUTRAL_ESCALATION_MISUNDERSTOOD,
+        "misunderstood_no_number": scripts.NEUTRAL_ESCALATION_NO_CALLBACK_NUMBER,
+        "read_back": scripts.NEUTRAL_ESCALATION_READ_BACK,
+        "goodbye": scripts.GOODBYE,
+    },
+}
+
+
+def _known_caller_type(value) -> CallerType | None:
+    """The stored caller type if it is exactly one of ours, else None. Never guesses: "PATIENT",
+    "patient_support" or anything else unrecognised is unknown, not a patient."""
+    return next((member for member in CallerType if isinstance(value, str) and value == member.value), None)
+
+
+def _escalation_lines(session: VoiceCallSession) -> dict[str, str]:
+    known = _known_caller_type((session.collected or {}).get("caller_type"))
+    return _ESCALATION_LINES[known.value if known else None]
 
 
 def _wants_human(utterance: str, result: nlu.TurnResult) -> bool:

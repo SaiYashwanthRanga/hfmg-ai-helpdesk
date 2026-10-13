@@ -587,9 +587,11 @@ async def test_ticket_email_has_caller_callback_issue_and_summary_only(db_sessio
     assert body == (
         '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px">'
         "Caller:<br>\nAnn<br>\n<br>\nCallback Number:<br>\n+15550001111<br>\n<br>\n"
-        "Issue:<br>\nBack office has no wifi.<br>\n<br>\nSummary:<br>\nBack office lost wifi.</div>"
+        "Email:<br>\nNot provided<br>\n<br>\n"
+        "Issue:<br>\nBack office has no wifi.<br>\n<br>\nSummary:<br>\nBack office lost wifi.<br>\n<br>\n"
+        f"Ticket Number:<br>\n{ticket.ticket_number}</div>"
     )
-    for leaked in ("transcript", "Intake", "Department", "Priority", "TRIAGE", ticket.ticket_number):
+    for leaked in ("transcript", "Intake", "Department", "Priority", "TRIAGE"):
         assert leaked.lower() not in body.lower()
     # Everything stays on the ticket itself.
     assert "--- Call transcript ---" in ticket.description and "Department: Billing" in ticket.description
@@ -609,12 +611,17 @@ async def test_unavailable_caller_and_phone_are_left_out_not_blank():
     caller = _known("Unknown caller (voice)", _NO_NAME)
     phone = _known("unknown", _NO_PHONE)
     assert caller is None and phone is None
+    # The email line is the one field that is never left out: it says "Not provided".
     assert _build_body(caller, phone, "Printer jammed.", "Printer is jammed.") == (
-        "Issue:\nPrinter jammed.\n\nSummary:\nPrinter is jammed."
+        "Email:\nNot provided\n\nIssue:\nPrinter jammed.\n\nSummary:\nPrinter is jammed."
     )
     # Each field is independent, and padding is not mistaken for content.
-    assert _build_body("Maria Lopez", None, "Printer jammed.", None) == "Caller:\nMaria Lopez\n\nIssue:\nPrinter jammed."
-    assert _build_body(None, "+18455550142", "Printer jammed.", None) == "Callback Number:\n+18455550142\n\nIssue:\nPrinter jammed."
+    assert _build_body("Maria Lopez", None, "Printer jammed.", None) == (
+        "Caller:\nMaria Lopez\n\nEmail:\nNot provided\n\nIssue:\nPrinter jammed."
+    )
+    assert _build_body(None, "+18455550142", "Printer jammed.", None) == (
+        "Callback Number:\n+18455550142\n\nEmail:\nNot provided\n\nIssue:\nPrinter jammed."
+    )
     assert _known("  ", _NO_PHONE) is None and _known(" +1555 ", _NO_PHONE) == "+1555"
 
 
@@ -643,4 +650,8 @@ async def test_voice_ticket_without_name_or_number_emails_issue_only(db_session,
     await email_module.send_ticket_notification(await ticket_service.get_ticket(db_session, created.id), "created")
 
     body = values(parse_parts(recorder.requests[0]), "BodyHtml")[0]
-    assert body == '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px">Issue:<br>\nThe printer is jammed.</div>'
+    assert body == (
+        '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px">'
+        "Email:<br>\nNot provided<br>\n<br>\nIssue:<br>\nThe printer is jammed.<br>\n<br>\n"
+        f"Ticket Number:<br>\n{created.ticket_number}</div>"
+    )

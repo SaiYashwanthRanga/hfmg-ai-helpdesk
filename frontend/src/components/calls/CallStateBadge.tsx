@@ -6,6 +6,9 @@ import type { VoiceCallState } from "../../types/voiceCall";
 // CREATING_TICKET/READ_BACK — see types/voiceCall.ts).
 const STATE_COLOR: Record<VoiceCallState, SemanticColor> = {
   GREETING: "info",
+  IDENTIFY_CALLER: "info",
+  PATIENT_INTENT: "info",
+  PATIENT_DETAILS: "info",
   COLLECT_DESCRIPTION: "info",
   CLASSIFY_CALLER_TYPE: "info",
   COLLECT_DETAILS: "info",
@@ -27,6 +30,9 @@ const STATE_COLOR: Record<VoiceCallState, SemanticColor> = {
 
 const STATE_LABEL: Record<VoiceCallState, string> = {
   GREETING: "Greeting",
+  IDENTIFY_CALLER: "Asking who is calling",
+  PATIENT_INTENT: "Patient: what they need",
+  PATIENT_DETAILS: "Patient: request details",
   COLLECT_DESCRIPTION: "Collecting description",
   CLASSIFY_CALLER_TYPE: "Classifying caller",
   COLLECT_DETAILS: "Collecting details",

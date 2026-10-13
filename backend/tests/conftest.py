@@ -101,7 +101,11 @@ def _voice_flow_defaults(monkeypatch):
     """Scripted conversation tests predate the name, summary and callback-number
     read-backs; they test other behaviour and keep their original question order.
     The read-backs have their own tests (test_voice_conversation.py,
-    test_voice_spelling.py, test_callback_confirmation.py), which switch them back on."""
+    test_voice_spelling.py, test_callback_confirmation.py), which switch them back on.
+
+    Likewise the opening "are you a patient or an employee?" question: these tests start at the
+    problem description. It has its own tests (test_caller_routing.py), which switch it on."""
+    monkeypatch.setattr(settings, "voice_ask_caller_type", False)
     monkeypatch.setattr(settings, "voice_confirm_name", False)
     monkeypatch.setattr(settings, "voice_confirm_summary", False)
     monkeypatch.setattr(settings, "voice_confirm_callback", False)

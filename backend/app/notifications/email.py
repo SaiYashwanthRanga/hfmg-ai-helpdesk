@@ -26,18 +26,37 @@ def _known(value: str | None, placeholders: set[str]) -> str | None:
     return None if text.lower() in placeholders else text
 
 
-def _build_body(
-    caller: str | None, callback: str | None, issue: str, summary: str | None
-) -> str:
-    """Who to call back and on what number, the issue, and its summary. The details,
-    transcript, intake details, department, priority and other ticket fields stay on
-    the ticket (dashboard / Freshworks); the subject names the ticket. The summary is
-    written from the details, so repeating them here would only duplicate it.
+NOT_PROVIDED = "Not provided"
 
-    The summary is the one already saved on the ticket; this module never calls
-    the LLM. A caller, number or summary that is not available is left out, not blank."""
+
+def _build_body(
+    caller: str | None,
+    callback: str | None,
+    issue: str,
+    summary: str | None,
+    *,
+    email: str | None = None,
+    ticket_number: str | None = None,
+) -> str:
+    """Who to call back, the number and email to reach them on, the issue, its summary and the
+    ticket number. The details, transcript, intake details, department, priority and other ticket
+    fields stay on the ticket (dashboard); the subject names the ticket. The summary is written
+    from the details, so repeating them here would only duplicate it.
+
+    The summary is the one already saved on the ticket; this module never calls the LLM. A
+    caller, number, summary or ticket number that is not available is left out, not blank. The
+    email address is always shown, so the helpdesk can see at a glance whether it has one to fall
+    back on: "Not provided" when there is none (never a guess, and never an address that was not
+    confirmed: see `ticket.email`)."""
     lines: list[str] = []
-    for label, value in (("Caller", caller), ("Callback Number", callback), ("Issue", issue), ("Summary", summary)):
+    for label, value in (
+        ("Caller", caller),
+        ("Callback Number", callback),
+        ("Email", (email or "").strip() or NOT_PROVIDED),
+        ("Issue", issue),
+        ("Summary", summary),
+        ("Ticket Number", ticket_number),
+    ):
         if value:
             lines += [f"{label}:", value, ""]
     return "\n".join(lines).rstrip()
@@ -82,6 +101,8 @@ async def send_ticket_notification(ticket: Ticket, event: str) -> None:
             _known(ticket.callback_number or ticket.phone_number, _NO_PHONE),
             extract_issue(ticket.description),
             ticket.ai_summary,
+            email=ticket.email,
+            ticket_number=ticket.ticket_number,
         )
 
         sent = await provider.send(
