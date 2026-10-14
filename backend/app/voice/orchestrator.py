@@ -350,6 +350,26 @@ _OWN_DEPARTMENT = re.compile(
 )
 
 
+#: Words with which a caller says others are affected, or that it is only them. "Several people" or "the whole
+#: site" is recorded only when the caller's own words say so -- never from how the model read the problem.
+_SCOPE_MANY = ("everyone", "everybody", "whole team", "the team", "our team", "my team", "all of us", "others",
+               "other people", "colleagues", "coworkers", "co-workers", "several", "a few of us", "whole office",
+               "whole clinic", "whole site", "entire", "nobody can", "no one can", "we all", "all of our", "all our",
+               "rest of", "the office", "people here")
+_SCOPE_ONE = ("just me", "only me", "only mine", "just mine", "nobody else", "no one else", "only my", "just my",
+              "only one")
+
+
+def _scope_stated(utterance: str, scope: str | None) -> str | None:
+    """The model's reading of who is affected, kept only when the caller's words support it."""
+    text = (utterance or "").lower()
+    if scope in ("several_people", "whole_site") and any(w in text for w in _SCOPE_MANY):
+        return scope
+    if scope == "one_person" and any(w in text for w in _SCOPE_ONE):
+        return scope
+    return None
+
+
 def _last_caller_words(session: VoiceCallSession) -> str:
     return next((t.get("text") or "" for t in reversed(session.turns or []) if t.get("role") == "caller"), "")
 
@@ -610,7 +630,7 @@ def _record_description(session: VoiceCallSession, result: nlu.TurnResult) -> No
     # (with evidence and source); the original path writes the plain values.
     impact = {} if strict_facts else dict(
         work_blocked=extras.get("work_blocked"),
-        affected_scope=extras.get("affected_scope"),
+        affected_scope=_scope_stated(_last_caller_words(session), extras.get("affected_scope")),
         patient_care_affected=extras.get("patient_care_affected"),
     )
     update_collected(
@@ -687,7 +707,7 @@ async def _handle_details(db: AsyncSession, session: VoiceCallSession, utterance
         values = {
             "started": result.extras.get("started"),
             "work_blocked": result.extras.get("work_blocked"),
-            "affected_scope": result.extras.get("affected_scope"),
+            "affected_scope": _scope_stated(utterance, result.extras.get("affected_scope")),
         }
         update_collected(session, **{k: v for k, v in values.items() if v is not None})
         _apply_priority_rules(session)
@@ -898,10 +918,10 @@ async def _handle_name_confirmation(db: AsyncSession, session: VoiceCallSession,
         return await _handle_name_reconfirmation(db, session, utterance)
 
     if nlu.looks_spelled(utterance):
-        # "No, it's Y A S H W A N T H" -- corrected in the same breath.
+        # "No, it's Y A S H W A N T H" -- corrected in the same breath, letter by letter: taken as spelled.
         spelled = nlu.decode_spelled(utterance)
         if spelled:
-            return _reconfirm_name(session, _replace_closest_part(collected["caller_name"], spelled))
+            return await _accept_spelled_name(db, session, _replace_closest_part(collected["caller_name"], spelled))
 
     verdict = nlu.quick_yes_no(utterance, strict=True)
     if verdict is True:
@@ -927,7 +947,7 @@ async def _handle_name_reconfirmation(db: AsyncSession, session: VoiceCallSessio
     if nlu.looks_spelled(utterance):
         spelled = nlu.decode_spelled(utterance)
         if spelled:
-            return _reconfirm_name(session, _replace_closest_part(session.collected["caller_name"], spelled))
+            return await _accept_spelled_name(db, session, _replace_closest_part(session.collected["caller_name"], spelled))
     verdict = nlu.quick_yes_no(utterance, strict=True)
     if verdict is None:
         verdict = (await nlu.interpret_yes_no("Is that name right?", utterance)).yes_no
@@ -944,6 +964,23 @@ def _ask_to_spell(session: VoiceCallSession) -> TurnOutcome:
     update_collected(session, name_spell_step="first", name_reconfirm=False)
     session.state = VoiceCallState.CONFIRM_NAME
     return TurnOutcome(_speak(session, _ask(session, scripts.NAME_SPELL_FIRST)))
+
+
+async def _accept_spelled_name(db: AsyncSession, session: VoiceCallSession, name: str) -> TurnOutcome:
+    """The caller spelled it letter by letter: that is the name. Not read back and asked about again -- a
+    spelled name is already the caller's own confirmation (and a silence after "is that right?" lost it before)."""
+    update_collected(
+        session,
+        caller_name=name,
+        name_confidence="high",
+        name_confirmed_as=name,
+        name_spelled_by_caller=True,
+        name_confirm_pending=False,
+        name_reconfirm=False,
+        name_spell_step=None,
+        name_rounds=0,
+    )
+    return await _next_step(db, session, acknowledgement=scripts.NAME_SPELLING_NOTED)
 
 
 def _reconfirm_name(session: VoiceCallSession, name: str) -> TurnOutcome:
@@ -988,7 +1025,7 @@ async def _take_spelled_name_part(
             return TurnOutcome(_speak(session, _ask(session, scripts.NAME_SPELL_LAST)))
     elif spelled:
         parts = [*parts[:1], spelled]
-    return _reconfirm_name(session, " ".join(parts))
+    return await _accept_spelled_name(db, session, " ".join(parts))
 
 
 def _single_word(utterance: str) -> str | None:
@@ -1556,7 +1593,9 @@ def _maybe_late_server(session: VoiceCallSession, utterance: str) -> TurnOutcome
     names = diagnostics.hostnames(utterance)
     host = names[0] if names else None
     existing = (state.get("values") or {}).get("server")
-    late = {"state": session.state.value, "prompt": _last_agent_line(session), "said": utterance, "host": host,
+    back_to = (scripts.SUMMARY_REST_CORRECT if session.state == VoiceCallState.CONFIRM_SUMMARY
+               else _last_agent_line(session))
+    late = {"state": session.state.value, "prompt": back_to, "said": utterance, "host": host,
             "step": "kind" if existing else "name", "kind": "additional"}
     if existing and host:
         question = f"Is {host} another server that's affected as well, or should it replace {existing}?"
@@ -2077,6 +2116,44 @@ async def _finish_collection(
     return await _create_ticket_and_read_back(db, session, preamble=preamble)
 
 
+def _summary_server_detail(session: VoiceCallSession, utterance: str) -> TurnOutcome | None:
+    """"The server name is 172.22.6.203." at the read-back: that one detail is recorded (or, if it is a new
+    address, asked about), then only "Is everything else correct?" -- not the whole summary again, and nothing
+    else is changed or restated as certain."""
+    c = session.collected
+    state = c.get("diagnostics") or {}
+    names = diagnostics.hostnames(utterance)
+    if (state.get("playbook") not in ("server_storage", "server_access") or not names
+            or not re.search(r"\b(?:server|name|address|ip|host)\b", utterance or "", re.IGNORECASE)):
+        return None
+    new = names[0]
+    values = dict(state.get("values") or {})
+    listed = lambda key: [n for n in (values.get(key) or "").split(", ") if n]  # noqa: E731
+    known = [values.get("server"), values.get("server_name"), *listed("server_aliases"), *listed("additional_servers"),
+             *listed("server_unclarified")]
+    update_collected(session, summary_rounds=c.get("summary_rounds", 0) + 1, summary_awaiting_change=False)
+    if not any(new.lower() == str(k).lower() for k in known if k):
+        # A new address: the same question as anywhere else (another server, a correction, the same server).
+        late = {"state": VoiceCallState.CONFIRM_SUMMARY.value, "prompt": scripts.SUMMARY_REST_CORRECT,
+                "said": utterance, "host": new, "step": "kind", "kind": "additional"}
+        update_collected(session, late_server=late)
+        session.state = VoiceCallState.COLLECT_DIAGNOSTICS
+        current = values.get("server")
+        question = (f"Is {new} another server that's affected as well, or should it replace {current}?"
+                    if current else scripts.LATE_SERVER_NAME)
+        return TurnOutcome(_speak(session, _ask(session, question)))
+    if re.search(r"\bname\b", utterance or "", re.IGNORECASE) and new.lower() != str(values.get("server", "")).lower():
+        # The caller says this is the server's name: no longer an open question.
+        values["server_unclarified"] = ", ".join(n for n in listed("server_unclarified") if n.lower() != new.lower()) or None
+        values.setdefault("server_name", None)
+        if not values.get("server_name"):
+            values["server_name"], values["server_name_said"] = new, diagnostics.clean(utterance)
+        update_collected(session, diagnostics={**state, "values": values})
+    session.state = VoiceCallState.CONFIRM_SUMMARY
+    noted = scripts.SUMMARY_SERVER_NOTED.format(server=new)
+    return TurnOutcome(_speak(session, _ask(session, f"{noted} {scripts.SUMMARY_REST_CORRECT}")))
+
+
 async def _handle_summary_confirmation(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
     """Yes -> file it. A change -> apply it, repeat anything doubtful back, read
     the ticket again. Bounded: after MAX_SUMMARY_CORRECTIONS the ticket is
@@ -2091,6 +2168,10 @@ async def _handle_summary_confirmation(db: AsyncSession, session: VoiceCallSessi
     if collected.get("summary_rounds", 0) >= MAX_SUMMARY_CORRECTIONS:
         update_collected(session, summary_unresolved=True)
         return await _confirm_summary(db, session, preamble=scripts.SUMMARY_LEAVE_AS_IS)
+
+    targeted = _summary_server_detail(session, utterance)
+    if targeted is not None:
+        return targeted
 
     if verdict is False and not collected.get("summary_awaiting_change"):
         # A bare "no": ask what is wrong rather than guess.
@@ -2461,7 +2542,13 @@ async def _handle_failure(db: AsyncSession, session: VoiceCallSession) -> TurnOu
         VoiceCallState.COLLECT_NAME: scripts.NAME_RETRY,
         VoiceCallState.COLLECT_PHONE: scripts.PHONE_RETRY,
     }
-    prompt = retries.get(session.state, scripts.DESCRIPTION_RETRY)[retry_index]
+    if session.state in retries:
+        prompt = retries[session.state][retry_index]
+    else:
+        # Any other question (the email, the callback number, ...): ask *that* question again. Never the opening
+        # "what's going wrong?" -- the call has not lost track of what it asked.
+        asked = _last_agent_line(session).removeprefix(diagnostics.CLARIFY).strip()
+        prompt = f"{diagnostics.CLARIFY} {asked}" if asked else scripts.DESCRIPTION_RETRY[retry_index]
     return TurnOutcome(_speak(session, _ask(session, prompt)))
 
 

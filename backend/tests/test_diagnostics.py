@@ -215,12 +215,13 @@ async def test_an_outlook_problem_is_asked_about_and_never_troubleshot(make_call
     no_model()
 
     heard = [_text(first)]
-    for said in ("It says Microsoft Outlook has stopped working.", "Yes, email works on my phone."):
+    for said in ("It says Microsoft Outlook has stopped working.", "Yes, email works on my phone.", "No, just me."):
         heard.append(_text(await call.turn(said)))
 
     assert "error message" in heard[0].lower()  # device and symptom came from the description
     assert "send and receive email" in heard[1]
-    assert all(not SELF_HELP.search(h) for h in heard[:2])
+    assert "anyone else" in heard[2]  # who is affected is asked, never assumed from the model's reading
+    assert all(not SELF_HELP.search(h) for h in heard[:3])
     assert (await _session(db_session, "dx-outlook")).state == VoiceCallState.COLLECT_NAME  # paperwork only now
     filed = await _finish(call)
     description = (await _ticket(client, filed["ticket_id"]))["description"]

@@ -178,6 +178,9 @@ LATE_SERVER_NAME = "What's the name of the other server?"
 LATE_SERVER_CORRECT_NAME = "What's the correct server name?"
 LATE_SERVER_ADDED = "Thanks, I've added that server."
 LATE_SERVER_CORRECTED = "Thanks, I've corrected the server name."
+# After one detail is corrected at the read-back: just that is confirmed, not the whole summary again.
+SUMMARY_REST_CORRECT = "Is everything else correct?"
+SUMMARY_SERVER_NOTED = "Thanks, I have {server} for the server."
 
 # Spelled, not said: transcription garbles spoken names in addresses
 # ("saiyashwanth" -> "sichuan") but gets spelled letters right. Almost every
@@ -216,6 +219,8 @@ NAME_ACCEPT_AS_SPOKEN = "Okay, I'll note it the way you spelled it."
 NAME_SPELL_FIRST = "Sorry about that. Could you spell your first name for me, one letter at a time?"
 NAME_SPELL_LAST = "Thanks. And your last name, one letter at a time?"
 NAME_SPELL_FIRST_ASK = "Could you spell your first name for me, one letter at a time?"
+# A name the caller has just spelled letter by letter is taken as spelled: not read back and asked about again.
+NAME_SPELLING_NOTED = "Got it."
 
 # --- the read-back before a ticket is created -------------------------------------
 SUMMARY_INTRO_OPTIONS = (

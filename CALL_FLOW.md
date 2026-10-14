@@ -417,6 +417,25 @@ the old name as "Server (corrected)", and an unclear answer adds rather than ove
 questions; a replayed turn is not applied twice. After the ticket is filed, "another server" at "anything else?"
 is a new issue as before.
 
+**From a live server test call.**
+
+- **Who is affected is what the caller said.** "Several people" or "the whole site" is recorded only when the
+  caller's own words say so ("the whole team", "everyone", "others too"); "just me" likewise. The model's reading
+  alone is not enough, so a call never hears "since your team can't work" unless the caller said it. When it is
+  not known, "Is anyone else having the same problem?" is asked.
+- **A short answer with a stray word is unclear, not a choice.** "Broken office." (a misheard answer) is asked
+  about once more; a second unclear answer is recorded as `unclear (caller said: "Broken office.")`.
+- **A spelled name is taken as spelled.** After the caller spells a name letter by letter, the agent says "Got
+  it." and moves on; it is not read back and asked about again. (A model-applied edit such as "add an H at the
+  end" is still read back.)
+- **An unclear answer repeats the question that was asked** ("Sorry, I didn't catch that." and the email,
+  callback or other question again), never the opening "what's going wrong?".
+- **A server detail at the read-back changes only that detail.** "The server name is 172.22.6.203." is recorded
+  (a second address the caller was unsure about becomes the server's name), then "Thanks, I have 172.22.6.203 for
+  the server. Is everything else correct?" -- not the whole summary again. A new address is asked about first
+  (another server, or a replacement), with the same "Is everything else correct?" after. Bounded like every
+  other read-back correction. An address at the end of a sentence ("...is 172.22.6.203.") is read correctly.
+
 **A read-back nobody answers** (silence, or the call ends) is filed as it is, as before, and recorded as
 `Read-back: read to the caller, no answer: not confirmed` -- never as confirmed, and never as "the caller said
 it was not correct". An office extension the directory does not back up is kept exactly as the caller said

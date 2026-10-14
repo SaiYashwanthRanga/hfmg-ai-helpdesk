@@ -505,9 +505,9 @@ async def test_a_name_the_recognizer_was_unsure_of_is_spelled_before_it_is_trust
 
     last = await call.turn("Y A S H")
     assert scripts.NAME_SPELL_LAST in _said(last)
-    readback = await call.turn("W A N T H")
-    assert scripts.spelled_name("Yash Wanth") in _said(readback)  # "Y A S H, W A N T H": the spelling, read back
-    await call.turn("yes")
+    after = await call.turn("W A N T H")
+    # Spelled letter by letter: taken as spelled, not read back and asked about again.
+    assert _said(after).startswith(scripts.NAME_SPELLING_NOTED) and "Is that right" not in _said(after)
     assert (await _session(db_session, "acc-name-spell")).collected["caller_name"] == "Yash Wanth"
 
 

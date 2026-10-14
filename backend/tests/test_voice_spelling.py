@@ -218,8 +218,9 @@ async def test_low_recognizer_confidence_forces_a_read_back(db_session, monkeypa
     assert session.state == VoiceCallState.CONFIRM_NAME
 
 
-async def test_wrong_name_is_corrected_by_spelling_then_read_back(db_session, monkeypatch, confirm_names):
-    """The real call: 'Yashwanth' heard as 'Yashwandh' -- and the fix must be repeated back."""
+async def test_wrong_name_is_corrected_by_spelling_and_taken_as_spelled(db_session, monkeypatch, confirm_names):
+    """The real call: 'Yashwanth' heard as 'Yashwandh'. The caller spells it letter by letter: that is the name.
+    It is not read back and asked about again (a later call answered that repeat with silence)."""
     session, _ = await _at_name_confirmation(db_session, monkeypatch, name="Yashwandh Ranga")
     out = await orchestrator.handle_turn(db_session, session, utterance="No.")
     assert session.state == VoiceCallState.CONFIRM_NAME
@@ -228,23 +229,19 @@ async def test_wrong_name_is_corrected_by_spelling_then_read_back(db_session, mo
     out = await orchestrator.handle_turn(db_session, session, utterance="Y-A-S-H-W-A-N-T-H")
     assert scripts.NAME_SPELL_LAST in out.text
     out = await orchestrator.handle_turn(db_session, session, utterance="R A N G A")
-    # The corrected name is read back before it is trusted.
-    assert session.state == VoiceCallState.CONFIRM_NAME
-    assert "So that's Y A S H W A N T H, R A N G A" in out.text
-    assert session.collected["caller_name"] == "Yashwanth Ranga"
 
-    await orchestrator.handle_turn(db_session, session, utterance="Yes, that's right.")
+    assert session.collected["caller_name"] == "Yashwanth Ranga"
+    assert session.collected["name_confirmed_as"] == "Yashwanth Ranga"
+    assert out.text.startswith(scripts.NAME_SPELLING_NOTED) and "Is that right" not in out.text
     assert session.state == VoiceCallState.COLLECT_EMAIL
     assert session.misunderstanding_count == 0
 
 
-async def test_correction_spelled_in_the_same_breath_is_read_back(db_session, monkeypatch, confirm_names):
+async def test_correction_spelled_in_the_same_breath_is_taken_as_spelled(db_session, monkeypatch, confirm_names):
     session, _ = await _at_name_confirmation(db_session, monkeypatch, name="Yashwandh Ranga")
     out = await orchestrator.handle_turn(db_session, session, utterance="No, it's Y A S H W A N T H.")
     assert session.collected["caller_name"] == "Yashwanth Ranga"
-    assert session.state == VoiceCallState.CONFIRM_NAME
-    assert "So that's Y A S H W A N T H, R A N G A" in out.text
-    await orchestrator.handle_turn(db_session, session, utterance="Yes.")
+    assert out.text.startswith(scripts.NAME_SPELLING_NOTED) and "Is that right" not in out.text
     assert session.state == VoiceCallState.COLLECT_EMAIL
 
 
@@ -270,18 +267,18 @@ async def test_unclear_edit_instruction_falls_back_to_spelling(db_session, monke
     assert session.collected["caller_name"] == "Chindun Natakarani"  # nothing guessed
 
 
-async def test_second_wrong_spelling_is_accepted_and_flagged(db_session, monkeypatch, confirm_names):
-    """No loops: after two read-backs the caller's own spelling stands, marked unverified."""
+async def test_a_spelled_name_followed_by_silence_keeps_the_spelling_and_never_asks_again(db_session, monkeypatch, confirm_names):
+    """No loops: the caller spells it once, and that spelling stands -- a silence afterwards loses nothing."""
     session, _ = await _at_name_confirmation(db_session, monkeypatch, name="Yashwandh")
     await orchestrator.handle_turn(db_session, session, utterance="No.")
-    await orchestrator.handle_turn(db_session, session, utterance="Y A S H W A N T")  # round 1 read-back
-    await orchestrator.handle_turn(db_session, session, utterance="No.")
-    await orchestrator.handle_turn(db_session, session, utterance="Y A S H W A N T H")  # round 2 read-back
-    out = await orchestrator.handle_turn(db_session, session, utterance="No.")
-    assert session.collected["name_unverified"] is True
+    out = await orchestrator.handle_turn(db_session, session, utterance="Y A S H W A N T H")
+
     assert session.collected["caller_name"] == "Yashwanth"
-    assert scripts.NAME_ACCEPT_AS_SPOKEN in out.text
     assert session.state == VoiceCallState.COLLECT_EMAIL
+    assert "name" not in out.text.lower() and "Is that right" not in out.text  # the name is not asked about again
+    await orchestrator.handle_turn(db_session, session, utterance="")  # silence at the email question
+    assert session.collected["caller_name"] == "Yashwanth"
+    assert "name_unverified" not in session.collected
 
 
 async def test_silence_at_name_confirmation_moves_on(db_session, monkeypatch, confirm_names):

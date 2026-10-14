@@ -233,7 +233,8 @@ async def test_ticket_is_read_back_before_it_is_created(db_session, monkeypatch,
     ticket = await db_session.get(Ticket, session.ticket_id)
     assert ticket.priority == Priority.HIGH
     assert "Priority: High: you can't work" in ticket.description
-    assert "Impact: One person, unable to work" in ticket.description
+    # Who is affected is recorded only when the caller says it ("just me", "the whole team"): not here.
+    assert "Impact: unable to work" in ticket.description
     assert "minor" not in ticket.description.lower().split("--- call transcript")[0]
     assert scripts.SUMMARY_FILING in _heard(out)
 

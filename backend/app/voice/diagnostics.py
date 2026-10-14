@@ -316,7 +316,8 @@ _LEAD_YES = ("yes", "yeah", "yep", "yup", "correct")
 _LEAD_NO = ("no", "nope", "nah", "not really", "none")
 
 
-_IPV4 = re.compile(r"(?<![\d.])((?:\d{1,3}\.){3}\d{1,3})(?![\d.])")
+# An address may end a sentence ("...is 172.22.6.203."): only a following digit or ".digit" makes it longer.
+_IPV4 = re.compile(r"(?<![\d.])((?:\d{1,3}\.){3}\d{1,3})(?!\d)(?!\.\d)")
 
 
 def is_ip(value: str | None) -> bool:
@@ -374,8 +375,27 @@ def _leading_yes_no(text: str) -> bool | None:
     return None
 
 
+#: Words a short answer to a choice question may contain besides the choices themselves. Anything else in a
+#: short answer ("Broken office.") means the recognizer may have misheard: the answer is unclear, not a choice.
+_PLAIN_WORDS = {
+    "i", "i'm", "im", "am", "a", "an", "the", "my", "in", "at", "on", "from", "of", "with", "and", "or", "it", "it's",
+    "its", "is", "we", "we're", "our", "working", "work", "today", "now", "right", "currently", "just", "only",
+    "yes", "yeah", "yep", "no", "um", "uh", "so", "well", "actually", "okay", "ok", "both", "there", "here", "still",
+}
+
+
+def _short_answer_is_unclear(question: Question, utterance: str) -> bool:
+    words = re.findall(r"[a-z']+", (utterance or "").lower())
+    if not words or len(words) > 4:
+        return False
+    known = {w for _, keys in question.choices for key in keys for w in key.split()}
+    return any(w not in _PLAIN_WORDS and not any(k in w or w in k for k in known) for w in words)
+
+
 def _parse(question: Question, utterance: str) -> str | None:
     text = (utterance or "").lower()
+    if question.kind == "choice" and _short_answer_is_unclear(question, utterance):
+        return None
     if question.kind == "yes_no":
         answer = nlu.quick_yes_no(utterance)
         if answer is None:  # a longer answer that starts with its yes or no ("No, the old apps still work, I just...")
@@ -508,7 +528,10 @@ def record(state: dict, utterance: str) -> tuple[dict, dict, str | None]:
             state["conflict"] = {"key": question.key, "new": conflict, "said": clean(utterance)}
             old = state["values"]["server"]
             return state, updates, f"Is {conflict} another server that's affected, a correction to {old}, or another address for the same server?"
-    if question is not None and is_non_answer(utterance) and question.key not in state["retried"]:
+    unclear_choice = question is not None and question.kind == "choice" and not is_non_answer(utterance) and (
+        _parse(question, utterance) is None
+    )
+    if question is not None and (is_non_answer(utterance) or unclear_choice) and question.key not in state["retried"]:
         state["retried"].append(question.key)
         return state, updates, f"{CLARIFY} {question.prompt}"
     if question is not None:
@@ -655,6 +678,8 @@ def ticket_lines(state: dict | None) -> list[tuple[str, str]]:
             shown = f"{value} (caller: \"{said}\")"
         if question.kind == "host" and value and said and value != said and not said.startswith("("):
             shown = f"{value} (caller said: \"{said}\")"
+        if question.kind == "choice" and said and not said.startswith("("):
+            shown = f"{value} (caller said: \"{said}\")" if value else f"unclear (caller said: \"{said}\")"
         lines.append((question.label, shown or "unclear"))
         if question.key == "server" and values.get("server_corrected_from"):
             lines.append(("Server (corrected)", f"the caller corrected it from \"{values['server_corrected_from']}\""))

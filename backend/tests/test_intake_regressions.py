@@ -308,7 +308,8 @@ async def test_a_correction_at_the_final_read_back_replaces_the_name_and_keeps_t
     back = await call.turn("Replace it, FS01 was wrong.")
 
     assert "should it replace FS01" in _text(kind)
-    assert _text(back) == f"{scripts.LATE_SERVER_CORRECTED} {_text(read_back)}"  # the read-back again, not a restart
+    assert _text(back) == f"{scripts.LATE_SERVER_CORRECTED} {scripts.SUMMARY_REST_CORRECT}"  # not a restart, nor the whole read-back
+    assert read_back["lines"]
     _, values = await _details(db_session, "late-summary")
     assert values["server"] == "FS03" and "FS01" in values["server_corrected_from"]
     call._say(interpret_yes_no=nlu.TurnResult(yes_no=True, unable_to_determine=False))
