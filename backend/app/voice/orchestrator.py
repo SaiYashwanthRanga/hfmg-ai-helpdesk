@@ -36,7 +36,7 @@ from app.db.models import (
 )
 from app.schemas.ticket import TicketCreate
 from app.services import ticket_service
-from app.services.user_directory import LookupResult, UserDirectoryService
+from app.services.user_directory import LookupResult, LookupStatus, UserDirectoryService, normalize_extension
 from app.voice import caller_routing, departments, directory_identity, names, nlu, reply, scripts
 from app.voice import facts as facts_mod
 from app.voice import priority as priority_rules
@@ -144,6 +144,7 @@ _GOODBYE_STATES = (
     VoiceCallState.COLLECT_PHONE,
     VoiceCallState.CONFIRM_CALLBACK_NUMBER,
     VoiceCallState.COLLECT_ALTERNATE_CALLBACK_NUMBER,
+    VoiceCallState.COLLECT_EXTENSION,
     VoiceCallState.COLLECT_EMAIL,
     VoiceCallState.CONFIRM_EMAIL,
     VoiceCallState.CONFIRM_SUMMARY,
@@ -200,6 +201,8 @@ async def handle_turn(
             return await _next_step(db, session)
         if session.state == VoiceCallState.COLLECT_PHONE:
             return await _phone_not_understood(db, session, "")
+        if session.state == VoiceCallState.COLLECT_EXTENSION:
+            return await _handle_extension(db, session, "", directory)  # optional: never a misunderstanding
         return await _handle_failure(db, session)
 
     if session.state in _GOODBYE_STATES and nlu.is_goodbye(utterance):
@@ -222,6 +225,7 @@ async def handle_turn(
         VoiceCallState.COLLECT_PHONE: _handle_phone,
         VoiceCallState.CONFIRM_CALLBACK_NUMBER: _handle_callback_confirmation,
         VoiceCallState.COLLECT_ALTERNATE_CALLBACK_NUMBER: _handle_alternate_callback,
+        VoiceCallState.COLLECT_EXTENSION: lambda d, s, u: _handle_extension(d, s, u, directory),
         VoiceCallState.COLLECT_EMAIL: _handle_email,
         VoiceCallState.CONFIRM_EMAIL: _handle_email_confirmation,
         VoiceCallState.CONFIRM_SUMMARY: _handle_summary_confirmation,
@@ -599,6 +603,11 @@ def _keep_details(session: VoiceCallSession, result: nlu.TurnResult, utterance: 
 
 async def _handle_name(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
     name_known = bool(session.collected.get("caller_name"))
+    if name_known:
+        known = _department_only(utterance)
+        if known is not None:
+            update_collected(session, department=known.name, department_verified=True)
+            return await _next_step(db, session)
     asked = scripts.DEPARTMENT_ASK_NO_NAME if name_known else scripts.NAME_ASK
     result = await nlu.interpret_name(utterance, asked=asked)
 
@@ -1296,12 +1305,161 @@ async def _next_step(
     if not collected.get("phone_number") and not collected.get("phone_skipped"):
         return ask(VoiceCallState.COLLECT_PHONE, scripts.PHONE_ASK)
 
+    # --- office extension (IT only): reuse a verified one, else ask once ---
+    if not patient and not collected.get("extension_source"):
+        verified = _verified_extension(session)
+        if verified:
+            update_collected(session, extension=verified, extension_source="directory")
+        elif settings.voice_ask_extension and not _asked(session, "extension"):
+            _mark_asked(session, "extension")
+            return ask(VoiceCallState.COLLECT_EXTENSION, scripts.EXTENSION_ASK)
+
     # --- email (IT only) ---
     if not patient and not collected.get("email") and not _asked(session, "email"):
         _mark_asked(session, "email")
         return _ask_for_email(session, acknowledgement=acknowledgement)
 
     return await _finish_collection(db, session, preamble=acknowledgement)
+
+
+# --- office extension (employee calls) ----------------------------------------------------------
+#
+# Asked once ("Do you have an office extension number?"), and only when no verified extension is known:
+# a directory entry the caller said yes to already has one, and it is reused, never asked for or
+# overwritten. Rule-based, no model call. An extension is 2-6 digits and is never taken as (or
+# stored as) the callback number; a ten-digit answer is a phone number and is not kept as either.
+
+_EXTENSION_DECLINE = re.compile(
+    r"\b(?:no|nope|none|nah|skip|not sure|no idea|n/?a|"
+    r"(?:i\s+)?(?:don'?t|do\s+not|haven'?t|have\s+not)\s+(?:have|got|know)|no\s+extension|there\s+isn'?t)\b",
+    re.IGNORECASE,
+)
+
+
+def _extension_digits(utterance: str) -> str:
+    """The extension the caller said, as digits. Numerals win when the transcript has any ("2001");
+    otherwise digit words ("two zero zero one", "double one"). The longest run is taken, so the
+    "one" in "I have one" or an opening "oh," never becomes part of the number."""
+    text = utterance or ""
+    numeral_runs = [re.sub(r"\D", "", run) for run in re.findall(r"\d[\d\s,.-]*\d|\d", text)]
+    if numeral_runs:
+        return max(numeral_runs, key=len)
+    runs: list[str] = []
+    current: list[str] = []
+    repeat = 1
+    tokens = re.findall(r"[a-z]+", text.lower())
+    if tokens and tokens[0] in ("oh", "o"):
+        tokens = tokens[1:]  # "Oh, ..." is an interjection, not a zero
+    for token in tokens:
+        if token in ("double", "triple"):
+            repeat = 2 if token == "double" else 3
+            continue
+        digit = nlu._DIGIT_WORDS.get(token)
+        if digit is None:
+            if current:
+                runs.append("".join(current))
+            current, repeat = [], 1
+            continue
+        current.extend([digit] * repeat)
+        repeat = 1
+    if current:
+        runs.append("".join(current))
+    return max(runs, key=len) if runs else ""
+
+
+def _verified_extension(session: VoiceCallSession) -> str | None:
+    """The extension from a directory entry the caller confirmed, if it has a usable one."""
+    c = session.collected
+    if not c.get("identity_confirmed"):
+        return None
+    return normalize_extension((c.get("directory_identity") or {}).get("extension"))
+
+
+async def _handle_extension(
+    db: AsyncSession, session: VoiceCallSession, utterance: str, directory: UserDirectoryService | None
+) -> TurnOutcome:
+    if utterance and nlu.mentions_escalation(utterance):
+        return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
+    c = session.collected
+    digits = _extension_digits(utterance)
+    extension = normalize_extension(digits) if 2 <= len(digits) <= 6 else None
+    if extension:
+        return await _extension_settled(db, session, extension, "caller", directory)
+    if utterance and _EXTENSION_DECLINE.search(utterance):
+        return await _extension_settled(db, session, None, "none", directory)
+
+    def ask_again(prompt: str) -> TurnOutcome:
+        session.state = VoiceCallState.COLLECT_EXTENSION
+        return TurnOutcome(_speak(session, _ask(session, prompt)))
+
+    if len(digits) >= 7:
+        # A phone number, not an extension: kept as neither. Said once, then the call moves on.
+        if not c.get("extension_retried"):
+            update_collected(session, extension_retried=True)
+            return ask_again(scripts.EXTENSION_NOT_A_PHONE)
+        return await _extension_settled(db, session, None, "unclear", directory)
+    if utterance and nlu.quick_yes_no(utterance) is True and not c.get("extension_number_asked"):
+        update_collected(session, extension_number_asked=True)  # "yes" without the number: ask for it once
+        return ask_again(scripts.EXTENSION_WHAT)
+    if not c.get("extension_retried") and not c.get("extension_number_asked"):
+        update_collected(session, extension_retried=True)
+        return ask_again(scripts.EXTENSION_RETRY)
+    return await _extension_settled(db, session, None, "unclear", directory)
+
+
+async def _extension_settled(
+    db: AsyncSession, session: VoiceCallSession, extension: str | None, source: str,
+    directory: UserDirectoryService | None,
+) -> TurnOutcome:
+    """Record the answer and move on. A caller-given extension is checked against the directory only to
+    note how it compares for the helpdesk; it never changes who the caller is, and another employee's
+    name is never said or stored."""
+    note = None
+    if extension and directory is not None:
+        result = directory.find_by_extension(extension)
+        if result.status is LookupStatus.MATCHED and result.entry is not None:
+            listed = (directory_identity.person_name(result.entry) or "").lower()
+            same = listed and listed == (session.collected.get("caller_name") or "").strip().lower()
+            note = "matches the directory entry for this caller's name" if same else (
+                "the directory lists this extension for a different entry"
+            )
+        elif result.status is LookupStatus.AMBIGUOUS:
+            note = "the directory lists this extension for more than one entry"
+        elif result.status is LookupStatus.NOT_FOUND:
+            note = "not found in the directory"
+    update_collected(session, extension=extension, extension_source=source, extension_note=note)
+    if extension:
+        acknowledgement = scripts.EXTENSION_NOTED.format(extension=" ".join(extension))
+    else:
+        acknowledgement = scripts.EXTENSION_NONE if source == "none" else None
+    return await _next_step(db, session, acknowledgement=acknowledgement)
+
+
+def _extension_detail(collected: dict, confirmed: bool, who: dict) -> str | None:
+    """The ticket's Extension line: the confirmed directory one, else what the caller said and how it
+    compares with the directory, else whether they have none."""
+    if confirmed and who.get("extension"):
+        return who["extension"]
+    source = collected.get("extension_source")
+    if source == "caller" and collected.get("extension"):
+        note = collected.get("extension_note")
+        return f"{collected['extension']} (given by the caller{'; ' + note if note else ''})"
+    if source == "none":
+        return "none (the caller has no office extension)"
+    if source == "unclear":
+        return "not captured (the caller's answer was unclear)"
+    return None
+
+
+def _department_only(utterance: str) -> departments.DepartmentMatch | None:
+    """A short answer that is just a known department ("Billing.", "the IT department"): matched in
+    code, so the department-only question needs no model call. Anything longer or unknown is left to
+    the model, which also hears the name, corrections and requests for a person."""
+    words = re.findall(r"[a-z']+", (utterance or "").lower())
+    if not words or len(words) > 4 or nlu.mentions_escalation(utterance):
+        return None
+    match = departments.canonicalize(utterance)
+    return match if match is not None and match.verified else None
 
 
 _EMAIL_CHECK = TypeAdapter(EmailStr)
@@ -1751,6 +1909,7 @@ async def _handle_anything_else(
             "callback_confirmed", "callback_number", "callback_fallback",
             "ticket_ids", "caller_type", "patient_category",
             "directory", "identity_confirmed", "identity_assurance", "directory_identity", "identity_rounds",
+            "extension", "extension_source", "extension_note",
             "identified_by_routing", "patient_limitation_told",
         )
         session.collected = {k: session.collected.get(k) for k in keep if session.collected.get(k) is not None}
@@ -1953,7 +2112,7 @@ def _intake_details(collected: dict) -> str:
         ("Department", department),
         # The caller said yes to a directory entry. That is all it is: not authentication.
         ("Identity", "directory entry confirmed by the caller; not authenticated" if confirmed else None),
-        ("Extension", who.get("extension") if confirmed else None),
+        ("Extension", _extension_detail(collected, confirmed, who)),
         ("Location", who.get("location") if confirmed else None),
         ("Teams", ", ".join(who.get("teams") or [])[:300] if confirmed else None),
         ("Started", collected.get("started")),

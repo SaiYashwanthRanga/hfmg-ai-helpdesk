@@ -108,6 +108,7 @@ This document defines the conversation state machine: every state, every transit
 | `COLLECT_PHONE` | Callback number — **only entered when caller ID is unavailable**. A retry says what was wrong ("I only caught 5 digits"); after two tries the call carries on without a number (noted on the ticket), it never escalates over this | `COLLECT_EMAIL` |
 | `CONFIRM_CALLBACK_NUMBER` | "I have your callback number as X. If our IT team needs to reach you regarding this ticket, they will call this number. Is this the best number to contact you on?" (a patient call hears "support team" and "your request" instead, see 2.3) — entered from the end of collection, whether the number came from caller ID or was spoken. A number offered with the "no" ("No, it's 214…") is read back directly: "I have your callback number as Y. Is that correct?". Unclear twice → the number we have stands. `VOICE_CONFIRM_CALLBACK=false` skips it | `CONFIRM_SUMMARY` / `COLLECT_ALTERNATE_CALLBACK_NUMBER` |
 | `COLLECT_ALTERNATE_CALLBACK_NUMBER` | "What number would you like our IT team to call instead?" (a patient call hears "support team" instead, see 2.3) A retry says what was wrong ("I only caught 5 digits"); a refusal ("I'd rather not") or `VOICE_MAX_PHONE_ATTEMPTS` failed tries keeps the number we had, noted on the ticket | `CONFIRM_CALLBACK_NUMBER` / `CONFIRM_SUMMARY` |
+| `COLLECT_EXTENSION` | Employee calls only: "Do you have an office extension number?" Asked once, and never when a directory entry the caller confirmed already has one (that one is reused). Read in code (no model call): 2-6 digits is the extension ("Got it, extension 1 0 0 4."); "no" / "I don't have one" is accepted ("No problem."); a bare "yes" gets "What's the extension number?" once; a ten-digit answer gets one "that sounds like a phone number" and is never kept as the extension or the callback number; silence or an unclear answer is asked about once, then the call moves on. Never counts as a misunderstanding. `VOICE_ASK_EXTENSION=false` skips it | `COLLECT_EMAIL` |
 | `COLLECT_EMAIL` | The part of the HFMG email **before the @, spelled** (a full address said aloud still works); `@hfmg.net` is added. Optional | `CONFIRM_EMAIL` / `CONFIRM_CATEGORY` |
 | `CONFIRM_EMAIL` | "Did I get that right?" read-back | `CONFIRM_SUMMARY` / back to `COLLECT_EMAIL` |
 | `CONFIRM_SUMMARY` | The whole ticket read back — name, department, the problem, since when, **priority and the reason for it**, (the callback number is not repeated here once it has been confirmed in `CONFIRM_CALLBACK_NUMBER`; it is still read here when `VOICE_CONFIRM_CALLBACK=false` and the caller spoke it). "No" → "What should I change?"; "yes, but…" is a correction, not a yes. Two corrections at most, then it is filed and noted. `VOICE_CONFIRM_SUMMARY=false` skips it | `CREATING_TICKET` |
@@ -376,6 +377,24 @@ Rules that do not bend:
   intake details. The directory's email is **not** put on the ticket (many entries are placeholders or use a
   misspelled domain); the usual email question still applies. The directory itself is never modified.
 
+**Office extension (`VOICE_ASK_EXTENSION`, employee calls).** A directory entry the caller said yes to
+carries its extension, and it is reused: the caller is not asked. Otherwise, after the name and callback number,
+the agent asks once, "Do you have an office extension number?" (see `COLLECT_EXTENSION` in the states table).
+What the caller says is checked against the directory only to describe it on the ticket, never to change who
+they are, and another employee's name is never said or written:
+
+| Ticket intake line | When |
+|---|---|
+| `Extension: 3001` | from the directory entry the caller confirmed |
+| `Extension: 1004 (given by the caller; matches the directory entry for this caller's name)` | the directory has it under the name the caller gave |
+| `Extension: 4004 (given by the caller; the directory lists this extension for a different entry)` | the directory has it under another entry |
+| `Extension: 1004 (given by the caller; not found in the directory)` | not in the directory |
+| `Extension: none (the caller has no office extension)` | the caller said they have none |
+| `Extension: not captured (the caller's answer was unclear)` | no usable answer after one retry |
+
+**A one-word department** ("Billing.", "the IT department", "HR") after the identity is confirmed is matched
+against the department list in code; only an answer code cannot place goes to the language model.
+
 ### 2.1 Strict extraction: asking about impact (`VOICE_STRICT_EXTRACTION=true`)
 
 By default the agent records `work_blocked`, `patient_care_affected` and `affected_scope` from what the
@@ -487,9 +506,9 @@ is not exactly `INTERNAL_IT` or `PATIENT_SUPPORT`.
 
 | Situation | Employee (`INTERNAL_IT`) hears | Patient (`PATIENT_SUPPORT`) hears | Not known hears |
 |---|---|---|---|
-| Asked for a person, number on file | "Of course. I'll have a member of our IT team call you back at X. Let me get that request logged. One moment." | "Of course. I'll have a member of our support team call you back at X. One moment while I log that." | "Of course. I'll pass your request to our team with your number, X, so they can call you back. One moment while I log that." |
+| Asked for a person, number on file | "Of course. I'll have a member of our IT team call you back at X." | "Of course. I'll have a member of our support team call you back at X." | "Of course. I'll pass your request to our team with your number, X, so they can call you back." |
 | Asked for a person, no number yet (asked once) | "Of course. What's the best number for our IT team to call you back on?" | "Of course. What's the best number for our support team to call you back on?" | "Of course. What's the best number for our team to reach you on?" |
-| Asked for a person, still no number | "Of course. I'll ask a member of our IT team to follow up with you. Let me get that request logged. One moment." | "Of course. I'll ask a member of our support team to follow up with you." | "Of course. I'll pass your request to our team." |
+| Asked for a person, still no number | "Of course. I'll ask a member of our IT team to follow up with you." | "Of course. I'll ask a member of our support team to follow up with you." | "Of course. I'll pass your request to our team." |
 | Could not be understood, number on file | "…I'll have someone from our IT team call you back at X directly." | "…I'll have someone from our support team call you back at X directly." | "…I'll pass your request to our team with your number, X, so they can call you back." |
 | Could not be understood, no number | "…I'll log a request for our IT team to follow up." | "…I'll log a request for our support team to follow up." | "…I'll pass your request to our team." |
 | Then | "Your callback request is ticket number N. Someone will reach out to you shortly." | "Your request number is N." | "Your request number is N." |
@@ -558,7 +577,7 @@ The gateway may retry a request it considers failed, so every turn must be safe 
 
 > **Agent:** Thank you for calling Horizon Family Medical Group IT Help Desk. How can I assist you today?
 > **Caller:** Honestly, can I just talk to an actual person?
-> **Agent:** Of course. I'll have a member of our IT team call you back at 845-555-0142. Let me get that request logged — one moment.
+> **Agent:** Of course. I'll have a member of our IT team call you back at 845-555-0142.
 > *(escalation ticket created: category Other, priority HIGH, description flagged CALLBACK REQUESTED)*
 > **Agent:** Your callback request is ticket number H-F-M-G, 2-0-2-6, 0-0-0-4-8-3. Someone will reach out to you shortly. Thank you for calling Horizon Family Medical Group IT Help Desk. Goodbye.
 

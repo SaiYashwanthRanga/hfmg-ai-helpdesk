@@ -161,6 +161,18 @@ CALLBACK_CONFIRM_NEW = "I have your callback number as {number}. Is that correct
 CALLBACK_REPEAT = "Sorry, I didn't catch a yes or a no."
 CALLBACK_KEEP_CURRENT = "No problem, we'll use {number}."
 
+# Office extension (employee calls only): asked once, and only when no caller-confirmed directory entry
+# gives one. Never the callback number: an extension is 2-6 digits, a phone number is ten.
+EXTENSION_ASK = "Do you have an office extension number?"
+EXTENSION_WHAT = "What's the extension number?"
+EXTENSION_NOT_A_PHONE = (
+    "That sounds like a phone number rather than an extension. "
+    "What's your office extension, or say you don't have one?"
+)
+EXTENSION_RETRY = "Sorry, I didn't catch that. What's your office extension, or say you don't have one?"
+EXTENSION_NOTED = "Got it, extension {extension}."
+EXTENSION_NONE = "No problem."
+
 # Spelled, not said: transcription garbles spoken names in addresses
 # ("saiyashwanth" -> "sichuan") but gets spelled letters right. Almost every
 # caller is @hfmg.net, so only the part before the @ is needed.
@@ -215,7 +227,7 @@ EMAIL_GIVE_UP = "No problem. We'll follow up by phone instead."
 
 CATEGORY_CONFIRM = "Just to make sure I route this correctly, is this about {category}?"
 
-CREATING_TICKET = "Let me create that ticket for you. One moment."
+CREATING_TICKET = "Let me create that ticket for you."
 READ_BACK = "Your ticket number is {ticket_number}. I've sent it to our IT team and they'll follow up with you."
 # The caller ended the call before we finished.
 LEAVING_WITH_TICKET = "No problem. I've saved what you told me. Your ticket number is {ticket_number}. Take care."
@@ -225,8 +237,7 @@ ANYTHING_ELSE = "Is there anything else I can help you with?"
 GOODBYE = "Thank you for calling Horizon Family Medical Group. Goodbye."
 
 ESCALATION_CALLER_REQUESTED = (
-    "Of course. I'll have a member of our IT team call you back at {phone}. "
-    "Let me get that request logged. One moment."
+    "Of course. I'll have a member of our IT team call you back at {phone}."
 )
 ESCALATION_MISUNDERSTOOD = (
     "I'm sorry, I'm having trouble understanding, and I don't want to keep you. "
@@ -235,8 +246,7 @@ ESCALATION_MISUNDERSTOOD = (
 # Asked once when a caller wants a person but we have no number to call back.
 ESCALATION_PHONE_ASK = "Of course. What's the best number for our IT team to call you back on?"
 ESCALATION_CALLER_REQUESTED_NO_NUMBER = (
-    "Of course. I'll ask a member of our IT team to follow up with you. "
-    "Let me get that request logged. One moment."
+    "Of course. I'll ask a member of our IT team to follow up with you."
 )
 ESCALATION_NO_CALLBACK_NUMBER = (
     "I'm sorry, I'm having trouble understanding. I'll log a request for our IT team to follow up."
@@ -249,8 +259,7 @@ ESCALATION_READ_BACK = (
 # e.g. "can I talk to a person?" at the opening question. Neutral: no IT team, no ticket, no guessing who is
 # calling, and no promise that a call has been arranged -- the request and number are passed on.
 NEUTRAL_ESCALATION = (
-    "Of course. I'll pass your request to our team with your number, {phone}, so they can call you back. "
-    "One moment while I log that."
+    "Of course. I'll pass your request to our team with your number, {phone}, so they can call you back."
 )
 NEUTRAL_ESCALATION_PHONE_ASK = "Of course. What's the best number for our team to reach you on?"
 NEUTRAL_ESCALATION_NO_NUMBER = "Of course. I'll pass your request to our team."
@@ -297,8 +306,7 @@ PATIENT_READ_BACK = (
 PATIENT_GOODBYE = "Thank you for calling Horizon Family Medical Group. Goodbye."
 PATIENT_ANYTHING_ELSE = "Is there anything else I can help you with?"
 PATIENT_ESCALATION = (
-    "Of course. I'll have a member of our support team call you back at {phone}. "
-    "One moment while I log that."
+    "Of course. I'll have a member of our support team call you back at {phone}."
 )
 PATIENT_ESCALATION_NO_NUMBER = (
     "Of course. I'll ask a member of our support team to follow up with you."

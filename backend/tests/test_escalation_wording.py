@@ -21,16 +21,12 @@ CALLER = "+18455550142"
 SPOKEN = "8 4 5, 5 5 5, 0 1 4 2"
 GOODBYE = "Thank you for calling Horizon Family Medical Group. Goodbye."
 
-PATIENT_REQUESTED = "Of course. I'll have a member of our support team call you back at {phone}. One moment while I log that."
-EMPLOYEE_REQUESTED = (
-    "Of course. I'll have a member of our IT team call you back at {phone}. Let me get that request logged. One moment."
-)
+PATIENT_REQUESTED = "Of course. I'll have a member of our support team call you back at {phone}."
+EMPLOYEE_REQUESTED = "Of course. I'll have a member of our IT team call you back at {phone}."
 PATIENT_PHONE_ASK = "Of course. What's the best number for our support team to call you back on?"
 EMPLOYEE_PHONE_ASK = "Of course. What's the best number for our IT team to call you back on?"
 PATIENT_NO_NUMBER = "Of course. I'll ask a member of our support team to follow up with you."
-EMPLOYEE_NO_NUMBER = (
-    "Of course. I'll ask a member of our IT team to follow up with you. Let me get that request logged. One moment."
-)
+EMPLOYEE_NO_NUMBER = "Of course. I'll ask a member of our IT team to follow up with you."
 PATIENT_MISUNDERSTOOD = (
     "I'm sorry, I'm having trouble understanding, and I don't want to keep you. "
     "I'll have someone from our support team call you back at {phone} directly."
@@ -249,10 +245,7 @@ async def test_a_patient_with_no_number_who_could_not_be_understood_is_logged_fo
 
 # --- 4. a caller whose type is not known hears neutral lines; a confirmed employee keeps the IT lines ----------------
 
-NEUTRAL_REQUESTED = (
-    "Of course. I'll pass your request to our team with your number, {phone}, so they can call you back. "
-    "One moment while I log that."
-)
+NEUTRAL_REQUESTED = "Of course. I'll pass your request to our team with your number, {phone}, so they can call you back."
 NEUTRAL_PHONE_ASK = "Of course. What's the best number for our team to reach you on?"
 NEUTRAL_NO_NUMBER = "Of course. I'll pass your request to our team."
 NEUTRAL_MISUNDERSTOOD = (

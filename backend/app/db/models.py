@@ -89,6 +89,8 @@ class VoiceCallState(str, enum.Enum):
     # The callback number read back ("is this the best number?"); a "no" asks for another.
     CONFIRM_CALLBACK_NUMBER = "CONFIRM_CALLBACK_NUMBER"
     COLLECT_ALTERNATE_CALLBACK_NUMBER = "COLLECT_ALTERNATE_CALLBACK_NUMBER"
+    # Employee calls: "Do you have an office extension number?" (asked once, only when no verified one is known).
+    COLLECT_EXTENSION = "COLLECT_EXTENSION"
     COLLECT_EMAIL = "COLLECT_EMAIL"
     CONFIRM_EMAIL = "CONFIRM_EMAIL"
     CONFIRM_CATEGORY = "CONFIRM_CATEGORY"

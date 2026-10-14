@@ -126,6 +126,7 @@ def mock_caller(seed: int, *, category: str | None = None, escalate: bool = Fals
         "COLLECT_PHONE": spoken_phone,
         "CLASSIFY_CALLER_TYPE": "It's an employee IT issue.",
         "CONFIRM_CALLBACK_NUMBER": "Yes, that's right.",
+        "COLLECT_EXTENSION": "No, I don't have one.",
         "COLLECT_EMAIL": _spoken_email(local),
         "CONFIRM_EMAIL": "Yes, that's right.",
         "CONFIRM_CATEGORY": "Yes.",

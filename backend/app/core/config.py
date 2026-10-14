@@ -117,6 +117,9 @@ class Settings(BaseSettings):
     # flow or the employee IT flow. Off = the older behaviour: the caller describes the problem first
     # and the type is worked out from that (CLASSIFY_CALLER_TYPE).
     voice_ask_caller_type: bool = True
+    # Employee calls: ask once "Do you have an office extension number?" unless a caller-confirmed
+    # directory entry already gives one. Off = no extension question (the directory one is still kept).
+    voice_ask_extension: bool = True
     # The SIP gateway's HTTP timeout for one /turn attempt (its setting, mirrored here so a
     # mismatch is caught at startup instead of showing up as calls that hang up).
     voice_gateway_attempt_timeout_seconds: float = 8.0

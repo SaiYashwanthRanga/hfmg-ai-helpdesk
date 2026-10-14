@@ -109,6 +109,8 @@ def _voice_flow_defaults(monkeypatch):
     monkeypatch.setattr(settings, "voice_confirm_name", False)
     monkeypatch.setattr(settings, "voice_confirm_summary", False)
     monkeypatch.setattr(settings, "voice_confirm_callback", False)
+    # The office-extension question has its own tests (test_employee_extension.py), which switch it on.
+    monkeypatch.setattr(settings, "voice_ask_extension", False)
     yield
 
 
