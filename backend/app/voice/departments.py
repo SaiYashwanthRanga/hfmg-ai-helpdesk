@@ -46,6 +46,11 @@ class DepartmentMatch:
     verified: bool
 
 
+def configured() -> bool:
+    """True when VOICE_DEPARTMENTS holds HFMG's real list (not the placeholder), so a match means something."""
+    return bool([d for d in (get_settings().voice_departments or "").split(",") if d.strip()])
+
+
 def known_departments() -> list[str]:
     configured = [d.strip() for d in (get_settings().voice_departments or "").split(",") if d.strip()]
     return configured or DEFAULT_DEPARTMENTS

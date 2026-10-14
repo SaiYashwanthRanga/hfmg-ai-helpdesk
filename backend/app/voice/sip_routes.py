@@ -23,7 +23,7 @@ from app.services.user_directory import UserDirectoryService, get_user_directory
 from app.speech import context as speech_context
 from app.voice import orchestrator, scripts, turns
 from app.voice.tasks import dispatch_ticket_tasks
-from app.voice.session import CallBusy, caller_id_is_usable, get_or_create_session, get_session, record_turn
+from app.voice.session import CallBusy, caller_id_is_usable, get_or_create_session, get_session, record_turn, update_collected
 
 logger = logging.getLogger("hfmg.voice.sip")
 
@@ -335,6 +335,9 @@ async def call_status(
         await db.commit()
         return
 
+    if session.state == VoiceCallState.CONFIRM_SUMMARY:
+        # The ticket was read back and the caller hung up without answering: filed as NOT confirmed.
+        update_collected(session, summary_unanswered=True)
     session.state = VoiceCallState.ABANDONED
 
     # Reachable, as in orchestrator._caller_leaving: a number the caller gave or a real caller ID.

@@ -90,7 +90,7 @@ async def test_questions_are_capped():
     asked = []
     while (found := dx.next_prompt(state)) is not None:
         state["pending"] = found[0]
-        state, _ = dx.record(state, "I don't know")
+        state, *_ = dx.record(state, "I don't know")
         asked.append(found[0])
     assert 0 < len(asked) <= dx.MAX_QUESTIONS
 
@@ -125,7 +125,7 @@ async def test_an_urgent_problem_gets_only_the_essential_questions():
     asked = []
     while (found := dx.next_prompt(server)) is not None:
         server["pending"] = found[0]
-        server, _ = dx.record(server, "E")
+        server, *_ = dx.record(server, "E")
         asked.append(found[0])
     assert asked == ["server", "drive"]
 
@@ -133,10 +133,10 @@ async def test_an_urgent_problem_gets_only_the_essential_questions():
 async def test_the_ticket_section_names_what_is_missing_and_never_fills_it_in():
     state = dx.begin("Other", "The file server is out of disk space.", None)
     state["pending"] = "server"
-    state, _ = dx.record(state, "It's FS01.")
+    state, *_ = dx.record(state, "It's FS01.")
 
     lines = dict(dx.ticket_lines(state))
-    assert lines["Issue type"] == "Server / storage" and lines["Server"] == "It's FS01."
+    assert lines["Issue type"] == "Server / storage" and lines["Server"] == "FS01 (caller said: \"It's FS01.\")"
     assert "drive or folder" in lines["Not established"] and "Free space now" not in lines
     assert lines["Suggested next step"].startswith("Check free space on FS01 (drive not given)")
 
@@ -250,7 +250,7 @@ async def test_a_full_server_disk_with_a_failing_application_is_flagged_with_wha
     assert "which department" in _text(paperwork).lower()
     filed = await _finish(call)
     description = (await _ticket(client, filed["ticket_id"]))["description"]
-    for expected in ("Issue type: Server / storage", "Server: It's FS01.", "Drive or folder: The E drive.",
+    for expected in ("Issue type: Server / storage", "Server: FS01 (caller said: \"It's FS01.\")", "Drive or folder: The E drive.",
                      "Application failing: yes (from the problem description)",
                      "Escalation: flagged urgent: an application is already failing",
                      "Not established: free space now, space needed",
@@ -412,15 +412,18 @@ async def test_a_call_already_past_the_problem_is_not_sent_back_to_the_questions
 # --- 4. interruptions, failures, retries ------------------------------------------------------------------------
 
 
-async def test_silence_moves_on_without_counting_a_misunderstanding(make_call, db_session):
+async def test_silence_is_asked_about_once_then_moves_on_without_counting_a_misunderstanding(make_call, db_session):
     call = make_call("dx-silence")
     await _describe(call, "Outlook crashes on my laptop.", "Microsoft 365", short="your Outlook")
 
-    await call.turn("")
+    again = await call.turn("")
+    moved_on = await call.turn("")
 
+    assert _text(again) == f"{dx.CLARIFY} Do you see an error message? If so, what does it say?"
     session = await _session(db_session, "dx-silence")
     assert session.misunderstanding_count == 0
-    assert "error" in session.collected["diagnostics"]["asked"]
+    assert "error" in session.collected["diagnostics"]["asked"] and "error" not in session.collected["diagnostics"]["values"]
+    assert "error message" not in _text(moved_on).lower()
 
 
 async def test_asking_for_a_person_mid_questions_escalates_with_what_was_found(make_call, client, db_session):

@@ -173,6 +173,12 @@ EXTENSION_RETRY = "Sorry, I didn't catch that. What's your office extension, or 
 EXTENSION_NOTED = "Got it, extension {extension}."
 EXTENSION_NONE = "No problem."
 
+# A server the caller remembers late (see orchestrator._maybe_late_server): asked about, then back to the question.
+LATE_SERVER_NAME = "What's the name of the other server?"
+LATE_SERVER_CORRECT_NAME = "What's the correct server name?"
+LATE_SERVER_ADDED = "Thanks, I've added that server."
+LATE_SERVER_CORRECTED = "Thanks, I've corrected the server name."
+
 # Spelled, not said: transcription garbles spoken names in addresses
 # ("saiyashwanth" -> "sichuan") but gets spelled letters right. Almost every
 # caller is @hfmg.net, so only the part before the @ is needed.

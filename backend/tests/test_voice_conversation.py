@@ -326,8 +326,10 @@ async def test_silence_after_the_read_back_files_it_noted_unconfirmed(db_session
     await db_session.commit()
     assert session.ticket_id is not None
     assert session.misunderstanding_count == 0
+    assert session.collected.get("summary_confirmed") is False  # silence is not a yes
     ticket = await db_session.get(Ticket, session.ticket_id)
-    assert "details unverified" in ticket.description
+    assert "Read-back: read to the caller, no answer: not confirmed" in ticket.description
+    assert "not fully correct" not in ticket.description  # nor did the caller say it was wrong
 
 
 async def test_uncertain_category_is_mentioned_in_the_read_back_not_asked(db_session, monkeypatch, conversation):

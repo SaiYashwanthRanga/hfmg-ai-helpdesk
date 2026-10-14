@@ -16,6 +16,7 @@ Voice-first rules this module enforces (docs/reviews/VOICE_CONVERSATION_REVIEW.m
 """
 
 import dataclasses
+import difflib
 import logging
 import re
 import uuid
@@ -132,6 +133,44 @@ async def start_call(
     return TurnOutcome(_ask(session, scripts.GREETING))
 
 
+#: Marks a transcript line the recognizer produced from the agent's or its own prompt's words.
+NOT_CALLER_SPEECH = "[not used: sounded like the agent or the speech recognizer, not the caller]"
+#: What only the agent (or a recognizer echoing a help-desk prompt) says. A caller never answers a question with it.
+_AGENT_VOICE = re.compile(
+    r"\bhow (?:can|may) i (?:assist|help) you\b|\bthis is (?:the )?(?:hfmg|horizon)\b[^.?!]{0,40}\bhelp ?desk\b",
+    re.IGNORECASE,
+)
+
+
+def _plain(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9']+", (text or "").lower()))
+
+
+def _not_caller_speech(session: VoiceCallSession, utterance: str) -> bool:
+    """Is this "answer" really the agent's voice or the recognizer's prompt?
+
+    Seen on a real call: during a silence (the caller looking up free disk space, then thinking about an
+    extension) the transcriber returned "Hello, this is the HFMG IT help desk. How can I assist you today?" --
+    words from its own prompt, not the caller. Only two things count: help-desk phrasing a caller does not use,
+    or a near-exact copy (5+ words, 90% alike) of a whole line the agent just said -- its own audio leaking
+    back. A caller repeating part of a question ("the part before the at sign") or spelling letters is never
+    dropped here, however short or odd."""
+    if not utterance:
+        return False
+    if _AGENT_VOICE.search(utterance):
+        return True
+    plain = _plain(utterance)
+    if len(plain.split()) < 5:
+        return False
+    for turn in (session.turns or [])[-6:]:
+        if turn.get("role") != "agent":
+            continue
+        other = _plain(turn.get("text") or "")
+        if other and difflib.SequenceMatcher(None, plain, other).ratio() >= 0.9:
+            return True
+    return False
+
+
 _GOODBYE_STATES = (
     VoiceCallState.IDENTIFY_CALLER,
     VoiceCallState.PATIENT_INTENT,
@@ -168,7 +207,15 @@ async def handle_turn(
     `directory` is only used to look up an identifier the caller gives while confirming who
     they are; without it that step simply treats the answer as "no"."""
     utterance = (utterance or "").strip()
-    record_turn(session, role="caller", text=utterance, confidence=confidence)
+    if _not_caller_speech(session, utterance):
+        # The recognizer returned the agent's (or its own prompt's) words, not the caller's: a silence. Kept
+        # on the transcript, marked, and never stored as an answer to anything.
+        logger.warning("Call %s: answer in %s matched the agent's or recognizer's own words; treated as silence",
+                       session.call_id, session.state.value)
+        record_turn(session, role="caller", text=f"{NOT_CALLER_SPEECH} {utterance}", confidence=confidence)
+        utterance = ""
+    else:
+        record_turn(session, role="caller", text=utterance, confidence=confidence)
 
     if session.state in (VoiceCallState.ESCALATED, VoiceCallState.COMPLETED):
         # Replay of an already-terminal turn (gateway retry). Say goodbye again
@@ -179,10 +226,10 @@ async def handle_turn(
         if session.collected.get("escalation_pending"):
             return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
         if session.state == VoiceCallState.CONFIRM_SUMMARY:
-            # Silence after the read-back is not an objection (and may be a
-            # dropped line): file what we have, noted as unconfirmed.
-            update_collected(session, summary_unresolved=True)
-            return await _confirm_summary(db, session)
+            # Silence after the read-back is not a yes (and may be a dropped line). As before, the ticket is filed
+            # as it is -- but recorded as read back and NOT confirmed, never as confirmed (or as "not correct").
+            update_collected(session, summary_unanswered=True, summary_confirmed=False, summary_awaiting_change=False)
+            return await _create_ticket_and_read_back(db, session)
         if session.state == VoiceCallState.CLASSIFY_CALLER_TYPE:
             _apply_classification(session, nlu.CallerClassification("INTERNAL_IT", 0.60))
             return await _next_step(db, session)
@@ -211,6 +258,10 @@ async def handle_turn(
 
     if session.state in _GOODBYE_STATES and nlu.is_goodbye(utterance):
         return await _caller_leaving(db, session)
+
+    late = _maybe_late_server(session, utterance)
+    if late is not None:
+        return late
 
     corrected = await _maybe_switch_caller_type(db, session, utterance)
     if corrected is not None:
@@ -383,14 +434,21 @@ async def _route_caller(
     return TurnOutcome(_speak(session, _ask(session, _with(acknowledgement, scripts.EMPLOYEE_ASK))))
 
 
+#: "Hello?" answers to the opening question that are just asked again; more count as unclear (bounded).
+MAX_IDENTIFY_HELLOS = 2
+
+
 async def _handle_identify_caller(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
     if nlu.mentions_escalation(utterance):
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
     caller_type = caller_routing.identify_caller(utterance)
     if caller_type:
         return await _route_caller(db, session, utterance, caller_type)
-    if nlu.is_greeting(utterance):  # "Hello?": ask again, without counting it as an unclear answer
-        return TurnOutcome(_speak(session, _ask(session, scripts.IDENTIFY_AFTER_HELLO)))
+    if nlu.is_greeting(utterance):  # "Hello?": ask again, without counting it as an unclear answer -- twice
+        hellos = session.collected.get("identify_hellos", 0) + 1
+        update_collected(session, identify_hellos=hellos)
+        if hellos <= MAX_IDENTIFY_HELLOS:
+            return TurnOutcome(_speak(session, _ask(session, scripts.IDENTIFY_AFTER_HELLO)))
     if not caller_routing.has_any_cue(utterance) and len(utterance.split()) >= 2:
         # Nothing the rules can read ("I'm Dr. Patel's nurse"): the language model may know. Cues for both
         # sides are never sent here: that is a question for the caller, not a guess.
@@ -1437,14 +1495,103 @@ def _diagnostics_next(session: VoiceCallSession) -> tuple[str | None, str | None
 async def _handle_diagnostics(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
     if utterance and nlu.mentions_escalation(utterance):
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
+    if session.collected.get("late_server"):
+        return await _handle_late_server(db, session, utterance)
     state = session.collected.get("diagnostics")
     if not state or not state.get("pending"):
         return await _next_step(db, session)
-    state, updates = diagnostics.record(state, utterance)
+    state, updates, reask = diagnostics.record(state, utterance)
     update_collected(session, diagnostics=state, **updates)
+    if reask:
+        session.state = VoiceCallState.COLLECT_DIAGNOSTICS
+        return TurnOutcome(_speak(session, _ask(session, reask)))
     if updates.get("affected_scope"):
         _apply_priority_rules(session)
     return await _next_step(db, session)
+
+
+# --- a server the caller remembers late ---------------------------------------------------------------------
+#
+# "Oh, and I have another server" -- at the extension question, the read-back, anywhere before the ticket is
+# filed. Never a restart: one short question (another affected server, or a correction?), the name if it was not
+# given, then back to exactly the question that was interrupted. Nothing collected earlier is lost; a correction
+# keeps the old name as "corrected from", and an unclear answer adds rather than overwrites.
+
+_LATE_ADDITION_STATES = (
+    VoiceCallState.COLLECT_DIAGNOSTICS,
+    VoiceCallState.CONFIRM_IDENTITY,
+    VoiceCallState.COLLECT_NAME,
+    VoiceCallState.CONFIRM_NAME,
+    VoiceCallState.COLLECT_PHONE,
+    VoiceCallState.CONFIRM_CALLBACK_NUMBER,
+    VoiceCallState.COLLECT_ALTERNATE_CALLBACK_NUMBER,
+    VoiceCallState.COLLECT_EXTENSION,
+    VoiceCallState.COLLECT_EMAIL,
+    VoiceCallState.CONFIRM_EMAIL,
+    VoiceCallState.CONFIRM_SUMMARY,
+    VoiceCallState.CONFIRM_CATEGORY,
+)
+
+
+def _last_agent_line(session: VoiceCallSession) -> str:
+    return next((t.get("text") or "" for t in reversed(session.turns or []) if t.get("role") == "agent"), "")
+
+
+def _maybe_late_server(session: VoiceCallSession, utterance: str) -> TurnOutcome | None:
+    c = session.collected
+    state = c.get("diagnostics") or {}
+    if (
+        not utterance
+        or state.get("playbook") not in ("server_storage", "server_access")
+        or _is_patient_call(session)
+        or issue_filed(session)
+        or c.get("late_server")
+        or session.state not in _LATE_ADDITION_STATES
+        # A server question (or the "which is it?" about a second address) is already open: that answer is its own.
+        or (session.state == VoiceCallState.COLLECT_DIAGNOSTICS
+            and (state.get("conflict") or state.get("pending") in ("server", "server_name")))
+        or not diagnostics.mentions_another_server(utterance)
+    ):
+        return None
+    names = diagnostics.hostnames(utterance)
+    host = names[0] if names else None
+    existing = (state.get("values") or {}).get("server")
+    late = {"state": session.state.value, "prompt": _last_agent_line(session), "said": utterance, "host": host,
+            "step": "kind" if existing else "name", "kind": "additional"}
+    if existing and host:
+        question = f"Is {host} another server that's affected as well, or should it replace {existing}?"
+    elif existing:
+        question = f"Is another server affected as well as {existing}, or did I get {existing} wrong?"
+    else:
+        question = scripts.LATE_SERVER_NAME
+    update_collected(session, late_server=late)
+    session.state = VoiceCallState.COLLECT_DIAGNOSTICS
+    return TurnOutcome(_speak(session, _ask(session, question)))
+
+
+async def _handle_late_server(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
+    late = dict(session.collected["late_server"])
+    names = diagnostics.hostnames(utterance)
+    if late["step"] == "kind":
+        late["kind"] = diagnostics.server_change_kind(utterance)
+        late["host"] = late.get("host") or (names[0] if names else None)
+        if not late["host"]:
+            late["step"] = "name"
+            update_collected(session, late_server=late)
+            question = scripts.LATE_SERVER_NAME if late["kind"] == "additional" else scripts.LATE_SERVER_CORRECT_NAME
+            return TurnOutcome(_speak(session, _ask(session, question)))
+    else:  # the name
+        if names:
+            late["host"] = names[0]
+        elif not diagnostics.is_non_answer(utterance):
+            late["host"] = diagnostics.clean(utterance)
+        if utterance and not diagnostics.is_non_answer(utterance):
+            late["said"] = f"{late['said']} / {utterance}"
+    state = diagnostics.add_server(session.collected["diagnostics"], late.get("host"), late["said"], late["kind"])
+    update_collected(session, diagnostics=state, late_server=None)
+    session.state = VoiceCallState(late["state"])
+    noted = scripts.LATE_SERVER_CORRECTED if late["kind"] == "correction" else scripts.LATE_SERVER_ADDED
+    return TurnOutcome(_speak(session, _ask(session, f"{noted} {late['prompt']}".strip())))
 
 
 # --- office extension (employee calls) ----------------------------------------------------------
@@ -1540,18 +1687,29 @@ async def _extension_settled(
     note how it compares for the helpdesk; it never changes who the caller is, and another employee's
     name is never said or stored."""
     note = None
-    if extension and directory is not None:
+    c = session.collected
+    # The extension the directory has for this caller ID (a confirmed identity, or the caller-ID match).
+    own = normalize_extension(
+        (c.get("directory_identity") or {}).get("extension")
+        or (((c.get("directory") or {}).get("entry") or {}).get("extension"))
+    )
+    if extension and own and own != extension:
+        # Kept as the caller said it, never replaced by the directory's -- and marked, so nobody takes it as checked.
+        note = f"unverified: the directory entry for this caller ID lists extension {own}"
+    elif extension and own == extension:
+        note = "matches the directory entry for this caller ID"
+    elif extension and directory is not None:
         result = directory.find_by_extension(extension)
         if result.status is LookupStatus.MATCHED and result.entry is not None:
             listed = (directory_identity.person_name(result.entry) or "").lower()
-            same = listed and listed == (session.collected.get("caller_name") or "").strip().lower()
+            same = listed and listed == (c.get("caller_name") or "").strip().lower()
             note = "matches the directory entry for this caller's name" if same else (
-                "the directory lists this extension for a different entry"
+                "unverified: the directory lists this extension for a different entry"
             )
         elif result.status is LookupStatus.AMBIGUOUS:
-            note = "the directory lists this extension for more than one entry"
+            note = "unverified: the directory lists this extension for more than one entry"
         elif result.status is LookupStatus.NOT_FOUND:
-            note = "not found in the directory"
+            note = "unverified: not found in the directory"
     update_collected(session, extension=extension, extension_source=source, extension_note=note)
     if extension:
         acknowledgement = scripts.EXTENSION_NOTED.format(extension=" ".join(extension))
@@ -1561,14 +1719,15 @@ async def _extension_settled(
 
 
 def _extension_detail(collected: dict, confirmed: bool, who: dict) -> str | None:
-    """The ticket's Extension line: the confirmed directory one, else what the caller said and how it
-    compares with the directory, else whether they have none."""
-    if confirmed and who.get("extension"):
-        return who["extension"]
+    """The ticket's Extension line: what the caller said (and how it compares with the directory), else the
+    confirmed directory one, else whether they have none. A caller's own answer is never hidden behind the
+    directory's: when they differ, the caller's is shown with the difference."""
     source = collected.get("extension_source")
     if source == "caller" and collected.get("extension"):
         note = collected.get("extension_note")
         return f"{collected['extension']} (given by the caller{'; ' + note if note else ''})"
+    if confirmed and who.get("extension"):
+        return who["extension"]
     if source == "none":
         return "none (the caller has no office extension)"
     if source == "unclear":
@@ -2074,7 +2233,10 @@ async def _caller_leaving(db: AsyncSession, session: VoiceCallSession) -> TurnOu
             # Everything required was already collected (the caller left at an
             # optional question such as email): an ordinary ticket at the
             # priority we assessed, not an "incomplete" one bumped to High.
-            update_collected(session, summary_skipped=True)
+            if session.state == VoiceCallState.CONFIRM_SUMMARY:
+                update_collected(session, summary_unanswered=True)  # read back, then the caller left: not confirmed
+            else:
+                update_collected(session, summary_skipped=True)
             ticket = await _create_ticket(db, session)
         else:
             ticket = await _create_ticket(
@@ -2227,6 +2389,10 @@ def _intake_details(collected: dict) -> str:
     department = collected.get("department")
     if department and collected.get("department_verified") is False:
         department = f"{department} (unverified: not on HFMG's department list)"
+    elif department and not departments.configured():
+        department = f"{department} (not checked: no HFMG department list is configured)"
+    elif not department and collected.get("caller_type") != "PATIENT_SUPPORT":
+        department = "not given"
     reason = collected.get("priority_reason")
     priority = collected.get("priority")
     priority_line = None
@@ -2254,6 +2420,7 @@ def _intake_details(collected: dict) -> str:
         ("Name", "spelling could not be verified with the caller" if collected.get("name_unverified") else None),
         ("Read-back", "caller said the summary was not fully correct; details unverified" if collected.get("summary_unresolved") else None),
         ("Read-back", "not done: the caller ended the call first" if collected.get("summary_skipped") else None),
+        ("Read-back", "read to the caller, no answer: not confirmed" if collected.get("summary_unanswered") else None),
     ]
     lines += diagnostics.ticket_lines(collected.get("diagnostics"))
     return "\n".join(f"{label}: {value}" for label, value in lines if value)

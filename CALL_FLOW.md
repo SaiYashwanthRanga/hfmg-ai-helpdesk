@@ -361,7 +361,8 @@ has (`app/voice/diagnostics.py`):
 | Issue type | Asks about (only what is not already known, at most 4) |
 |---|---|
 | Outlook / email | laptop, phone or both; crash, sign-in or send/receive; the error message; can they still send and receive email; others affected |
-| Server / storage | which server; which drive or folder; is an application already failing; free space left; space needed; others affected |
+| Server / storage (running out of space) | which server; which drive or folder; is an application already failing; free space left; space needed; others affected |
+| Server / system access (can't reach or connect to it) | the server's name when only its address is known; which drive, share or system; what happens (error or time-out); office or remote; others affected |
 | Network / VPN | office or remote; no connection, slow or one system (and which system); the error message; others affected |
 | Laptop / desktop | laptop or desktop; no power, slow/freezing or an error; the error text; recent changes |
 | Account / access | which account or application ("please don't tell me your password"); the exact message; did it work before |
@@ -387,6 +388,55 @@ has (`app/voice/diagnostics.py`):
   failing" does not make the caller Billing, and the department question is asked. An answer to that question
   that only names a system ("the billing application", "the HR portal") is not recorded as a department either.
 - Patients are never asked these questions.
+- **A non-answer is asked about once.** Silence, "hello?" or "um" gets "Sorry, I didn't catch that." and the
+  same question once more; a second one moves on with that question marked as not established.
+- **Server names.** The name is picked out of whatever else was said, in any language ("server ka naam FS01
+  hai" gives FS01; "F S 0 1" and "FS 01" give FS01; "FS-BACKUP-02" stays as said). A name needs a digit or an
+  inner hyphen/dot, so ordinary words are never taken for one; nothing is corrected. The ticket shows the name
+  and the caller's exact words. Two names in one answer are both recorded.
+- **A server is not a storage problem unless the caller says so.** "The server 172.22.6.98 is not connecting
+  and I can't get to the DC drive" is a server-access problem: no disk-space or failing-application questions,
+  and no "extend the volume" suggestion. Storage questions need words about space ("out of disk space", "the
+  server is full").
+- **IP addresses.** A valid IPv4 address counts as the server ("172.22.6.98"). When only the address is known
+  the agent asks for the server's name ("I have the address 172.22.6.98"). A *different* address given later
+  is never a silent replacement: "Is 172.22.6.203 another server that's affected, a correction to
+  172.22.6.98, or another address for the same server?" The answer is recorded as an additional server, a
+  correction (the old one kept), or "also known as"; if the caller is not sure, both stay on the ticket with
+  "not established whether it is another server, a correction, or the same server". Asked once.
+- **Not able to install software is not a failing application.** "I can't install new software" is not read
+  as an application failing (the question is asked instead), so it does not raise the priority on its own.
+
+**A server remembered late** ("oh, and I have another server") at any point before the ticket is filed -- during
+the questions, at the identity, name, extension, callback or email questions, or at the read-back -- is never a
+restart. The agent asks once whether it is another affected server or a correction ("Is FS02 another server
+that's affected as well, or should it replace FS01?"; the name is asked if it was not given), records it, and
+says the interrupted question again ("Thanks, I've added that server. Do you have an office extension number?").
+Nothing collected earlier is lost: an additional server is listed as "Additional servers", a correction keeps
+the old name as "Server (corrected)", and an unclear answer adds rather than overwrites. At most two short
+questions; a replayed turn is not applied twice. After the ticket is filed, "another server" at "anything else?"
+is a new issue as before.
+
+**A read-back nobody answers** (silence, or the call ends) is filed as it is, as before, and recorded as
+`Read-back: read to the caller, no answer: not confirmed` -- never as confirmed, and never as "the caller said
+it was not correct". An office extension the directory does not back up is kept exactly as the caller said
+it and marked `unverified` on the ticket (another entry's extension, not in the directory, or different from
+the extension on the caller's own entry); the directory's value never replaces the caller's.
+
+**The department line on the ticket** says which of these it is: `Billing` (on HFMG's configured list),
+`Space Lab (unverified: not on HFMG's department list)`, `Billing (not checked: no HFMG department list is
+configured)` when `VOICE_DEPARTMENTS` is empty (the built-in list is only a placeholder, so a match proves
+nothing), or `not given`.
+
+**What the speech recognizer returns that is not the caller.** On a real call the answers to the free-space and
+extension questions came back as "Hello, this is the HFMG IT help desk. How can I assist you today?" -- the
+recognizer filling a silence (the caller looking something up) with text shaped by its own prompt, which began
+"English phone call to the HFMG IT help desk". The prompt (`stt_prompt`) no longer contains a sentence like
+that, only the answer hint and vocabulary. And an answer that is plainly not the caller -- help-desk phrasing
+("this is the ... help desk", "how can I assist you"), or a near-exact copy of a whole line the agent just said
+(its own audio leaking back) -- is treated as silence: kept on the transcript marked "[not used: ...]", never
+stored as an answer. Anything else the caller says, however short or odd, is used as said. "Hello?" at the
+opening question is asked again at most twice, then treated as unclear, so the call never loops on it.
 
 ### 2.2 Employee directory (`USER_DIRECTORY_CSV_PATH`)
 
@@ -427,8 +477,8 @@ they are, and another employee's name is never said or written:
 |---|---|
 | `Extension: 3001` | from the directory entry the caller confirmed |
 | `Extension: 1004 (given by the caller; matches the directory entry for this caller's name)` | the directory has it under the name the caller gave |
-| `Extension: 4004 (given by the caller; the directory lists this extension for a different entry)` | the directory has it under another entry |
-| `Extension: 1004 (given by the caller; not found in the directory)` | not in the directory |
+| `Extension: 4004 (given by the caller; unverified: the directory lists this extension for a different entry)` | the directory has it under another entry |
+| `Extension: 1004 (given by the caller; unverified: not found in the directory)` | not in the directory |
 | `Extension: none (the caller has no office extension)` | the caller said they have none |
 | `Extension: not captured (the caller's answer was unclear)` | no usable answer after one retry |
 

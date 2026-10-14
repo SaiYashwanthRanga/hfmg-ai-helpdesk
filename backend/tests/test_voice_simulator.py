@@ -487,8 +487,10 @@ async def test_audio_is_transcribed_then_processed(client, db_session, categorie
     assert body["turn"]["input_mode"] == "voice"
     assert body["turn"]["timings"]["stt_ms"] is not None
     assert body["session"]["collected"]["category"] == "Printer"
-    # Recognition was told what the answer probably looks like.
-    assert "HFMG IT help desk" in stub.prompts[0]
+    # Recognition was told what the answer probably looks like, with HFMG's vocabulary -- and no sentence it
+    # could echo back as the caller's answer during a silence ("...the HFMG IT help desk...").
+    assert "Vocabulary:" in stub.prompts[0] and "HFMG" in stub.prompts[0]
+    assert "help desk" not in stub.prompts[0].lower()
 
     # Speech is streamed from speech_path, not inlined; first-audio time is recorded.
     assert body["reply"]["audio"] is None

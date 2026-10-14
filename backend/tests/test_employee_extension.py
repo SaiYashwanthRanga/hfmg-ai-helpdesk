@@ -262,7 +262,7 @@ async def test_the_ticket_says_where_the_extension_came_from(make_call, client):
 
     filed = await _file(call)
 
-    assert "Extension: 1004 (given by the caller; not found in the directory)" in await _intake(client, filed["ticket_id"])
+    assert "Extension: 1004 (given by the caller; unverified: not found in the directory)" in await _intake(client, filed["ticket_id"])
 
 
 async def test_another_employees_extension_is_noted_never_named_and_never_changes_who_is_calling(make_call, client, db_session):
@@ -276,7 +276,7 @@ async def test_another_employees_extension_is_noted_never_named_and_never_change
     assert session.collected["caller_name"] == "Pat Real" and not session.collected.get("identity_confirmed")
     filed = await _file(call)
     description = await _intake(client, filed["ticket_id"])
-    assert "Extension: 4004 (given by the caller; the directory lists this extension for a different entry)" in description
+    assert "Extension: 4004 (given by the caller; unverified: the directory lists this extension for a different entry)" in description
     assert "Lee" not in description
 
 

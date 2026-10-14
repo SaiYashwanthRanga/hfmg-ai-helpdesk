@@ -32,13 +32,17 @@ class Question:
     key: str
     label: str  # how the answer is named on the ticket
     prompt: str
-    kind: str  # "choice" | "yes_no" | "text"
+    kind: str  # "choice" | "yes_no" | "text" | "host" (a server name, read out of whatever else was said)
     choices: tuple[tuple[str, tuple[str, ...]], ...] = ()  # (value, keywords); first match wins
     when: Callable[[Values], bool] = field(default=lambda v: True)
     #: Still asked when the problem is urgent: what IT needs to act at all (which server, which drive).
     essential: bool = False
     #: yes_no only: words in the problem description that already answer "yes".
     prefill: tuple[str, ...] = ()
+    #: ...unless the description also has one of these (then the question is asked instead).
+    prefill_unless: tuple[str, ...] = ()
+    #: text only: a pattern whose match in the problem description already answers it ("the DC drive").
+    prefill_pattern: str | None = None
 
 
 @dataclass(frozen=True)
@@ -53,6 +57,12 @@ _SCOPE = Question("scope", "Others affected", "Is anyone else having the same pr
 _ERROR = Question("error", "Error message", "Do you see an error message? If so, what does it say?", "text")
 _LEAD = re.compile(r"^(?:(?:um|uh|so|well|it'?s|it is|that'?s|that is|the|i think|probably|maybe|about)\b[\s,]*)+",
                    re.IGNORECASE)
+
+
+def _servers(values: Values) -> str:
+    """The server, plus any others the caller said are also affected."""
+    names = [_said(values, "server", "the server")] + [n for n in (values.get("additional_servers") or "").split(", ") if n]
+    return " and ".join(names)
 
 
 def _said(values: Values, key: str, default: str = "") -> str:
@@ -100,20 +110,46 @@ OUTLOOK = Playbook(
 SERVER_STORAGE = Playbook(
     "server_storage", "Server / storage",
     questions=(
-        Question("server", "Server", "Which server is it? The server name, if you know it.", "text", essential=True),
+        Question("server", "Server", "Which server is it? The server name, if you know it.", "host", essential=True),
         Question("drive", "Drive or folder", "Which drive or shared folder is running out of space?", "text",
                  essential=True),
         Question("app_impact", "Application failing",
                  "Is any application or service already failing because of it?", "yes_no",
-                 prefill=("failing", "fails", "failed", "can't save", "cannot save", "won't save", "crash", "is down",
-                          "went down", "stopped working", "not working")),
+                 # Only an application that is failing now. "I can't install new software" (existing ones still
+                 # run) is not one: the question is asked instead.
+                 prefill=("app is failing", "application is failing", "apps are failing", "failing to save",
+                          "can't save", "cannot save", "won't save", "crashed", "crashing", "is down", "went down",
+                          "stopped working"),
+                 prefill_unless=("install",)),
         Question("free_space", "Free space now", "Do you know how much free space is left?", "text"),
         Question("space_needed", "Space needed", "How much more space do you think is needed?", "text"),
         _SCOPE,
     ),
     next_action=lambda v: (
-        f"Check free space on {_said(v, 'server', 'the server')} ({_said(v, 'drive', 'drive not given')}) and extend "
+        f"Check free space on {_servers(v)} ({_said(v, 'drive', 'drive not given')}) and extend "
         f"the volume or free up space. Space needed (caller's estimate): {_said(v, 'space_needed', 'not given')}."
+    ),
+)
+
+SERVER_ACCESS = Playbook(
+    "server_access", "Server / system access",
+    questions=(
+        Question("server", "Server", "Which server is it? The server name or address, if you know it.", "host",
+                 essential=True),
+        Question("server_name", "Server name", "Do you know the server's name? I have the address {server}.", "host",
+                 when=lambda v: is_ip(v.get("server")) and not v.get("server_name_resolved")),
+        Question("resource", "Drive, share or system", "Which drive, share or system are you trying to reach?", "text",
+                 prefill_pattern=r"\b(?:the\s+)?[A-Za-z0-9]{1,12}\s+(?:drive|share|folder)\b|\\\\[^\s]+"),
+        Question("error", "What happens", "What happens when you try to connect: an error message, or does it just "
+                 "time out?", "text"),
+        Question("location", "Location", "Are you in the office or working remotely?", "choice",
+                 (("remote", ("home", "remote", "remotely", "away", "off site", "offsite", "travel")),
+                  ("office", ("in the office", "office", "at work", "clinic", "on site", "onsite", "building")))),
+        _SCOPE,
+    ),
+    next_action=lambda v: (
+        f"Check whether {_servers(v)} can be reached from the caller's location (network path and the server's "
+        f"status) and access to {_said(v, 'resource', 'the resource they need')}. Nothing was changed on the call."
     ),
 )
 
@@ -211,10 +247,14 @@ OTHER = Playbook(
     next_action=lambda v: "Call the caller back to diagnose; see what they described.",
 )
 
-PLAYBOOKS = {p.name: p for p in (OUTLOOK, SERVER_STORAGE, NETWORK, DEVICE, ACCOUNT, PRINTER, OTHER)}
+PLAYBOOKS = {p.name: p for p in (OUTLOOK, SERVER_STORAGE, SERVER_ACCESS, NETWORK, DEVICE, ACCOUNT, PRINTER, OTHER)}
 
-_SERVER_WORDS = ("disk space", "out of space", "running out of space", "storage", "drive is full", "drive full",
-                 "no space", "space left", "server")
+#: Running out of space: only these words, never "server" alone. A server that "is not connecting" is an access
+#: problem; storage is only asked about when the caller says something about space.
+_STORAGE_WORDS = ("disk space", "out of space", "running out of space", "running low on space", "low on space",
+                  "low on disk", "storage", "drive is full", "drive full", "disk is full", "disk full", "no space",
+                  "space left", "free space", "server is full", "share is full", "volume is full", "full disk")
+_SERVER_WORDS = ("server",)
 _EMAIL_WORDS = ("email", "e-mail", "mail", "inbox", "calendar")
 _PRINTER_WORDS = ("printer", "print", "scanner", "scan", "toner", "keyboard", "mouse", "headset", "monitor",
                   "webcam", "docking", "dock")
@@ -227,8 +267,10 @@ _DEVICE_WORDS = ("laptop", "computer", "desktop", "pc", "screen", "turn on", "bl
 def choose(category: str | None, description: str | None) -> Playbook:
     """The question set for the problem as described. Server and Outlook words win over the broad categories."""
     text = (description or "").lower()
-    if any(w in text for w in _SERVER_WORDS):
+    if any(w in text for w in _STORAGE_WORDS):
         return SERVER_STORAGE
+    if any(w in text for w in _SERVER_WORDS) or any(is_ip(n) for n in hostnames(description or "")):
+        return SERVER_ACCESS
     if "outlook" in text or (category == "Microsoft 365" and any(w in text for w in _EMAIL_WORDS)):
         return OUTLOOK
     if category == "Printer" or any(w in text for w in _PRINTER_WORDS):
@@ -263,16 +305,92 @@ def clean(utterance: str) -> str:
     return _SECRET.sub(lambda m: f"{m.group(1)} [removed]", " ".join((utterance or "").split()))[:240]
 
 
+# A server name: letters then digits (FS01, hfmg-sql02, app01.hfmg.local) or letters-and-hyphens (HFMG-FILES).
+_HOST = re.compile(r"(?<![\w.-])([A-Za-z][A-Za-z0-9]*(?:[-.][A-Za-z0-9]+)*)(?![\w-])")
+_SPELLED_HOST = re.compile(r"(?<![\w-])(?:[A-Za-z0-9] ){2,}[A-Za-z0-9](?![\w-])")  # "F S 0 1"
+# "FS 01", as a recognizer may write it. Only a space is joined: a hyphen is part of the name ("FS-BACKUP-02").
+_SPLIT_HOST = re.compile(r"(?<![\w-])([A-Z]{2,6}) (\d{1,4})(?![\w-])")
+_UNITS = re.compile(r"^\d*(?:k|m|g|t)?b$|^(?:gb|mb|tb|kb|gig|gigs)$", re.IGNORECASE)
+_FILLER = {"um", "uh", "hmm", "mm", "er", "ah", "okay", "ok", "hello", "hi", "sorry", "what", "pardon", "yeah", "so"}
+_LEAD_YES = ("yes", "yeah", "yep", "yup", "correct")
+_LEAD_NO = ("no", "nope", "nah", "not really", "none")
+
+
+_IPV4 = re.compile(r"(?<![\d.])((?:\d{1,3}\.){3}\d{1,3})(?![\d.])")
+
+
+def is_ip(value: str | None) -> bool:
+    """A valid dotted IPv4 address ("172.22.6.98"); four parts, each 0-255."""
+    match = _IPV4.fullmatch((value or "").strip())
+    return bool(match) and all(0 <= int(part) <= 255 for part in match.group(1).split("."))
+
+
+def hostnames(utterance: str) -> list[str]:
+    """Server names and IP addresses in what the caller said, in the order said: "server ka naam FS01 hai" ->
+    ["FS01"], "the server 172.22.6.98" -> ["172.22.6.98"].
+
+    Conservative: a name must have a digit ("FS01") or a hyphen/dot inside ("HFMG-FILES"), so ordinary words
+    in any language are never taken for one; an address must be a valid IPv4 address. Spelled-out characters
+    ("F S 0 1") and a recognizer's split ("FS 01") are joined; nothing is otherwise changed or corrected."""
+    text = utterance or ""
+    found: list[tuple[int, str]] = []
+    for match in _IPV4.finditer(text):
+        if is_ip(match.group(1)):
+            found.append((match.start(), match.group(1)))
+    taken = [name for _, name in found]
+    for match in _SPELLED_HOST.finditer(text):
+        joined = match.group(0).replace(" ", "")
+        if re.search(r"[A-Za-z]", joined) and re.search(r"\d", joined):
+            found.append((match.start(), joined))
+    for match in _SPLIT_HOST.finditer(text):
+        found.append((match.start(), match.group(1) + match.group(2)))
+    for match in _HOST.finditer(text):
+        token = match.group(1).strip(".-")
+        if len(token) < 3 or _UNITS.match(token) or any(token in ip for ip in taken):
+            continue
+        if not (re.search(r"\d", token) or re.search(r"[-.]", token)):
+            continue
+        if not any(token.lower() in f.lower() or f.lower() in token.lower() for _, f in found):
+            found.append((match.start(), token))
+    unique: list[str] = []
+    for _, name in sorted(found, key=lambda item: item[0]):
+        if name.lower() not in (u.lower() for u in unique):
+            unique.append(name)
+    return unique
+
+
+def is_non_answer(utterance: str) -> bool:
+    """Silence, "hello?", "um", "sorry, what?": nothing that answers a question."""
+    words = re.findall(r"[a-z']+", (utterance or "").lower())
+    has_digits = bool(re.search(r"\d", utterance or ""))
+    return (not words and not has_digits) or nlu.is_greeting(utterance) or (bool(words) and not has_digits and all(w in _FILLER for w in words))
+
+
+def _leading_yes_no(text: str) -> bool | None:
+    lead = text.strip(" .,!")
+    for words, answer in ((_LEAD_NO, False), (_LEAD_YES, True)):
+        if any(lead == w or lead.startswith(w + " ") or lead.startswith(w + ",") for w in words):
+            return answer
+    return None
+
+
 def _parse(question: Question, utterance: str) -> str | None:
     text = (utterance or "").lower()
     if question.kind == "yes_no":
         answer = nlu.quick_yes_no(utterance)
+        if answer is None:  # a longer answer that starts with its yes or no ("No, the old apps still work, I just...")
+            answer = _leading_yes_no(text)
         return None if answer is None else ("yes" if answer else "no")
     if question.kind == "choice":
         return next((value for value, words in question.choices if any(w in text for w in words)), None)
-    if not text.strip():
+    if not text.strip() or is_non_answer(utterance):
         return None
-    return "none" if _DECLINE.match(text) and len(text.split()) <= 5 else clean(utterance)
+    if _DECLINE.match(text) and len(text.split()) <= 5:
+        return "none"
+    if question.kind == "host":
+        names = hostnames(utterance)
+        return names[0] if names else clean(utterance)
+    return clean(utterance)
 
 
 def begin(category: str | None, description: str | None, affected_scope: str | None) -> dict:
@@ -280,9 +398,19 @@ def begin(category: str | None, description: str | None, affected_scope: str | N
     playbook = choose(category, description)
     values: Values = {}
     text = (description or "").lower()
+    named = hostnames(description or "")
     for question in playbook.questions:
         found = _parse(question, description or "") if question.kind == "choice" else None
-        if question.kind == "yes_no" and any(w in text for w in question.prefill):
+        if question.key == "server" and named:
+            found = named[0]
+            if len(named) > 1:
+                values["additional_servers"] = ", ".join(named[1:])
+        if question.kind == "text" and question.prefill_pattern:
+            match = re.search(question.prefill_pattern, description or "", re.IGNORECASE)
+            found = match.group(0).strip() if match else found
+        if question.kind == "yes_no" and any(w in text for w in question.prefill) and not any(
+            w in text for w in question.prefill_unless
+        ):
             found = "yes"
         if found:
             values[question.key] = found
@@ -347,30 +475,159 @@ def next_prompt(state: dict) -> tuple[str, str] | None:
         if urgent and not question.essential:
             continue
         if question.key not in values and question.key not in state["asked"] and question.when(values):
-            return question.key, question.prompt
+            return question.key, question.prompt.format_map(_Known(values))
     return None
 
 
-def record(state: dict, utterance: str) -> tuple[dict, dict]:
-    """Apply the caller's answer to the pending question. Returns (new state, updates for `collected`)."""
-    state = {**state, "values": dict(state["values"]), "asked": list(state["asked"])}
+class _Known(dict):
+    """For prompts that name an earlier answer ("I have the address {server}"): a missing value is blank."""
+
+    def __missing__(self, key):
+        return ""
+
+
+CLARIFY = "Sorry, I didn't catch that."
+
+
+def record(state: dict, utterance: str) -> tuple[dict, dict, str | None]:
+    """Apply the caller's answer to the pending question.
+
+    Returns (new state, updates for `collected`, a re-ask or None). A non-answer (silence, "hello?", "um") is
+    asked about once more, briefly; a second one moves on with that question unanswered."""
+    state = {**state, "values": dict(state["values"]), "asked": list(state["asked"]),
+             "retried": list(state.get("retried") or [])}
     key = state.get("pending")
     _flag(state, utterance)
     updates: dict = {}
     question = next((q for q in PLAYBOOKS[state["playbook"]].questions if q.key == key), None)
+    if question is not None and state.get("conflict"):
+        return _resolve_conflict(state, utterance, question)
+    if question is not None and question.kind == "host" and not is_non_answer(utterance):
+        conflict = _server_conflict(state["values"], hostnames(utterance))
+        if conflict:
+            state["conflict"] = {"key": question.key, "new": conflict, "said": clean(utterance)}
+            old = state["values"]["server"]
+            return state, updates, f"Is {conflict} another server that's affected, a correction to {old}, or another address for the same server?"
+    if question is not None and is_non_answer(utterance) and question.key not in state["retried"]:
+        state["retried"].append(question.key)
+        return state, updates, f"{CLARIFY} {question.prompt}"
     if question is not None:
         state["asked"].append(question.key)
         value = _parse(question, utterance)
         if value is not None:
             state["values"][question.key] = value
-        if utterance.strip():
+        if utterance.strip() and not is_non_answer(utterance):
             state["values"][f"{question.key}_said"] = clean(utterance)
+        if question.kind == "host":
+            extra = hostnames(utterance)[1:]
+            if extra:  # "FS01 and FS02": both are affected
+                state["values"]["additional_servers"] = ", ".join(extra)
         if question.key == "scope" and value == "yes":
             updates["affected_scope"] = "whole_site" if "everyone" in state["flags"] else "several_people"
         elif question.key == "scope" and value == "no":
             updates["affected_scope"] = "one_person"
     state["pending"] = None
-    return state, updates
+    return state, updates, None
+
+
+# --- a server mentioned late: another one, or a correction --------------------------------------------------------
+
+_ANOTHER_SERVER = re.compile(
+    r"\b(?:another|second|other|one more|additional|a different|also (?:a|the|one))\s+(?:\w+\s+)?server\b"
+    r"|\bserver\b[^.?!]{0,30}\b(?:too|as well|also)\b",
+    re.IGNORECASE,
+)
+_CORRECTION = ("wrong", "correct", "replace", "instead", "mistake", "not that", "rather", "change it", "meant")
+_KEEP_BOTH = ("another", "also", "as well", "both", "in addition", "additional", "second", "too", "more than one")
+
+
+def mentions_another_server(utterance: str) -> bool:
+    return bool(_ANOTHER_SERVER.search(utterance or ""))
+
+
+def server_change_kind(utterance: str) -> str:
+    """"correction" only when the caller says so; anything else (including an unclear answer) is "additional",
+    so an earlier server name is never overwritten on a guess."""
+    text = (utterance or "").lower()
+    if any(w in text for w in _CORRECTION) and not any(w in text for w in _KEEP_BOTH):
+        return "correction"
+    return "additional"
+
+
+def add_server(state: dict, name: str | None, said: str, kind: str) -> dict:
+    """Record a server mentioned after the server question: an additional affected server, or a correction
+    (the earlier name is kept as "corrected from", never lost)."""
+    values = dict(state["values"])
+    said = clean(said)
+    name = name or said or "name not given"
+    if kind == "correction" and values.get("server"):
+        values["server_corrected_from"] = values.get("server_said") or values["server"]
+        values["server"], values["server_said"] = name, said or name
+    elif not values.get("server"):
+        values["server"], values["server_said"] = name, said or name
+    else:
+        existing = [n for n in (values.get("additional_servers") or "").split(", ") if n]
+        if name.lower() not in [n.lower() for n in existing] + [str(values.get("server", "")).lower()]:
+            existing.append(name)
+        values["additional_servers"] = ", ".join(existing)
+        before = values.get("additional_servers_said")
+        values["additional_servers_said"] = f"{before} | {said}" if before else said
+    return {**state, "values": values}
+
+
+def _server_conflict(values: Values, names: list[str]) -> str | None:
+    """A different address (or name) for the server than the one already known, when it cannot be told which
+    it is: another affected server, a correction, or another identifier for the same server. A hostname given
+    for a known IP address (or the other way round) is not a conflict: it is the server's name."""
+    current = values.get("server")
+    if not current or not names:
+        return None
+    new = names[0]
+    if new.lower() == str(current).lower():
+        return None
+    if is_ip(current) != is_ip(new):
+        return None  # "FS01" for 172.22.6.98: the name of the server already known
+    return new
+
+
+_SAME_SERVER = ("same server", "the same", "same one", "same machine", "same box", "another address", "other address",
+                "second address", "its address", "its ip", "its other", "also its", "alias", "both addresses")
+
+
+def server_identifier_kind(utterance: str) -> str:
+    """How a second address relates to the first: "same" (another identifier for the same server),
+    "correction", "additional" -- or "unclear", which keeps both and says so."""
+    text = (utterance or "").lower()
+    if any(w in text for w in ("not sure", "don't know", "dont know", "no idea", "not certain", "unsure")):
+        return "unclear"  # "I'm not sure, I just know both numbers": both kept, nothing decided for the caller
+    if any(w in text for w in _SAME_SERVER):
+        return "same"
+    if any(w in text for w in _CORRECTION) and not any(w in text for w in _KEEP_BOTH):
+        return "correction"
+    if any(w in text for w in _KEEP_BOTH) or nlu.quick_yes_no(utterance) is True:
+        return "additional"
+    return "unclear"
+
+
+def _resolve_conflict(state: dict, utterance: str, question: Question) -> tuple[dict, dict, str | None]:
+    conflict = state.pop("conflict")
+    kind = server_identifier_kind(utterance)
+    said = conflict["said"] + (f" / {clean(utterance)}" if utterance.strip() else "")
+    values = state["values"]
+    if kind in ("additional", "correction"):
+        state = add_server(state, conflict["new"], said, kind)
+        values = state["values"]
+    elif kind == "same":
+        aliases = [a for a in (values.get("server_aliases") or "").split(", ") if a]
+        values["server_aliases"] = ", ".join([*aliases, conflict["new"]])
+    else:  # unclear: both kept, and the ticket says the relationship was not established
+        open_ = [a for a in (values.get("server_unclarified") or "").split(", ") if a]
+        values["server_unclarified"] = ", ".join([*open_, conflict["new"]])
+    values[f"{question.key}_resolved"] = True
+    state["values"] = values
+    state["asked"] = [*state["asked"], question.key]
+    state["pending"] = None
+    return state, {}, None
 
 
 def ticket_lines(state: dict | None) -> list[tuple[str, str]]:
@@ -385,6 +642,8 @@ def ticket_lines(state: dict | None) -> list[tuple[str, str]]:
     for question in playbook.questions:
         said = values.get(f"{question.key}_said")
         value = values.get(question.key)
+        if values.get(f"{question.key}_resolved") and value is None:
+            continue  # answered by the server lines below (another address, a correction, ...)
         if value is None and said is None:
             if question.when(values):
                 missing.append(question.label.lower())
@@ -394,7 +653,21 @@ def ticket_lines(state: dict | None) -> list[tuple[str, str]]:
             shown = f"{value} {said}"
         if question.kind == "yes_no" and value in ("yes", "no") and said and not said.startswith("("):
             shown = f"{value} (caller: \"{said}\")"
+        if question.kind == "host" and value and said and value != said and not said.startswith("("):
+            shown = f"{value} (caller said: \"{said}\")"
         lines.append((question.label, shown or "unclear"))
+        if question.key == "server" and values.get("server_corrected_from"):
+            lines.append(("Server (corrected)", f"the caller corrected it from \"{values['server_corrected_from']}\""))
+        if question.key == "server" and values.get("additional_servers"):
+            extra = values["additional_servers"]
+            if values.get("additional_servers_said"):
+                extra = f"{extra} (caller said: \"{values['additional_servers_said']}\")"
+            lines.append(("Additional servers", extra))
+        if question.key == "server" and values.get("server_aliases"):
+            lines.append(("Also known as", f"{values['server_aliases']} (the caller said it is the same server)"))
+        if question.key == "server" and values.get("server_unclarified"):
+            lines.append(("Other address given", f"{values['server_unclarified']} (not established whether it is "
+                                                  f"another server, a correction, or the same server)"))
     reason = urgent_reason(state)
     if reason:
         lines.append(("Escalation", f"flagged urgent: {reason}"))

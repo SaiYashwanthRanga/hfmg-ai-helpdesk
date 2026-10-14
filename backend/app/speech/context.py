@@ -122,12 +122,17 @@ _STATE_GATHER_HINTS: dict[str, list[str]] = {
 
 
 def transcription_prompt(state: str | None) -> str:
-    """A short prompt: English only, vocabulary, then what this answer usually looks like."""
+    """A short prompt: what this answer usually looks like, then vocabulary.
+
+    It deliberately contains no sentence a caller or the agent might say ("phone call to the HFMG IT help
+    desk"): given near-silence -- a caller pausing to look up a disk size or an extension -- Whisper-family
+    recognizers return prompt-like text as the transcript. A real call came back with "Hello, this is the
+    HFMG IT help desk. How can I assist you today?" as the answer to two questions."""
     hint = _STATE_HINTS.get(state or "", "")
     if state in ("SPELL_NAME", "SPELL_EMAIL", "SPELL_EMAIL_DOMAIN"):
         # Vocabulary would pull letters toward words; spelling gets the rule only.
-        return f"English phone call to the HFMG IT help desk. {hint}"
-    return f"English phone call to the HFMG IT help desk. Vocabulary: {', '.join(DOMAIN_TERMS)}. {hint}".strip()
+        return f"English. {hint}".strip()
+    return f"English. {hint} Vocabulary: {', '.join(DOMAIN_TERMS)}.".strip()
 
 
 def recognition_mode(state: str | None, collected: dict | None) -> str | None:
