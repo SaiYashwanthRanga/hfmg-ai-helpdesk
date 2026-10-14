@@ -80,6 +80,8 @@ class VoiceCallState(str, enum.Enum):
     CLASSIFY_CALLER_TYPE = "CLASSIFY_CALLER_TYPE"
     # When it started / whether the caller can work (asked only if not volunteered).
     COLLECT_DETAILS = "COLLECT_DETAILS"
+    # Employee calls: the few issue-specific questions IT needs (device, error, server, drive). No troubleshooting.
+    COLLECT_DIAGNOSTICS = "COLLECT_DIAGNOSTICS"
     # A directory entry matched the caller ID: "Am I speaking with <name>?" (never authentication).
     CONFIRM_IDENTITY = "CONFIRM_IDENTITY"
     COLLECT_NAME = "COLLECT_NAME"

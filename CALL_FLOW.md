@@ -99,6 +99,7 @@ This document defines the conversation state machine: every state, every transit
 | `GREETING` | Open-ended: "How can I assist you today?" | `COLLECT_DESCRIPTION` |
 | `COLLECT_DESCRIPTION` | Problem description (often already answered by the greeting) | `COLLECT_DETAILS` / `COLLECT_NAME` / later states, whichever is the first thing still missing |
 | `COLLECT_DETAILS` | "When did this start, and is it stopping you from working?" — **only if not volunteered**; optional, silence or an unclear answer moves on | `COLLECT_NAME` / later states |
+| `COLLECT_DIAGNOSTICS` | Employee calls only, after the details: the few questions IT needs for the kind of problem (Outlook, server/storage, network/VPN, laptop/desktop, account, printer, other), one at a time, skipping anything already said. Intake only: no troubleshooting steps. Read in code, no model call. See 2.4. `VOICE_DIAGNOSTIC_QUESTIONS=false` skips it | `COLLECT_NAME` (or the identity question) |
 | `IDENTIFY_CALLER` | The opening question when `VOICE_ASK_CALLER_TYPE=true`: "May I know if you are a patient or an employee?" A clear answer routes the call; an unclear one is asked about once, then the call carries on in the older way (describe the problem). Silence and "hello?" never count as failures. See 2.3 | `PATIENT_INTENT` (patient) / `COLLECT_DESCRIPTION` (employee) |
 | `PATIENT_INTENT` | **Patients only.** "Are you calling about booking an appointment or an existing appointment?" Recognizes book, reschedule, cancel, check, trouble booking, or another request; asked about once if unclear, then kept in the caller's own words | `PATIENT_DETAILS` / `COLLECT_NAME` |
 | `PATIENT_DETAILS` | **Patients only.** One optional question about the request (which appointment, a preferred time). "No" or "I don't know" moves on | `COLLECT_NAME` |
@@ -347,6 +348,45 @@ being asked for again. The call is not a patient request any more: it follows th
   appointment?"* and the call stays `PATIENT_SUPPORT`.
 - **Too late**: once a request has been filed for the call, "actually, I'm an employee" no longer changes the type of
   that call, and it also does not apply later in the flow, after the first question.
+
+### 2.4 Employee issue questions (`VOICE_DIAGNOSTIC_QUESTIONS`)
+
+The agent is an **intake** agent, not a troubleshooter. After an employee has described the problem (and said
+when it started and whether they can work), it asks the few questions IT needs for that kind of problem, then
+takes name, extension and email, so the technical details come first. It never asks the caller to try
+anything (restart, reconnect, sign in somewhere else), never says it has looked at or fixed anything, and never
+asks for a password or code. The question set is chosen from the category and description the agent already
+has (`app/voice/diagnostics.py`):
+
+| Issue type | Asks about (only what is not already known, at most 4) |
+|---|---|
+| Outlook / email | laptop, phone or both; crash, sign-in or send/receive; the error message; can they still send and receive email; others affected |
+| Server / storage | which server; which drive or folder; is an application already failing; free space left; space needed; others affected |
+| Network / VPN | office or remote; no connection, slow or one system (and which system); the error message; others affected |
+| Laptop / desktop | laptop or desktop; no power, slow/freezing or an error; the error text; recent changes |
+| Account / access | which account or application ("please don't tell me your password"); the exact message; did it work before |
+| Printer / peripherals | which device; cable or network; the error shown; others affected |
+| Other | what exactly happens; the error message; others affected |
+
+- **Adaptive.** What the description already says is not asked again ("Outlook crashes on my laptop" skips
+  the device and symptom questions); later questions depend on earlier answers (send/receive is not asked
+  about when that is the problem; "just one site" brings "which site or system?").
+- **Urgent signs are flagged, not handled.** A possible security incident ("I clicked a link in a phishing
+  email"), data loss, an application already failing, or everyone affected cuts the questions down to the
+  essential ones (which server, which drive), and the agent says "This needs our IT team right away, so I'll get
+  it logged now." The priority is raised to at least High (Critical for a security incident or everyone
+  affected), never lowered. Nothing is done about the problem on the call.
+- **Never invented, never a secret.** Answers are read with keywords and kept in the caller's own words;
+  "my password is ..." is stored as "password [removed]". No model call is made for these turns.
+- **On the ticket** (intake details, so the one AI summary and the email include it): the issue type, each
+  answer (or "from the problem description"), the escalation reason, what could not be established, and a
+  suggested next step for IT. Silence, a goodbye, or asking for a person during the questions works as
+  everywhere else; whatever was found is kept.
+- **The department is never guessed from the problem.** A department named in the description is only taken
+  as the caller's when they say so ("I'm in billing", "this is James from the front desk"); "the billing app is
+  failing" does not make the caller Billing, and the department question is asked. An answer to that question
+  that only names a system ("the billing application", "the HR portal") is not recorded as a department either.
+- Patients are never asked these questions.
 
 ### 2.2 Employee directory (`USER_DIRECTORY_CSV_PATH`)
 

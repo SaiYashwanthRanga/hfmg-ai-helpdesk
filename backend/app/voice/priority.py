@@ -119,6 +119,11 @@ def _order(priority: Priority) -> int:
     return _ORDER.index(priority)
 
 
+def order(priority: Priority) -> int:
+    """Rank of a priority (LOW = 0 ... URGENT = 3), for callers that only ever raise one."""
+    return _order(priority)
+
+
 def notice(assessment: Assessment) -> str | None:
     """The spoken priority sentence, or None when there is nothing worth announcing.
 

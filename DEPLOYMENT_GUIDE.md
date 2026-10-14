@@ -356,6 +356,25 @@ Then the functional checks:
 
 Phase 3's job queue removes this limitation entirely. Until then, treat restarts as mildly disruptive rather than free.
 
+**How long a notification is at risk, and how to tell whether it went out.** The helpdesk email is sent only
+after the ticket's AI summary is written (one background task: summary, then email), so with
+`ENABLE_AI_SUMMARY=true` the email can wait for the OpenAI timeout and its retries (`OPENAI_TIMEOUT_SECONDS`,
+`OPENAI_MAX_RETRIES`: up to about a minute when OpenAI is slow) and then for the mail API (`HFMG_MAIL_TIMEOUT_SECONDS`).
+A restart anywhere in that window loses the email. Nothing on the ticket records whether its email was sent:
+the backend log does. Search it for the ticket number:
+
+- `Sent created notification for HFMG-... to N recipient(s)`: the mail API accepted it (delivery is then up to Exchange).
+- `Failed to send created notification for HFMG-...` with an `HFMG mail API: ...` line before it: not sent and not retried.
+- `AI summary starting for ticket ...` with no "Sent"/"Failed" line after it: the process stopped first.
+
+A lost or failed notification has to be re-sent by hand (forward the ticket from the dashboard, or tell the team).
+Restart between calls, after the log shows the last ticket's "Sent" line.
+
+**Migrations and rollbacks.** Run `alembic upgrade head` *before* starting new code (new call states must exist
+before a call can enter them). To roll the code back, run `alembic downgrade <the old head>` *first*: it moves
+calls sitting in a newer state to the next question the old code knows, then removes the state. A call already
+in progress when new code starts carries on with its own flow; it is not sent back to newly added questions.
+
 ### Upgrade procedure
 
 ```bash

@@ -59,6 +59,7 @@ _STATE_HINTS: dict[str, str] = {
     "CONFIRM_CALLBACK_NUMBER": "The caller answers yes or no, or says a different ten-digit US phone number.",
     "COLLECT_ALTERNATE_CALLBACK_NUMBER": "The caller says a ten-digit US phone number, for example: 845-555-0142.",
     "COLLECT_EXTENSION": "The caller says a short office extension of 2 to 6 digits, for example: 1004, or that they don't have one.",
+    "COLLECT_DIAGNOSTICS": "An employee answers a question about their IT problem: a device, an error message, a server or drive name, an amount of disk space, or yes or no.",
     "COLLECT_EMAIL": (
         "The caller says or spells an email address, usually at hfmg.net, "
         "for example: m lopez at h f m g dot net, which is mlopez@hfmg.net."
@@ -110,6 +111,7 @@ _STATE_GATHER_HINTS: dict[str, list[str]] = {
     "CONFIRM_CALLBACK_NUMBER": ["yes", "no", "that's right", "that's not right"],
     "COLLECT_ALTERNATE_CALLBACK_NUMBER": ["oh", "double"],
     "COLLECT_EXTENSION": ["extension", "double", "I don't have one"],
+    "COLLECT_DIAGNOSTICS": ["Outlook", "VPN", "Wi-Fi", "error", "server", "drive", "gigabytes", "printer", "laptop", "desktop"],
     "COLLECT_NAME": ["billing", "front desk", "radiology", "finance", "HR", "lab", "reception", "family medicine"],
     "CONFIRM_EMAIL": ["yes", "no", "correct", "that's right"],
     "CONFIRM_NAME": ["yes", "no", "that's right", "that's wrong"],

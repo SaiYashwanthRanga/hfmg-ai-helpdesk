@@ -15,6 +15,7 @@ Voice-first rules this module enforces (docs/reviews/VOICE_CONVERSATION_REVIEW.m
   (app/voice/priority.py), so they cannot contradict each other.
 """
 
+import dataclasses
 import logging
 import re
 import uuid
@@ -37,7 +38,7 @@ from app.db.models import (
 from app.schemas.ticket import TicketCreate
 from app.services import ticket_service
 from app.services.user_directory import LookupResult, LookupStatus, UserDirectoryService, normalize_extension
-from app.voice import caller_routing, departments, directory_identity, names, nlu, reply, scripts
+from app.voice import caller_routing, departments, directory_identity, diagnostics, names, nlu, reply, scripts
 from app.voice import facts as facts_mod
 from app.voice import priority as priority_rules
 from app.services.ticket_text import DETAILS_MARKER, INTAKE_MARKER, TRANSCRIPT_MARKER
@@ -138,6 +139,7 @@ _GOODBYE_STATES = (
     VoiceCallState.COLLECT_DESCRIPTION,
     VoiceCallState.CLASSIFY_CALLER_TYPE,
     VoiceCallState.COLLECT_DETAILS,
+    VoiceCallState.COLLECT_DIAGNOSTICS,
     VoiceCallState.CONFIRM_IDENTITY,
     VoiceCallState.COLLECT_NAME,
     VoiceCallState.CONFIRM_NAME,
@@ -203,6 +205,8 @@ async def handle_turn(
             return await _phone_not_understood(db, session, "")
         if session.state == VoiceCallState.COLLECT_EXTENSION:
             return await _handle_extension(db, session, "", directory)  # optional: never a misunderstanding
+        if session.state == VoiceCallState.COLLECT_DIAGNOSTICS:
+            return await _handle_diagnostics(db, session, "")  # unanswered, not a misunderstanding
         return await _handle_failure(db, session)
 
     if session.state in _GOODBYE_STATES and nlu.is_goodbye(utterance):
@@ -219,6 +223,7 @@ async def handle_turn(
         VoiceCallState.COLLECT_DESCRIPTION: _handle_description,
         VoiceCallState.CLASSIFY_CALLER_TYPE: _handle_caller_type_clarification,
         VoiceCallState.COLLECT_DETAILS: _handle_details,
+        VoiceCallState.COLLECT_DIAGNOSTICS: _handle_diagnostics,
         VoiceCallState.CONFIRM_IDENTITY: lambda d, s, u: _handle_identity_confirmation(d, s, u, directory),
         VoiceCallState.COLLECT_NAME: _handle_name,
         VoiceCallState.CONFIRM_NAME: _handle_name_confirmation,
@@ -280,6 +285,54 @@ def _set_name(
             name, spelled=spelled, model_confidence=model_confidence, stt_confidence=stt_confidence
         ),
     )
+
+
+#: Words that make a department name part of a system's name ("the billing app"), not the caller's department.
+_SYSTEM_NOUNS = r"(?:app|apps|application|system|software|portal|server|program|report|reports|module|screen|queue|" \
+                r"printer|drive|folder|share|email|account|website|site|computer|pc|machine|scanner)"
+#: The caller saying where they work: "I'm in billing", "this is James from the front desk", "billing department".
+_OWN_DEPARTMENT = re.compile(
+    r"\b(?:i'?m|i am|we'?re|we are|i work|we work|working|calling)\s+(?:in|with|for|at|on|from|over in)\b"
+    r"|\bthis is\b[^.?!]{0,40}?\b(?:from|in|with|at)\b"
+    r"|\b(?:department|dept)\b",
+    re.IGNORECASE,
+)
+
+
+def _last_caller_words(session: VoiceCallSession) -> str:
+    return next((t.get("text") or "" for t in reversed(session.turns or []) if t.get("role") == "caller"), "")
+
+
+def _department_mentions(utterance: str, department: str) -> list[re.Match]:
+    """Where the caller said this department: as given, by its canonical name, or by one of its aliases
+    ("HR" for Human Resources)."""
+    text = (utterance or "").lower()
+    match = departments.canonicalize(department)
+    canonical = match.name if match else None
+    words = {w for w in {(department or "").lower(), (canonical or "").lower()} if w}
+    words |= {alias for alias, target in departments.ALIASES.items() if canonical and target == canonical}
+    return [m for w in words for m in re.finditer(rf"\b{re.escape(w)}\b", text)]
+
+
+def _only_a_system_name(utterance: str, department: str) -> bool:
+    """True when every mention of the department is part of a system's name ("the billing application",
+    "the HR portal"), so it says nothing about where the caller works."""
+    text = (utterance or "").lower()
+    mentioned = _department_mentions(text, department)
+    return bool(mentioned) and all(
+        re.match(rf"\s*(?:\w+\s+)?{_SYSTEM_NOUNS}\b", text[m.end():]) for m in mentioned
+    )
+
+
+def _department_stated(utterance: str, department: str) -> bool:
+    """Did the caller say this is *their* department? A department taken from the problem description is only
+    kept when they did ("I'm in billing", "James from the front desk"). A department word that is part of an
+    application or system name ("the billing app is failing") never makes it the caller's department: the
+    department question is asked instead. Never guessed from what the problem is about."""
+    text = (utterance or "").lower()
+    if not _department_mentions(text, department) or _only_a_system_name(text, department):
+        return False
+    return bool(_OWN_DEPARTMENT.search(text))
 
 
 def _set_department(session: VoiceCallSession, raw: str | None) -> None:
@@ -520,7 +573,9 @@ def _record_description(session: VoiceCallSession, result: nlu.TurnResult) -> No
     # issue on the same call keeps name and department), fill the gaps.
     if not collected.get("caller_name") and extras.get("caller_name"):
         _set_name(session, extras["caller_name"], model_confidence=extras.get("name_confidence"))
-    if not collected.get("department") and extras.get("department"):
+    if not collected.get("department") and extras.get("department") and _department_stated(
+        _last_caller_words(session), extras["department"]
+    ):
         _set_department(session, extras["department"])
     _apply_priority_rules(session)
 
@@ -617,7 +672,9 @@ async def _handle_name(db: AsyncSession, session: VoiceCallSession, utterance: s
     department = result.extras.get("department")
     if result.value and not name_known:
         _set_name(session, result.value, model_confidence=result.extras.get("name_confidence"))
-    if department:
+    # The answer to "which department?" is taken as said -- unless the department is only part of a system's name
+    # ("the billing application"): that is never the caller's department, so none is recorded.
+    if department and not _only_a_system_name(utterance, department):
         _set_department(session, department)
     if not session.collected.get("caller_name"):
         # The name is required; the department alone is not enough.
@@ -1198,6 +1255,11 @@ def _details_question(session: VoiceCallSession) -> str:
 def _apply_priority_rules(session: VoiceCallSession) -> None:
     """Decide the priority *and* why, from one rule (app/voice/priority.py)."""
     assessment = _assessment(session)
+    # What the diagnostic questions found (a possible security incident, data loss, a failing service,
+    # everyone affected) can only raise the priority, never lower it.
+    floor = diagnostics.priority_floor(session.collected.get("diagnostics"))
+    if floor is not None and priority_rules.order(floor[0]) > priority_rules.order(assessment.priority):
+        assessment = dataclasses.replace(assessment, priority=floor[0], reason=floor[1], rule="diagnostics")
     update_collected(
         session,
         priority=assessment.priority.value,
@@ -1272,6 +1334,15 @@ async def _next_step(
             update_collected(session, pending_question=clarification)
             return ask(VoiceCallState.COLLECT_DETAILS, _clarification_prompt(session, clarification))
 
+        # The issue before the paperwork: the few questions IT needs for this kind of problem come before
+        # name, extension and email, so the technical details are never held up by them.
+        if settings.voice_diagnostic_questions and collected.get("description"):
+            prompt, notice = _diagnostics_next(session)
+            if notice:
+                acknowledgement = f"{acknowledgement} {notice}" if acknowledgement else notice
+            if prompt:
+                return ask(VoiceCallState.COLLECT_DIAGNOSTICS, prompt)
+
     # --- name (both flows) ---
     if not collected.get("caller_name"):
         if patient:
@@ -1320,6 +1391,60 @@ async def _next_step(
         return _ask_for_email(session, acknowledgement=acknowledgement)
 
     return await _finish_collection(db, session, preamble=acknowledgement)
+
+
+# --- diagnostic questions (employee calls) ------------------------------------------------------
+#
+# See app/voice/diagnostics.py: the question set is chosen from the problem already described, and every
+# answer is read in code (no model call). Nothing is fixed or tried on the call; this only collects details.
+
+
+#: The questions start straight after the problem: from its description, the when/impact details, or the
+#: patient-or-employee clarification of the older flow.
+_DIAGNOSTICS_START_STATES = (
+    VoiceCallState.COLLECT_DESCRIPTION,
+    VoiceCallState.COLLECT_DETAILS,
+    VoiceCallState.CLASSIFY_CALLER_TYPE,
+)
+
+
+def _diagnostics_next(session: VoiceCallSession) -> tuple[str | None, str | None]:
+    """(the next question, a notice to say first). (None, None) when the questions are over."""
+    c = session.collected
+    state = c.get("diagnostics")
+    if state is None:
+        if session.state not in _DIAGNOSTICS_START_STATES:
+            # A call already past the problem (in progress when this code was deployed, or one that never had
+            # the questions) is not sent back to them in the middle of the paperwork.
+            return None, None
+        state = diagnostics.begin(c.get("category"), c.get("description"), c.get("affected_scope"))
+    if state.get("done"):
+        return None, None
+    found = diagnostics.next_prompt(state)
+    if found is None:
+        notice = None
+        if diagnostics.urgent_reason(state) and not state.get("urgent_told"):
+            notice = diagnostics.URGENT_NOTICE
+            state = {**state, "urgent_told": True}
+        update_collected(session, diagnostics={**state, "done": True, "pending": None})
+        _apply_priority_rules(session)
+        return None, notice
+    key, prompt = found
+    update_collected(session, diagnostics={**state, "pending": key})
+    return prompt, None
+
+
+async def _handle_diagnostics(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
+    if utterance and nlu.mentions_escalation(utterance):
+        return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
+    state = session.collected.get("diagnostics")
+    if not state or not state.get("pending"):
+        return await _next_step(db, session)
+    state, updates = diagnostics.record(state, utterance)
+    update_collected(session, diagnostics=state, **updates)
+    if updates.get("affected_scope"):
+        _apply_priority_rules(session)
+    return await _next_step(db, session)
 
 
 # --- office extension (employee calls) ----------------------------------------------------------
@@ -1459,7 +1584,9 @@ def _department_only(utterance: str) -> departments.DepartmentMatch | None:
     if not words or len(words) > 4 or nlu.mentions_escalation(utterance):
         return None
     match = departments.canonicalize(utterance)
-    return match if match is not None and match.verified else None
+    if match is None or not match.verified or _only_a_system_name(utterance, match.name):
+        return None  # "the billing application" is a system, not a department: left to the model
+    return match
 
 
 _EMAIL_CHECK = TypeAdapter(EmailStr)
@@ -2128,6 +2255,7 @@ def _intake_details(collected: dict) -> str:
         ("Read-back", "caller said the summary was not fully correct; details unverified" if collected.get("summary_unresolved") else None),
         ("Read-back", "not done: the caller ended the call first" if collected.get("summary_skipped") else None),
     ]
+    lines += diagnostics.ticket_lines(collected.get("diagnostics"))
     return "\n".join(f"{label}: {value}" for label, value in lines if value)
 
 

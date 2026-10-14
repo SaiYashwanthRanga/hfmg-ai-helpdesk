@@ -120,6 +120,9 @@ class Settings(BaseSettings):
     # Employee calls: ask once "Do you have an office extension number?" unless a caller-confirmed
     # directory entry already gives one. Off = no extension question (the directory one is still kept).
     voice_ask_extension: bool = True
+    # Employee calls: after the problem is described, ask the few questions IT needs for that kind of problem
+    # (app/voice/diagnostics.py), before name and contact details. No troubleshooting steps are suggested.
+    voice_diagnostic_questions: bool = True
     # The SIP gateway's HTTP timeout for one /turn attempt (its setting, mirrored here so a
     # mismatch is caught at startup instead of showing up as calls that hang up).
     voice_gateway_attempt_timeout_seconds: float = 8.0

@@ -476,7 +476,8 @@ async def test_intake_details_are_written_onto_the_ticket(db_session, monkeypatc
         nlu, "interpret_description",
         _async(_described(caller_name="James Carter", department="Front desk", started="8:30 today", work_blocked=True)),
     )
-    await orchestrator.handle_turn(db_session, session, utterance="...")
+    # The department is only taken from a description that says it is the caller's own.
+    await orchestrator.handle_turn(db_session, session, utterance="This is James Carter from the front desk, Outlook won't open")
     monkeypatch.setattr(nlu, "interpret_email", _async(nlu.TurnResult(unable_to_determine=False, extras={"declined": True})))
     await orchestrator.handle_turn(db_session, session, utterance="skip")
     await db_session.commit()
