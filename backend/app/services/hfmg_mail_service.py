@@ -6,8 +6,9 @@ list fields (To, Cc, ToList, CcList) are sent as one part per address, and an
 
 Every function returns True on success and False on any failure. None of them
 raise: they are called from FastAPI BackgroundTasks, where an exception is only
-logged by the ASGI server. Logs carry the action, HTTP status and error class,
-never recipients, subjects or bodies.
+logged by the ASGI server. Logs carry the action, HTTP status, error class and,
+for a rejected request, the API's own short reason (addresses masked) -- never
+recipients, subjects or bodies.
 
 Retries: only when the connection itself failed (the request never reached the
 API). Read timeouts and HTTP error statuses are NOT retried, because the API
@@ -21,6 +22,7 @@ untrusted text before passing it in; see HfmgInternalMailProvider.
 import asyncio
 import logging
 import random
+import re
 import uuid
 from collections.abc import Sequence
 
@@ -166,10 +168,30 @@ async def _post(
             logger.info("HFMG mail API: %s succeeded (HTTP %s)", action, response.status_code)
             return True
 
-        logger.error("HFMG mail API: %s failed with HTTP %s", action, response.status_code)
+        logger.error(
+            "HFMG mail API: %s failed with HTTP %s: %s", action, response.status_code, _api_reason(response)
+        )
         return False
 
     return False
+
+
+_ADDRESS = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_MAX_REASON = 200
+
+
+def _api_reason(response: httpx.Response) -> str:
+    """The API's own short explanation of a rejected request ("At least one recipient is required"), so a failure
+    in the logs says why. Seen on the server: a bare "HTTP 400" that could not be diagnosed. Any email address in it
+    is replaced, it is cut to one short line, and nothing we sent (recipients, subject, body) is ever added."""
+    try:
+        text = response.text
+    except Exception:
+        return "(no readable reason)"
+    reason = _ADDRESS.sub("<address>", " ".join(text.split()))
+    if len(reason) > _MAX_REASON:
+        reason = reason[:_MAX_REASON] + "..."
+    return reason or "(no reason given)"
 
 
 async def send_email(

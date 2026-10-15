@@ -49,7 +49,13 @@ SELF_HELP = re.compile(
     ("Password", "I'm locked out of my account.", "account"),
     ("eClinicalWorks", "I can't log in to eClinicalWorks.", "account"),
     ("Printer", "The front desk printer is jammed.", "printer"),
-    ("Other", "My keyboard stopped working.", "printer"),
+    # A keyboard, mouse or headset gets its own questions, never the printer ones -- even filed under Printer.
+    ("Other", "My keyboard stopped working.", "peripheral"),
+    ("Printer", "My wired keyboard has some keys not working.", "peripheral"),
+    ("Network", "My wireless mouse keeps losing connection.", "peripheral"),
+    ("Other", "My headset microphone is not working.", "peripheral"),
+    ("Printer", "The scanner won't scan to email.", "printer"),
+    ("Password", "The doctor can't log in.", "account"),  # "dock" is not "doctor"
     ("Microsoft 365", "Teams keeps showing me as away.", "other"),
     ("Other", "Something is wrong with the scheduling board.", "other"),
 ])

@@ -178,6 +178,8 @@ LATE_SERVER_NAME = "What's the name of the other server?"
 LATE_SERVER_CORRECT_NAME = "What's the correct server name?"
 LATE_SERVER_ADDED = "Thanks, I've added that server."
 LATE_SERVER_CORRECTED = "Thanks, I've corrected the server name."
+# The caller says the issue was misunderstood but not what it is (see orchestrator._handle_diagnostics).
+ISSUE_WHAT_IS_IT = "Sorry about that. What device or system is giving you trouble?"
 # After one detail is corrected at the read-back: just that is confirmed, not the whole summary again.
 SUMMARY_REST_CORRECT = "Is everything else correct?"
 SUMMARY_SERVER_NOTED = "Thanks, I have {server} for the server."

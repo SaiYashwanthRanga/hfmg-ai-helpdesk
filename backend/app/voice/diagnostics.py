@@ -55,6 +55,8 @@ class Playbook:
     label: str
     questions: tuple[Question, ...]
     next_action: Callable[[Values], str]
+    #: What the caller's problem is NOT, said back after a correction: "..., not a printer". Blank: not said.
+    noun: str = ""
 
 
 _SCOPE = Question("scope", "Others affected", "Is anyone else having the same problem?", "yes_no")
@@ -82,7 +84,7 @@ def _said(values: Values, key: str, default: str = "") -> str:
 # --- playbooks ------------------------------------------------------------------------------------------------
 
 OUTLOOK = Playbook(
-    "outlook", "Outlook / email",
+    "outlook", "Outlook / email", noun="Outlook or email",
     questions=(
         Question("device", "Device", "Is this happening on your laptop, your phone, or both?", "choice",
                  (("both", ("both", "everywhere")), ("phone", ("phone", "mobile", "iphone", "android", "cell")),
@@ -112,7 +114,7 @@ OUTLOOK = Playbook(
 )
 
 SERVER_STORAGE = Playbook(
-    "server_storage", "Server / storage",
+    "server_storage", "Server / storage", noun="server storage",
     questions=(
         Question("server", "Server", "Which server is it? The server name, if you know it.", "host", essential=True),
         Question("drive", "Drive or folder", "Which drive or shared folder is running out of space?", "text",
@@ -136,7 +138,7 @@ SERVER_STORAGE = Playbook(
 )
 
 SERVER_ACCESS = Playbook(
-    "server_access", "Server / system access",
+    "server_access", "Server / system access", noun="a server",
     questions=(
         Question("server", "Server", "Which server is it? The server name or address, if you know it.", "host",
                  essential=True),
@@ -158,7 +160,7 @@ SERVER_ACCESS = Playbook(
 )
 
 NETWORK = Playbook(
-    "network", "Network / VPN",
+    "network", "Network / VPN", noun="the network",
     questions=(
         Question("location", "Location", "Are you in the office or working remotely?", "choice",
                  (("remote", ("home", "remote", "remotely", "away", "off site", "offsite", "travel")),
@@ -187,7 +189,7 @@ NETWORK = Playbook(
 )
 
 DEVICE = Playbook(
-    "device", "Laptop / desktop",
+    "device", "Laptop / desktop", noun="your computer itself",
     questions=(
         Question("device", "Device", "Is it a laptop or a desktop computer?", "choice",
                  (("laptop", ("laptop", "notebook", "surface")), ("desktop", ("desktop", "tower", "pc", "workstation")))),
@@ -220,7 +222,7 @@ _LOGIN_WORDS = frozenset("""
 """.split())
 
 ACCOUNT = Playbook(
-    "account", "Account / access",
+    "account", "Account / access", noun="a login or account",
     questions=(
         Question("account", "Account or application",
                  "Which account or application can't you get into? Please don't tell me your password.", "text",
@@ -237,7 +239,7 @@ ACCOUNT = Playbook(
 )
 
 PRINTER = Playbook(
-    "printer", "Printer / peripherals",
+    "printer", "Printer / scanner", noun="a printer",
     questions=(
         Question("printer", "Device", "Which printer or device is it? The name or where it is.", "text"),
         Question("connection", "Connection",
@@ -253,6 +255,47 @@ PRINTER = Playbook(
     ),
 )
 
+#: Desk devices other than printers. Seen on a test call: a wired keyboard got the printer questions ("Which printer
+#: or device is it?", "a shared network printer?", "a paper jam?") and a print-queue next step.
+_PERIPHERAL_DEVICES = (
+    ("keyboard", ("keyboard", "keys", "key board")),
+    ("mouse", ("mouse", "mice", "trackpad", "touchpad")),
+    ("headset", ("headset", "headphone", "earphone", "earbud", "microphone")),
+    ("monitor", ("monitor", "second screen", "external screen")),
+    ("webcam", ("webcam", "web cam", "camera")),
+    ("docking station", ("docking", "dock")),
+    ("speakers", ("speaker",)),
+)
+
+
+def _peripheral_next_action(v: Values) -> str:
+    device = v.get("device") if v.get("device") not in (None, "none") else "device"
+    connection = {"wired": "the cable and the USB port", "wireless": "the batteries, the receiver or Bluetooth pairing"}
+    check = connection.get(v.get("connection") or "", "how it is connected")
+    state = {"dead": "completely unresponsive", "partial": "partly working (some keys or buttons)"}.get(
+        v.get("symptom") or "", "symptom not established")
+    return (f"Check the caller's {device} ({state}): {check}, then the device itself on another port or computer; "
+            "replace it through the approved process if it is faulty.")
+
+
+PERIPHERAL = Playbook(
+    "peripheral", "Keyboard / mouse / other device", noun="a keyboard, mouse or other desk device",
+    questions=(
+        Question("device", "Device", "Which device is it: a keyboard, a mouse, a headset, a monitor, or something else?",
+                 "choice", _PERIPHERAL_DEVICES),
+        Question("connection", "Connection", "Is it connected with a cable, or is it wireless or Bluetooth?", "choice",
+                 (("wireless", ("wireless", "bluetooth", "dongle", "receiver", "cordless")),
+                  ("wired", ("wired", "cable", "usb", "cord", "plugged")))),
+        Question("symptom", "Symptom",
+                 "Is it completely unresponsive, or are only some keys or buttons not working?", "choice",
+                 (("partial", ("some", "few", "certain", "a couple", "sticky", "stuck", "intermittent", "sometimes",
+                               "on and off", "only")),
+                  ("dead", ("completely", "unresponsive", "nothing", "not at all", "dead", "none of", "at all",
+                            "whole", "entire")))),
+    ),
+    next_action=_peripheral_next_action,
+)
+
 OTHER = Playbook(
     "other", "Other",
     questions=(
@@ -263,7 +306,8 @@ OTHER = Playbook(
     next_action=lambda v: "Call the caller back to diagnose; see what they described.",
 )
 
-PLAYBOOKS = {p.name: p for p in (OUTLOOK, SERVER_STORAGE, SERVER_ACCESS, NETWORK, DEVICE, ACCOUNT, PRINTER, OTHER)}
+PLAYBOOKS = {p.name: p for p in (OUTLOOK, SERVER_STORAGE, SERVER_ACCESS, NETWORK, DEVICE, ACCOUNT, PRINTER, PERIPHERAL,
+                                 OTHER)}
 
 #: Running out of space: only these words, never "server" alone. A server that "is not connecting" is an access
 #: problem; storage is only asked about when the caller says something about space.
@@ -272,8 +316,15 @@ _STORAGE_WORDS = ("disk space", "out of space", "running out of space", "running
                   "space left", "free space", "server is full", "share is full", "volume is full", "full disk")
 _SERVER_WORDS = ("server",)
 _EMAIL_WORDS = ("email", "e-mail", "mail", "inbox", "calendar")
-_PRINTER_WORDS = ("printer", "print", "scanner", "scan", "toner", "keyboard", "mouse", "headset", "monitor",
-                  "webcam", "docking", "dock")
+_PRINTER_WORDS = ("printer", "print", "scanner", "scan", "toner")
+_PERIPHERAL_WORDS = tuple(w for _, words in _PERIPHERAL_DEVICES for w in words)
+
+
+def _says(text: str, words: tuple[str, ...]) -> bool:
+    """Any of the words, at the start of a word: "dock" is not "doctor", "print" is not "fingerprint"."""
+    return any(re.search(rf"\b{re.escape(w)}", text) for w in words)
+
+
 _NETWORK_WORDS = ("vpn", "wifi", "wi-fi", "internet", "network", "connection", "connect")
 _ACCOUNT_WORDS = ("password", "locked out", "lock out", "log in", "login", "sign in", "signin", "access", "account",
                   "permission", "mfa", "authenticator")
@@ -289,7 +340,13 @@ def choose(category: str | None, description: str | None) -> Playbook:
         return SERVER_ACCESS
     if "outlook" in text or (category == "Microsoft 365" and any(w in text for w in _EMAIL_WORDS)):
         return OUTLOOK
-    if category == "Printer" or any(w in text for w in _PRINTER_WORDS):
+    # The device the caller named decides, not the broad category: a keyboard the model filed under Printer still
+    # gets keyboard questions, and only an actual printer or scanner gets printer ones.
+    if any(w in text for w in _PRINTER_WORDS):
+        return PRINTER
+    if _says(text, _PERIPHERAL_WORDS):
+        return PERIPHERAL
+    if category == "Printer":
         return PRINTER
     if category == "Network" or any(w in text for w in _NETWORK_WORDS):
         return NETWORK
@@ -397,6 +454,7 @@ _PLAIN_WORDS = {
     "i", "i'm", "im", "am", "a", "an", "the", "my", "in", "at", "on", "from", "of", "with", "and", "or", "it", "it's",
     "its", "is", "we", "we're", "our", "working", "work", "today", "now", "right", "currently", "just", "only",
     "yes", "yeah", "yep", "no", "um", "uh", "so", "well", "actually", "okay", "ok", "both", "there", "here", "still",
+    "not", "aren't", "isn't", "don't", "doesn't", "won't", "can't", "keys", "key", "buttons", "button", "works",
 }
 
 
@@ -440,9 +498,11 @@ def _parse(question: Question, utterance: str) -> str | None:
     return clean(utterance)
 
 
-def begin(category: str | None, description: str | None, affected_scope: str | None) -> dict:
-    """Pick the question set and fill in what the description (or earlier answers) already say."""
-    playbook = choose(category, description)
+def begin(
+    category: str | None, description: str | None, affected_scope: str | None, playbook: Playbook | None = None
+) -> dict:
+    """Pick the question set (or use `playbook`) and fill in what the description (or earlier answers) already say."""
+    playbook = playbook or choose(category, description)
     values: Values = {}
     text = (description or "").lower()
     named = hostnames(description or "")
@@ -536,11 +596,143 @@ class _Known(dict):
 CLARIFY = "Sorry, I didn't catch that."
 
 
+# --- answers that are not answers: confusion, an echo of the question, a correction ------------------------------
+#
+# Seen on a test call: "Sorry, I didn't get you" was saved as the device and "Oh my God, you took the wrong..." as
+# the error message, and "you understood it wrong" / "it's just the wired keyboard" were taken as answers to printer
+# questions. Confusion is asked about again and never stored; a correction changes the questions to the right ones.
+
+#: The caller did not follow the question.
+_CONFUSED = re.compile(
+    r"\b(?:did ?n'?t|did not|don'?t|do not|could ?n'?t|could not|can'?t)\s+(?:get|catch|understand|hear|follow)"
+    r"(?:\s+(?:you|that|it|what you said|the question|what you mean))?\s*[.?!]*$"
+    r"|\bwhat do you mean\b|\b(?:repeat|say) (?:that|it|the question)\b|\bsay again\b|\bcome again\b|\bpardon\b"
+    r"|\bi'?m (?:confused|lost)\b|\bnot sure what you(?:'re| are)? asking\b|^\W*(?:sorry|what|huh|excuse me)\W*$",
+    re.IGNORECASE,
+)
+#: The caller says the agent has the problem wrong.
+_MISUNDERSTOOD = re.compile(
+    r"\byou(?:'ve| have)?\s+(?:understood|understand|heard|got|took|taken|have)\s+(?:it\s+|me\s+|that\s+|this\s+)?"
+    r"(?:all\s+)?wrong\b"
+    r"|\b(?:took|got|picked|have|has)\s+the\s+wrong\b|\bmisunderst|\bmisheard\b"
+    r"|\bthat'?s not what i (?:said|meant|mean)\b|\bwrong (?:device|thing|question|questions|problem|issue)\b"
+    r"|\bnothing to do with\b|\bi (?:never|didn'?t|did not) (?:say|said|mention|mentioned)\b"
+    r"|\bwhy\b[^.?!]{0,40}\b(?:asking|coming up|come up|came up|talking about|bringing up|ask me about)\b",
+    re.IGNORECASE,
+)
+#: "it's not a printer", "not the printer": the device being turned down.
+_NOT_THIS = re.compile(
+    r"\b(?:it'?s|it is|this is|that'?s|that is|is)\s+not\s+(?:about\s+)?(?:a|an|the|my)\s+(?P<what>[a-z-]+)"
+    r"|\bnot\s+(?:a|an|the)\s+(?P<other>[a-z-]+)",
+    re.IGNORECASE,
+)
+#: "I said keyboard", "it's just the wired keyboard": the caller naming what it really is.
+_I_SAID = re.compile(r"\b(?:i said|i told you|it'?s (?:just|only)|it is (?:just|only)|just (?:the|my|a))\b",
+                     re.IGNORECASE)
+_DEVICE_ADJECTIVE = r"(?:(?:wired|wireless|bluetooth|usb|external|new|old|second|work|office|desk|laptop)\s+)?"
+#: A caller says the agent has it wrong this many times before the questions stop changing.
+MAX_ISSUE_CORRECTIONS = 2
+
+#: Mentioned devices and systems, in the order the question sets are chosen in (see `choose`).
+_MENTION_ORDER = (
+    (SERVER_STORAGE, _STORAGE_WORDS), (SERVER_ACCESS, _SERVER_WORDS), (OUTLOOK, ("outlook",) + _EMAIL_WORDS),
+    (PRINTER, _PRINTER_WORDS), (PERIPHERAL, _PERIPHERAL_WORDS), (NETWORK, _NETWORK_WORDS),
+    (ACCOUNT, _ACCOUNT_WORDS), (DEVICE, _DEVICE_WORDS),
+)
+
+
+def is_confused(question: Question | None, utterance: str) -> bool:
+    """"Sorry, I didn't get you", "What do you mean?", or the question read back to the agent."""
+    if _CONFUSED.search(utterance or ""):
+        return True
+    return question is not None and _echoes(question.prompt, utterance)
+
+
+def _echoes(prompt: str, utterance: str) -> bool:
+    """The caller repeating the question ("Which printer or device is it?") rather than answering it."""
+    said = re.findall(r"[a-z']+", (utterance or "").lower())
+    asked = set(re.findall(r"[a-z']+", (prompt or "").lower()))
+    return len(said) >= 3 and sum(w in asked for w in said) / len(said) >= 0.8
+
+
+def _mentioned(text: str) -> list[Playbook]:
+    lowered = (text or "").lower()
+    return [playbook for playbook, words in _MENTION_ORDER if _says(lowered, words)]
+
+
+def _device_phrase(text: str, playbook: Playbook) -> str | None:
+    """How the caller named the device ("the wired keyboard" -> "wired keyboard")."""
+    words = dict(_MENTION_ORDER).get(playbook) or ()
+    lowered = (text or "").lower()
+    for word in sorted(words, key=len, reverse=True):
+        match = re.search(rf"\b{_DEVICE_ADJECTIVE}{re.escape(word.strip())}\w*", lowered)
+        if match:
+            return match.group(0).strip()
+    return None
+
+
+def correction(state: dict, utterance: str) -> dict | None:
+    """The caller says the questions are about the wrong thing. None when they did not.
+
+    Returns {"playbook": the question set for what they say it really is, or None when they did not say, "thing":
+    how they named it}. Only an explicit correction counts -- "it says something went wrong" is an error message,
+    not a correction -- and after MAX_ISSUE_CORRECTIONS the questions stop changing."""
+    if (state.get("corrections") or 0) >= MAX_ISSUE_CORRECTIONS:
+        return None
+    text = utterance or ""
+    current = PLAYBOOKS[state["playbook"]]
+    others = [p for p in _mentioned(text) if p is not current]
+    turned_down = [m.group("what") or m.group("other") for m in _NOT_THIS.finditer(text)]
+    rejects_current = any(current in _mentioned(word) for word in turned_down if word)
+    if not (_MISUNDERSTOOD.search(text) or rejects_current or (_I_SAID.search(text) and others)):
+        return None
+    new = others[0] if others else None
+    return {"playbook": new.name if new else None, "thing": _device_phrase(text, new) if new else None}
+
+
+def restart(state: dict, playbook: Playbook, description: str | None, said: str, affected_scope: str | None) -> dict:
+    """Start the right question set after a correction. What was recorded under the wrong one is dropped (it
+    answered the wrong questions); the correction itself is kept for the ticket."""
+    fresh = begin(None, f"{description or ''} {said}", affected_scope, playbook=playbook)
+    from_description = begin(None, description, affected_scope, playbook=playbook)["values"]
+    for key in [k for k in fresh["values"] if k.endswith("_said")]:
+        if fresh["values"][key] == "(from the problem description)" and key not in from_description:
+            fresh["values"][key] = "(from the caller's correction)"  # say where it really came from
+    fresh["values"]["issue_corrected"] = clean(said)
+    fresh["values"]["issue_corrected_from"] = PLAYBOOKS[state["playbook"]].label
+    fresh["corrections"] = (state.get("corrections") or 0) + 1
+    fresh["flags"] = sorted(set(fresh["flags"]) | set(state.get("flags") or []))
+    return fresh
+
+
+def asking_what_it_is(state: dict) -> dict:
+    """The caller said it is wrong but not what it is: ask, and keep the corrections count."""
+    return {**state, "pending": None, "asking_issue": True, "corrections": (state.get("corrections") or 0) + 1,
+            "issue_corrected_said": None}
+
+
+def named_in_answer(state: dict, utterance: str) -> tuple[Playbook, str | None]:
+    """The answer to "what is giving you trouble?": the question set for what they named, else Other."""
+    current = PLAYBOOKS[state["playbook"]]
+    others = [p for p in _mentioned(utterance) if p is not current]
+    new = others[0] if others else OTHER
+    return new, (_device_phrase(utterance, new) if new is not OTHER else None)
+
+
+def restatement(old: Playbook, new: Playbook, thing: str | None) -> str:
+    """"Sorry about that. I understand now that you're having a problem with your wired keyboard, not a printer.\""""
+    if not thing:
+        return "Sorry about that."
+    not_that = f", not {old.noun}" if old.noun and old is not new else ""
+    return f"Sorry about that. I understand now that you're having a problem with your {thing}{not_that}."
+
+
 def record(state: dict, utterance: str) -> tuple[dict, dict, str | None]:
     """Apply the caller's answer to the pending question.
 
     Returns (new state, updates for `collected`, a re-ask or None). A non-answer (silence, "hello?", "um") is
-    asked about once more, briefly; a second one moves on with that question unanswered."""
+    asked about once more, briefly; a second one moves on with that question unanswered. Confusion ("Sorry, I
+    didn't get you") and the question read back are treated the same way: asked again, never stored as the answer."""
     state = {**state, "values": dict(state["values"]), "asked": list(state["asked"]),
              "retried": list(state.get("retried") or [])}
     key = state.get("pending")
@@ -558,7 +750,8 @@ def record(state: dict, utterance: str) -> tuple[dict, dict, str | None]:
     unclear_choice = question is not None and question.kind == "choice" and not is_non_answer(utterance) and (
         _parse(question, utterance) is None
     )
-    if question is not None and (is_non_answer(utterance) or unclear_choice) and question.key not in state["retried"]:
+    confused = question is not None and not is_non_answer(utterance) and is_confused(question, utterance)
+    if question is not None and (is_non_answer(utterance) or unclear_choice or confused) and question.key not in state["retried"]:
         state["retried"].append(question.key)
         return state, updates, f"{CLARIFY} {question.prompt}"
     vague = question is not None and not _DECLINE.match((utterance or "").lower()) and _names_nothing(question, utterance)
@@ -568,10 +761,10 @@ def record(state: dict, utterance: str) -> tuple[dict, dict, str | None]:
         return state, updates, question.clarify or question.prompt
     if question is not None:
         state["asked"].append(question.key)
-        value = _parse(question, utterance)
+        value = None if confused else _parse(question, utterance)
         if value is not None:
             state["values"][question.key] = value
-        if utterance.strip() and not is_non_answer(utterance):
+        if utterance.strip() and not is_non_answer(utterance) and not confused:
             state["values"][f"{question.key}_said"] = clean(utterance)
         if question.kind == "host":
             extra = hostnames(utterance)[1:]
@@ -685,14 +878,27 @@ def _resolve_conflict(state: dict, utterance: str, question: Question) -> tuple[
     return state, {}, None
 
 
-def ticket_lines(state: dict | None) -> list[tuple[str, str]]:
+def ticket_lines(
+    state: dict | None, description: str | None = None, category: str | None = None
+) -> list[tuple[str, str]]:
     """The diagnostics section of the ticket's intake details: each answer in the caller's words, what is still
-    missing, the escalation reason, and a suggested next step for IT."""
+    missing, the escalation reason, and a suggested next step for IT.
+
+    With `description`: a ticket whose questions no longer match the final description (it was changed at the
+    read-back, say) is flagged for review rather than filed looking consistent."""
     if not state:
         return []
     playbook = PLAYBOOKS[state["playbook"]]
     values = state.get("values") or {}
     lines: list[tuple[str, str]] = [("Issue type", playbook.label)]
+    if values.get("issue_corrected"):
+        lines.append(("Issue corrected", f"the caller said the first questions ({values.get('issue_corrected_from')}) "
+                                         f"were wrong: \"{values['issue_corrected']}\""))
+    elif description:
+        expected = choose(category, description)
+        if expected is not playbook:
+            lines.append(("Issue type check", f"the questions asked were for {playbook.label}, but the description "
+                                              f"reads as {expected.label}; review before acting"))
     missing = []
     for question in playbook.questions:
         said = values.get(f"{question.key}_said")

@@ -271,6 +271,10 @@ async def handle_turn(
     if extension_noted and (nlu.is_goodbye(utterance) or _only_goodbye(utterance)):
         # A longer "... and my extension is 3006, thanks, bye bye": the extension is recorded, then the call ends.
         return _lead_with(session, await _caller_leaving(db, session), extension_noted)
+    if not extension_noted:
+        renamed = await _maybe_name_change(db, session, utterance)
+        if renamed is not None:
+            return renamed
 
     corrected = await _maybe_switch_caller_type(db, session, utterance)
     if corrected is not None:
@@ -321,11 +325,15 @@ def _last_caller_confidence(session: VoiceCallSession) -> float | None:
 
 def _set_name(
     session: VoiceCallSession, name: str, *, model_confidence: str | None = None, spelled: bool = False
-) -> None:
-    """Record the caller's name and decide whether it needs reading back.
+) -> bool:
+    """Record the caller's name and decide whether it needs reading back. False (nothing recorded) for something
+    that is plainly not a name ("Name", "Hi name"): it is never stored or read back to the caller.
 
     Only names we are unsure of cost the caller a turn (app/voice/names.py).
     """
+    if not names.plausible(name):
+        logger.info("Call %s: a reading of the name that is not a name was dropped", session.call_id)
+        return False
     stt_confidence = _last_caller_confidence(session)
     confidence = names.name_confidence(
         name,
@@ -346,6 +354,7 @@ def _set_name(
             name, spelled=spelled, model_confidence=model_confidence, stt_confidence=stt_confidence
         ),
     )
+    return True
 
 
 #: Words that make a department name part of a system's name ("the billing app"), not the caller's department.
@@ -723,6 +732,7 @@ async def _handle_details(db: AsyncSession, session: VoiceCallSession, utterance
         update_collected(session, **{k: v for k, v in values.items() if v is not None})
         _apply_priority_rules(session)
     _started_from_words(session, utterance, answers_when=asked_when)
+    _work_impact_from_words(session, utterance)
     return await _next_step(db, session)
 
 
@@ -737,6 +747,23 @@ def _started_from_words(session: VoiceCallSession, utterance: str, *, answers_wh
     said = nlu.quick_started(utterance, answers_when=answers_when)
     if said:
         update_collected(session, started=said)
+
+
+def _work_impact_from_words(session: VoiceCallSession, utterance: str) -> None:
+    """The caller said plainly whether they can work ("..., but I can still work") while answering something else.
+
+    Seen on a test call: the model read "it's not working" (the device) as "can't work", the caller later said "I can
+    still work", and the ticket was filed High because "you can't work". What the caller says about their own work
+    is recorded as their answer -- it outranks a reading of the description -- and the priority is decided again."""
+    if _is_patient_call(session):
+        return
+    said = nlu.quick_work_impact(utterance)
+    if said is None or session.collected.get("work_blocked") is said:
+        return
+    session.collected = facts_mod.apply_fact(session.collected, facts_mod.Fact.known(
+        facts_mod.WORK_BLOCKED, said, source=facts_mod.Source.ANSWER, confidence=0.95, evidence=utterance.strip()[:200],
+    ))
+    _apply_priority_rules(session)
 
 
 _MIN_FALLBACK_WORDS = 4
@@ -1017,7 +1044,7 @@ async def _handle_name_confirmation(db: AsyncSession, session: VoiceCallSession,
     fix = await nlu.interpret_name_correction(collected["caller_name"], utterance)
     if _wants_human(utterance, fix):
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
-    if fix.value and fix.value.lower() != collected["caller_name"].lower():
+    if fix.value and fix.value.lower() != collected["caller_name"].lower() and names.plausible(fix.value):
         return _reconfirm_name(session, fix.value)
     answer = await nlu.interpret_yes_no("Is that name right?", utterance)
     if answer.yes_no is True:
@@ -1096,6 +1123,106 @@ _AFFIRM_WORDS = frozenset(nlu._YES | {
     "you", "got", "thank", "thanks", "sir", "madam", "ma'am", "all", "totally", "completely", "and", "too", "as",
     "well", "letters", "spot", "on", "there", "just", "only",
 })
+
+
+# --- the caller correcting their name later in the call ----------------------------------------------------------
+#
+# "My name is Yashwanth", "change my name", "you got my name wrong" -- at the diagnostic questions, the extension, the
+# email, the read-back. Seen on a test call: corrections like these were read as answers to whatever was open. They
+# are a name correction wherever they come: a spelled name is taken as spelled, a spoken one is read back spelled
+# (never trusted as heard), and with no name in it the caller is asked to spell it. Then the call resumes.
+
+_NAME_CHANGE_STATES = (
+    VoiceCallState.COLLECT_DIAGNOSTICS,
+    VoiceCallState.CONFIRM_NAME,
+    VoiceCallState.COLLECT_PHONE,
+    VoiceCallState.CONFIRM_CALLBACK_NUMBER,
+    VoiceCallState.COLLECT_ALTERNATE_CALLBACK_NUMBER,
+    VoiceCallState.COLLECT_EXTENSION,
+    VoiceCallState.COLLECT_EMAIL,
+    VoiceCallState.CONFIRM_EMAIL,
+    VoiceCallState.CONFIRM_SUMMARY,
+)
+#: "my name is Yashwanth", "change my name to Yashwanth": the name that follows.
+_NEW_NAME = re.compile(
+    r"\b(?:my name(?:'s| is)|change (?:my|the) name to)\s+(?:actually\s+|really\s+)?"
+    r"(?P<name>[a-z][a-z'-]*(?:\s+[a-z][a-z'-]*)?)",
+    re.IGNORECASE,
+)
+#: Asking for the name to be changed, with or without the new one.
+_CHANGE_NAME = re.compile(
+    r"\b(?:change|correct|fix|update)\s+(?:my|the)\s+name\b"
+    r"|\b(?:got|have|has|spelled|wrote|heard|took)\s+my name\s+wrong\b"
+    r"|\bmy name is (?:wrong|not right|incorrect|spelled wrong|misspelled)\b|\bthat'?s not my name\b|\bwrong name\b",
+    re.IGNORECASE,
+)
+_NOT_PART_OF_NAME = {"not", "and", "but", "please", "thanks", "thank", "spelled", "so", "is", "it's", "its", "the",
+                     "actually", "okay", "ok", "yes", "no", "sir", "madam"}
+
+
+def _stated_name(utterance: str) -> str | None:
+    """The name in "my name is Yashwanth (not ...)", capitalized; None when there is none that could be a name."""
+    match = _NEW_NAME.search(utterance or "")
+    if not match:
+        return None
+    words = []
+    for word in match.group("name").split():
+        if word.lower() in _NOT_PART_OF_NAME:
+            break
+        words.append(word.capitalize())
+    name = " ".join(words)
+    return name if names.plausible(name) else None
+
+
+async def _maybe_name_change(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome | None:
+    c = session.collected
+    if (
+        not utterance
+        or session.state not in _NAME_CHANGE_STATES
+        or not c.get("caller_name")
+        or _is_patient_call(session)
+        or issue_filed(session)
+        or c.get("name_spell_step")  # the caller is spelling it already: that step reads it
+        or _HAS_ADDRESS.search(utterance)  # "my name is ... and my email is ...": the email question's answer
+    ):
+        return None
+    stated = _stated_name(utterance)
+    current = names.parts(c["caller_name"])
+    if stated and all(w in current for w in names.parts(stated)):
+        # The name they already have, said again: not a correction. Exact only -- one letter different
+        # ("Yashwant" for "Yashwanth") is exactly the correction a caller makes.
+        stated = None
+    if not stated and not _CHANGE_NAME.search(utterance):
+        return None
+    _reopen_interrupted(session)
+    update_collected(session, name_confirmed_as=None, name_confirm_pending=False, name_spell_first=False)
+    if nlu.looks_spelled(utterance):
+        spelled = nlu.decode_spelled(utterance)
+        if spelled and names.plausible(spelled):
+            return await _accept_spelled_name(db, session, _replace_closest_part(c["caller_name"], spelled))
+    if stated:
+        update_collected(session, name_rounds=0)
+        return _reconfirm_name(session, _replace_closest_part(c["caller_name"], stated) if len(stated.split()) == 1
+                               else stated)
+    return _ask_to_spell(session)
+
+
+def _reopen_interrupted(session: VoiceCallSession) -> None:
+    """Make sure the question the name correction interrupted is asked again once the name is settled. Questions
+    asked only once (extension, email) are un-marked; an address still being read back is dropped (never used
+    unconfirmed) and asked for again. The others -- a diagnostic question, the callback number, the read-back --
+    come back by themselves, because they are still unanswered."""
+    c = session.collected
+    asked = list(c.get("asked") or [])
+    if session.state == VoiceCallState.COLLECT_EXTENSION and not c.get("extension_source"):
+        asked = [a for a in asked if a != "extension"]
+    if session.state in (VoiceCallState.COLLECT_EMAIL, VoiceCallState.CONFIRM_EMAIL) and not c.get("email_confirmed"):
+        asked = [a for a in asked if a != "email"]
+        update_collected(session, email=None, email_fix=None, email_candidate=None, email_source=None)
+    update_collected(session, asked=asked)
+
+
+_HAS_ADDRESS = re.compile(r"@|\bat\b.*\bdot\b", re.IGNORECASE)
 
 
 def _ask_to_spell(session: VoiceCallSession) -> TurnOutcome:
@@ -1474,6 +1601,7 @@ async def _handle_clarification(db: AsyncSession, session: VoiceCallSession, utt
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
     _record_clarification(session, kind, result.extras.get("answer", "unclear"), utterance)
     _started_from_words(session, utterance)
+    _work_impact_from_words(session, utterance)
     return await _next_step(db, session)
 
 
@@ -1674,17 +1802,69 @@ async def _handle_diagnostics(db: AsyncSession, session: VoiceCallSession, utter
     if session.collected.get("late_server"):
         return await _handle_late_server(db, session, utterance)
     state = session.collected.get("diagnostics")
+    if state and state.get("asking_issue"):
+        # "Sorry about that. What device or system is giving you trouble?" -- this is the answer.
+        new, thing = diagnostics.named_in_answer(state, utterance)
+        return await _switch_issue(db, session, new, thing, utterance, apologised=True)
     if not state or not state.get("pending"):
         return await _next_step(db, session)
+    fix = diagnostics.correction(state, utterance)
+    if fix is not None:
+        # "You understood it wrong", "why is the printer coming up, it's just the wired keyboard": a correction to
+        # the issue, never an answer to the question that was open.
+        if fix["playbook"] is None:
+            update_collected(session, diagnostics=diagnostics.asking_what_it_is(state))
+            session.state = VoiceCallState.COLLECT_DIAGNOSTICS
+            return TurnOutcome(_speak(session, _ask(session, scripts.ISSUE_WHAT_IS_IT)))
+        return await _switch_issue(db, session, diagnostics.PLAYBOOKS[fix["playbook"]], fix["thing"], utterance)
     state, updates, reask = diagnostics.record(state, utterance)
     update_collected(session, diagnostics=state, **updates)
     _started_from_words(session, utterance)  # "Was it working before?" -- "Yes, until yesterday; it expired today."
+    _work_impact_from_words(session, utterance)  # "Some keys aren't working, but I can still work."
     if reask:
         session.state = VoiceCallState.COLLECT_DIAGNOSTICS
         return TurnOutcome(_speak(session, _ask(session, reask)))
     if updates.get("affected_scope"):
         _apply_priority_rules(session)
     return await _next_step(db, session)
+
+
+#: The category that goes with a question set, when there is one. Used to keep the ticket's category in line with a
+#: corrected issue: a keyboard is not filed under Printer.
+_PLAYBOOK_CATEGORY = {"printer": "Printer", "network": "Network", "outlook": "Microsoft 365", "account": "Password"}
+
+
+async def _switch_issue(
+    db: AsyncSession, session: VoiceCallSession, new: "diagnostics.Playbook", thing: str | None, said: str,
+    *, apologised: bool = False,
+) -> TurnOutcome:
+    """The caller corrected what the problem is. Apologise once, say the corrected issue back, and carry on with the
+    questions for it. Nothing the wrong questions recorded is kept; the correction itself goes on the ticket."""
+    c = session.collected
+    state = c["diagnostics"]
+    old = diagnostics.PLAYBOOKS[state["playbook"]]
+    fresh = diagnostics.restart(state, new, c.get("description"), said, c.get("affected_scope"))
+    updates: dict = {"diagnostics": fresh}
+    if thing:
+        updates["short_issue"] = f"your {thing}"
+        if thing.lower() not in (c.get("description") or "").lower():
+            # The written problem must say what the caller says it is, not only what was first understood.
+            updates["description"] = f"{c.get('description') or ''} The caller corrected this: it is their {thing}.".strip()
+    category = c.get("category")
+    if new.name in _PLAYBOOK_CATEGORY:
+        updates.update(category=_PLAYBOOK_CATEGORY[new.name], category_confidence="high")
+    elif category and category == _PLAYBOOK_CATEGORY.get(old.name):
+        updates.update(category="Other", category_confidence="high")
+    update_collected(session, **updates)
+    _work_impact_from_words(session, said)
+    session.state = VoiceCallState.COLLECT_DIAGNOSTICS
+    restated = diagnostics.restatement(old, new, thing)
+    if apologised:  # "Sorry about that" was said with the question: once is enough
+        restated = restated.replace("Sorry about that.", "Thanks.", 1)
+    prompt, notice = _diagnostics_next(session)
+    if prompt:
+        return TurnOutcome(_speak(session, _ask(session, f"{restated} {prompt}")))
+    return await _next_step(db, session, acknowledgement=f"{restated} {notice}" if notice else restated)
 
 
 # --- a server the caller remembers late ---------------------------------------------------------------------
@@ -2506,8 +2686,11 @@ async def _handle_summary_confirmation(db: AsyncSession, session: VoiceCallSessi
 
 def _apply_corrections(session: VoiceCallSession, changes: dict) -> None:
     if changes.get("caller_name"):
-        _set_name(session, changes["caller_name"], model_confidence=None)
-        update_collected(session, name_confirmed_as=None)
+        if _set_name(session, changes["caller_name"], model_confidence=None):
+            update_collected(session, name_confirmed_as=None)
+        else:
+            # "Change my name" read as the name "Name": the caller wants it changed, so ask them to spell it.
+            update_collected(session, name_confirmed_as=None, name_confirm_pending=True, name_spell_first=True)
     if changes.get("department"):
         _set_department(session, changes["department"])
     if changes.get("short_issue"):
@@ -2803,7 +2986,7 @@ def _intake_details(collected: dict) -> str:
         ("Read-back", "not done: the caller ended the call first" if collected.get("summary_skipped") else None),
         ("Read-back", "read to the caller, no answer: not confirmed" if collected.get("summary_unanswered") else None),
     ]
-    lines += diagnostics.ticket_lines(collected.get("diagnostics"))
+    lines += diagnostics.ticket_lines(collected.get("diagnostics"), collected.get("description"), collected.get("category"))
     return "\n".join(f"{label}: {value}" for label, value in lines if value)
 
 

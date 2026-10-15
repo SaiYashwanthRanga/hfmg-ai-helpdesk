@@ -321,7 +321,32 @@ async def test_http_errors_return_false_without_retry_and_log_status_only(mail, 
     assert ok is False
     assert len(recorder.requests) == 1
     assert f"HTTP {status}" in caplog.text
-    assert "bob@hfmg.net" not in caplog.text  # response bodies are never logged
+    assert "bob@hfmg.net" not in caplog.text  # the API's reason is logged with every address masked
+    assert "Graph said: <address> is invalid" in caplog.text
+
+
+async def test_a_rejected_send_logs_the_apis_reason_so_a_400_can_be_diagnosed(mail, caplog):
+    """Seen on the server: "send_email failed with HTTP 400" and nothing else. The API's short reason is logged;
+    what we sent (recipients, subject, body) never is, and a long reply is cut short."""
+    mail(httpx.Response(400, text="At least one recipient is required"))
+
+    with caplog.at_level(logging.ERROR, logger="hfmg.mail"):
+        await hfmg_mail_service.send_email(to="first.person@hfmg.net", subject="Secret subject", body_html="Body text")
+
+    assert "send_email failed with HTTP 400: At least one recipient is required" in caplog.text
+    for sent in ("first.person@hfmg.net", "Secret subject", "Body text"):
+        assert sent not in caplog.text
+
+
+async def test_a_long_or_empty_reason_stays_short(mail, caplog):
+    mail(httpx.Response(400, text="x" * 5000), httpx.Response(400, text=""))
+
+    with caplog.at_level(logging.ERROR, logger="hfmg.mail"):
+        await hfmg_mail_service.send_email(to="a@hfmg.net", subject="s", body_html="b")
+        await hfmg_mail_service.send_email(to="a@hfmg.net", subject="s", body_html="b")
+
+    assert "x" * 200 + "..." in caplog.text and "x" * 201 not in caplog.text
+    assert "(no reason given)" in caplog.text
 
 
 async def test_unexpected_exception_is_contained(mail, caplog):

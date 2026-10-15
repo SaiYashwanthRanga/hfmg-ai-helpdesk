@@ -69,6 +69,24 @@ def parts(name: str | None) -> list[str]:
     return [p for p in re.split(r"[\s\-]+", (name or "").lower()) if re.sub(r"[^a-z]", "", p)]
 
 
+#: Words a recognizer or a model hands back as a "name" that are not one. Seen on a test call: "Hi, name" was taken
+#: as the name and read back as "N A M E".
+_NOT_A_NAME = frozenset({
+    "name", "names", "my", "is", "hi", "hello", "hey", "yes", "yeah", "no", "nope", "okay", "ok", "sorry", "change",
+    "correct", "wrong", "spell", "spelling", "spelled", "it", "that", "this", "the", "please", "thanks", "thank",
+    "you", "what", "sir", "madam", "me", "i", "um", "uh", "right", "good", "fine", "here", "there", "speaking",
+    "calling", "caller", "unknown", "agent", "not", "and", "but", "so",
+})
+
+
+def plausible(name: str | None) -> bool:
+    """Could this be a person's name? False for "Name", "Hi name", "my name", "yes" and the like. Deliberately
+    narrow: it only rules out words that are plainly not names, never an unusual or unfamiliar one."""
+    words = [re.sub(r"[^a-z]", "", p) for p in parts(name)]
+    words = [w for w in words if w]
+    return bool(words) and not any(w in ("name", "names") for w in words) and not all(w in _NOT_A_NAME for w in words)
+
+
 def _known(part: str) -> bool:
     word = re.sub(r"[^a-z]", "", part)
     return word in COMMON_FIRST or word in COMMON_LAST

@@ -428,6 +428,34 @@ def quick_started(utterance: str, *, answers_when: bool = False) -> str | None:
     return f"since {when}" if match.groupdict().get("since") else when
 
 
+#: The caller saying plainly that they can still work.
+_CAN_WORK = re.compile(
+    r"\b(?:i|we)\s+(?:can|could)\s+still\s+(?:work|do my (?:job|work))\b"
+    r"|\b(?:i|we)\s+(?:can|could)\s+(?:work|do my (?:job|work))\s+(?:fine|still|for now|though|anyway)\b"
+    r"|\b(?:i'?m|i am|we'?re|we are)\s+still\s+able to work\b|\bstill able to work\b"
+    r"|\b(?:it'?s|it is)\s+not\s+stopping\s+(?:me|us)\b|\b(?:i|we)\s+have\s+a\s+workaround\b",
+    re.IGNORECASE,
+)
+#: The caller saying plainly that they cannot work.
+_CANNOT_WORK = re.compile(
+    r"\b(?:i|we)\s+(?:can'?t|cannot|can not|couldn'?t)\s+(?:do\s+)?(?:any\s+)?(?:work|my (?:job|work))\b(?!\s+out)"
+    r"|\b(?:i'?m|i am|we'?re|we are)\s+(?:completely\s+)?(?:unable to work|blocked)\b"
+    r"|\b(?:it'?s|it is)\s+stopping\s+(?:me|us)\s+(?:completely|from working)\b|\bcan'?t get any work done\b",
+    re.IGNORECASE,
+)
+
+
+def quick_work_impact(utterance: str) -> bool | None:
+    """True when the caller says plainly that they cannot work, False when they say they can still work ("Some keys
+    aren't working, but I can still work."), None otherwise -- including when they say both. Only what the caller
+    said about their own work counts: "it's not working" is about the device, and is never read as "can't work"."""
+    text = utterance or ""
+    can, cannot = bool(_CAN_WORK.search(text)), bool(_CANNOT_WORK.search(text))
+    if can == cannot:
+        return None
+    return cannot
+
+
 # --- spelled letters ------------------------------------------------------------
 #
 # Callers spell names and email addresses letter by letter, and transcription
