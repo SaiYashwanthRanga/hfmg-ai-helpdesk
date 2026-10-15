@@ -88,6 +88,7 @@ async def send_ticket_notification(ticket: Ticket, event: str) -> None:
         return
 
     try:
+        logger.info("Sending %s notification for %s (caller type %s)", event, ticket.ticket_number, ticket.caller_type)
         provider = get_email_provider()
         if not provider.is_configured:
             logger.warning(

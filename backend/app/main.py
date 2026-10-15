@@ -1,5 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -12,9 +13,22 @@ from app.core.config import get_settings
 from app.services.user_directory import UserDirectoryService
 from app.simulator.routes import AudioSizeLimitMiddleware
 
+_LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+_handlers: list[logging.Handler] = [logging.StreamHandler()]
+try:
+    # Also keep the server's log in a file: when it runs in a console window, a failed email
+    # (the mail API's reason is logged) is otherwise gone once the window scrolls.
+    _LOG_DIR.mkdir(exist_ok=True)
+    _handlers.append(
+        RotatingFileHandler(_LOG_DIR / "backend.log", maxBytes=5_000_000, backupCount=5, encoding="utf-8")
+    )
+except OSError:
+    pass
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    handlers=_handlers,
 )
 
 logger = logging.getLogger("hfmg.main")
