@@ -97,6 +97,7 @@ async def test_summary_is_generated_once_and_shared_by_email_and_dashboard(
         '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px">'
         "Caller:<br>\nAnn<br>\n<br>\nCallback Number:<br>\n+15550001111<br>\n<br>\n"
         "Email:<br>\nNot provided<br>\n<br>\n"
+        "Extension:<br>\nNot provided<br>\n<br>\n"
         f"Issue:<br>\nThe back office has no wifi.<br>\n<br>\nSummary:<br>\n{SUMMARY}<br>\n<br>\n"
         f"Ticket Number:<br>\n{created['ticket_number']}</div>"
     )
@@ -139,6 +140,7 @@ async def test_failed_summary_still_sends_issue_only_without_a_second_request(
         '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px">'
         "Caller:<br>\nAnn<br>\n<br>\nCallback Number:<br>\n+15550001111<br>\n<br>\n"
         "Email:<br>\nNot provided<br>\n<br>\n"
+        "Extension:<br>\nNot provided<br>\n<br>\n"
         "Issue:<br>\nThe back office has no wifi.<br>\n<br>\n"
         f"Ticket Number:<br>\n{created['ticket_number']}</div>"
     )

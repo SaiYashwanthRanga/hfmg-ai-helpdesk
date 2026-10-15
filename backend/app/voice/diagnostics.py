@@ -43,6 +43,10 @@ class Question:
     prefill_unless: tuple[str, ...] = ()
     #: text only: a pattern whose match in the problem description already answers it ("the DC drive").
     prefill_pattern: str | None = None
+    #: text only: words that restate the problem without naming what is asked for. An answer made only of these
+    #: (and filler) is asked about once more with `clarify`, then recorded as not identified, never as the answer.
+    vague: frozenset[str] = frozenset()
+    clarify: str | None = None
 
 
 @dataclass(frozen=True)
@@ -206,11 +210,23 @@ DEVICE = Playbook(
     ),
 )
 
+#: Words that say a login is failing without saying what for ("Yeah, I'm unable to log in.").
+_LOGIN_WORDS = frozenset("""
+    unable able can't cant cannot can not couldn't don't doesn't won't wont isn't to log login logon logging logged sign
+    signing signin into get getting access accessing account accounts application applications app apps system
+    password passwords credential credentials expired expire expiring working work works anymore anything any more
+    let me locked out keeps keep saying says asking problem issue for one which what know think sure maybe not
+    username user name trying try tried open
+""".split())
+
 ACCOUNT = Playbook(
     "account", "Account / access",
     questions=(
         Question("account", "Account or application",
-                 "Which account or application can't you get into? Please don't tell me your password.", "text"),
+                 "Which account or application can't you get into? Please don't tell me your password.", "text",
+                 vague=_LOGIN_WORDS,
+                 clarify="Which one is it, for example your computer sign-in, your email, or eClinicalWorks? "
+                         "If you're not sure, just say so."),
         Question("error", "Error message", "What does the message say, exactly?", "text"),
         Question("worked_before", "Worked before", "Was it working for you before?", "yes_no"),
     ),
@@ -392,6 +408,15 @@ def _short_answer_is_unclear(question: Question, utterance: str) -> bool:
     return any(w not in _PLAIN_WORDS and not any(k in w or w in k for k in known) for w in words)
 
 
+def _names_nothing(question: Question, utterance: str) -> bool:
+    """For a question with `vague` words: the answer only restates the problem ("Yeah, I'm unable to log in.")
+    and names no account, system or anything else."""
+    if not question.vague:
+        return False
+    words = re.findall(r"[a-z0-9']+", (utterance or "").lower())
+    return bool(words) and all(w in question.vague or w in _PLAIN_WORDS or w in _FILLER for w in words)
+
+
 def _parse(question: Question, utterance: str) -> str | None:
     text = (utterance or "").lower()
     if question.kind == "choice" and _short_answer_is_unclear(question, utterance):
@@ -410,6 +435,8 @@ def _parse(question: Question, utterance: str) -> str | None:
     if question.kind == "host":
         names = hostnames(utterance)
         return names[0] if names else clean(utterance)
+    if _names_nothing(question, utterance):
+        return None  # kept as what the caller said, never as the account or system they named
     return clean(utterance)
 
 
@@ -534,6 +561,11 @@ def record(state: dict, utterance: str) -> tuple[dict, dict, str | None]:
     if question is not None and (is_non_answer(utterance) or unclear_choice) and question.key not in state["retried"]:
         state["retried"].append(question.key)
         return state, updates, f"{CLARIFY} {question.prompt}"
+    vague = question is not None and not _DECLINE.match((utterance or "").lower()) and _names_nothing(question, utterance)
+    if vague and question.key not in state["retried"]:
+        # Heard, but it names nothing ("Yeah, I'm unable to log in."): not "I didn't catch that" -- which one.
+        state["retried"].append(question.key)
+        return state, updates, question.clarify or question.prompt
     if question is not None:
         state["asked"].append(question.key)
         value = _parse(question, utterance)
@@ -680,6 +712,8 @@ def ticket_lines(state: dict | None) -> list[tuple[str, str]]:
             shown = f"{value} (caller said: \"{said}\")"
         if question.kind == "choice" and said and not said.startswith("("):
             shown = f"{value} (caller said: \"{said}\")" if value else f"unclear (caller said: \"{said}\")"
+        if question.kind == "text" and value is None and said and not said.startswith("("):
+            shown = f"not identified (caller said: \"{said}\")"
         lines.append((question.label, shown or "unclear"))
         if question.key == "server" and values.get("server_corrected_from"):
             lines.append(("Server (corrected)", f"the caller corrected it from \"{values['server_corrected_from']}\""))

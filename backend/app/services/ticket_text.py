@@ -45,6 +45,21 @@ def extract_issue(description: str) -> str:
     return issue or "\n\n".join(n for n in notes if n) or head.strip()
 
 
+def extract_intake_value(description: str, label: str) -> str | None:
+    """One labelled line of the intake details ("Extension" -> "3006 (given by the caller; unverified: ...)"),
+    exactly as the voice agent wrote it, notes included. None when the ticket has no such line (a web-form
+    ticket, or a call that never reached that question). Only the intake section is read: the caller's own words
+    in the issue or the transcript are never taken for a field."""
+    if INTAKE_MARKER not in (description or ""):
+        return None
+    section = description.split(INTAKE_MARKER, 1)[1].split(TRANSCRIPT_MARKER, 1)[0]
+    prefix = f"{label}: "
+    for line in section.splitlines():
+        if line.startswith(prefix):
+            return line[len(prefix):].strip() or None
+    return None
+
+
 def extract_details(description: str) -> str:
     """What the caller said about the problem beyond the issue; empty if nothing."""
     if DETAILS_MARKER not in description:

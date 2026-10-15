@@ -167,6 +167,7 @@ async def test_email_has_caller_callback_issue_and_summary_not_details(db_sessio
         '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px">'
         f"Caller:<br>\nMaria Lopez<br>\n<br>\nCallback Number:<br>\n{CALLER_ID}<br>\n<br>\n"
         f"Email:<br>\n{html.escape(ticket.email)}<br>\n<br>\n"
+        "Extension:<br>\nNot provided<br>\n<br>\n"
         f"Issue:<br>\n{html.escape(HOTSPOT['issue'])}<br>\n<br>\n"
         "Summary:<br>\nHotspot stopped working today.<br>\n<br>\n"
         f"Ticket Number:<br>\n{ticket.ticket_number}</div>"

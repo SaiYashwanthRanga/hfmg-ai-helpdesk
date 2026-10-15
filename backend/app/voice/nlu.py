@@ -91,8 +91,20 @@ PRIORITY_MAP = {
 # description, not a request for a human.
 ESCALATION_HINTS = [
     "human", "real person", "actual person", "talk to someone", "speak to someone",
-    "representative", "operator", "agent", "somebody else", "transfer me",
+    "representative", "operator", "agent", "transfer me",
 ]
+#: "Somebody else" / "someone else" is a request for a person only when the caller wants to talk to, be put through
+#: to, or be helped by them. On its own it is not: "I'm somebody else" (the proposed name is not me), "it happens to
+#: someone else too", "my email goes to somebody else". Seen on a test call at the identity question.
+_ANOTHER_PERSON = re.compile(
+    r"\b(?:talk|speak|speaking|chat|transfer|put|connect|pass|hand|send|get|give|let)\b[^.?!]{0,25}?"
+    r"\b(?:somebody|someone|anybody|anyone) else\b"
+    r"|\b(?:want|need|like|prefer|rather have|ask for|can i have|could i have|may i have)\b[^.?!]{0,15}?"
+    r"\b(?:somebody|someone) else\b"
+    r"|\b(?:somebody|someone|anybody|anyone) else\b[^.?!]{0,20}?\b(?:help|call me|handle|take (?:this|over|it|my call)"
+    r"|look at|deal with|talk to|speak to|speak with)\b",
+    re.IGNORECASE,
+)
 
 # Who a problem affects -- with work_blocked, the input to the deterministic
 # priority rules in orchestrator._apply_priority_rules.
@@ -128,7 +140,7 @@ class TurnResult:
 
 def mentions_escalation(text: str) -> bool:
     lowered = (text or "").lower()
-    return any(hint in lowered for hint in ESCALATION_HINTS)
+    return any(hint in lowered for hint in ESCALATION_HINTS) or bool(_ANOTHER_PERSON.search(lowered))
 
 
 # --- normalization -------------------------------------------------------------
@@ -335,6 +347,87 @@ def quick_email(utterance: str) -> str | None:
     return normalize_email(candidate)
 
 
+_WEEKDAY = r"(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
+_PART_OF_DAY = r"(?: morning| afternoon| evening| night)?"
+_COUNT = r"(?:an?|one|two|three|four|five|six|seven|eight|nine|ten|a few|a couple(?: of)?|couple of|several|\d+)"
+_UNIT = r"(?:minutes?|mins?|hours?|hrs?|days?|weeks?)"
+_CLOCK = r"(?:\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.|o'?clock)|\d{1,2}:\d{2}|noon|midday|midnight|lunch ?time|lunch)"
+_APPROX = r"(?:(?:about|around|roughly|approximately|like|maybe|just|right|sometime|some time) )?"
+#: A point in time a caller gives for when something began.
+_WHEN = (
+    rf"{_APPROX}(?:"
+    rf"today|tonight|earlier today|earlier this (?:morning|afternoon|week)|first thing(?: this morning| today)?"
+    rf"|this (?:morning|afternoon|evening|week)|last night|last week(?:end)?|over the weekend|the weekend"
+    rf"|the day before yesterday|yesterday{_PART_OF_DAY}"
+    rf"|(?:on |last |this past )?{_WEEKDAY}{_PART_OF_DAY}"
+    rf"|{_COUNT} {_UNIT} (?:ago|back)|(?:at |after |before |since )?{_CLOCK}"
+    rf")"
+)
+#: Something that marks when a problem began ("since the update", "since I came in"): never causal "since"
+#: ("since the printer is broken"), so only these.
+_SINCE_EVENT = (
+    r"(?:the |my |last |this )?(?:windows |last |latest |recent )?(?:update|updates|upgrade|restart|reboot|outage"
+    r"|power outage|move|password change|password reset|new computer|new laptop|holidays?|weekend|break)"
+    r"|i (?:came in|got in|got here|arrived|logged in|logged on|started (?:today|work|my shift)|changed my password)"
+)
+_CHANGED = (
+    r"expired|stopped working|stopped|started|began|happened|broke|failed|went down|gone down|locked me out"
+    r"|got locked out|locked out|quit working|quit|crashed|froze|kicked in|showed up|popped up|came up|acting up"
+)
+#: "expired today", "stopped working this morning", "it started around 9 am". Words only: a comma ends the phrase,
+#: so "it expired, today I can't log in" never reads as "expired today".
+#: "I started a new job today" is about the caller, not the problem: no "I" or "we" before the word.
+_NOT_THE_CALLER = r"(?<!\bi )(?<!\bwe )(?<!\bi've )(?<!\bwe've )(?<!\bi just )(?<!\bwe just )"
+_STARTED_AFTER = re.compile(rf"\b{_NOT_THE_CALLER}(?:{_CHANGED})(?: [a-z']+){{0,3}}? (?P<when>{_WHEN})\b")
+#: "since yesterday", "ever since the update", "since about 8:30".
+_STARTED_SINCE = re.compile(rf"\b(?P<since>since) (?P<when>{_WHEN}|{_SINCE_EVENT})\b")
+#: "it's been like this for two days", "going on for the past hour", "for a couple of days now".
+_STARTED_FOR = re.compile(
+    rf"\b(?:been|going on|happening|like this|down|broken|out)(?: [a-z']+){{0,2}}? for "
+    rf"(?P<when>(?:the )?(?:past |last )?{_APPROX}(?:{_COUNT} {_UNIT}|(?:an? |one )?(?:hour|day|week)|(?:the )?(?:whole|entire) (?:day|morning|week)))\b"
+)
+#: "today it expired", "yesterday my password stopped working". Only a subject between, never "and": in "it
+#: worked yesterday and expired today", yesterday is when it last worked, not when it started.
+_STARTED_BEFORE = re.compile(
+    rf"\b(?P<when>{_WHEN}),? (?:(?:it|it's|its|they|they're|that|that's|this|everything|my [a-z]+|the [a-z]+) )?"
+    rf"(?:(?:has|have|had|just|got|was|were|is|are|been|suddenly|randomly) ){{0,2}}(?:{_CHANGED})\b"
+)
+#: A bare time in answer to "when did this start?" ("This morning.", "Around 9 am, I think."), and nothing else.
+_ANSWER_IS_A_TIME = re.compile(
+    rf"^(?:(?:um|uh|so|well|oh|i think|i guess|it was|it started|started|i'd say|probably|maybe),? )*"
+    rf"(?P<when>{_WHEN})(?:,? (?:i think|i guess|or so|probably|maybe|now|already))*$"
+)
+#: "it was fine yesterday", "working until this morning": the time it last worked, not when it started.
+_LAST_WORKED = re.compile(r"\b(?:work(?:ed|ing)|fine|ok|okay|good|until|till|up to|as of)\s*$")
+
+
+def quick_started(utterance: str, *, answers_when: bool = False) -> str | None:
+    """When the problem started, read from the caller's own words when they say it plainly: "they were working
+    yesterday and expired today" -> "today", "it's been like this for two days" -> "for two days", "ever since the
+    update" -> "since the update". None when they did not say (nothing is inferred from "worked yesterday" alone).
+    A backstop for the model's reading, never a replacement for it.
+
+    `answers_when`: the agent has just asked when it started, so a reply that is only a time ("This morning.")
+    is that answer."""
+    text = " ".join(re.sub(r"[^\w\s:'.,]", " ", (utterance or "").lower()).split()).strip(" .")
+    found = [m for m in (_STARTED_AFTER.search(text), _STARTED_SINCE.search(text), _STARTED_FOR.search(text)) if m]
+    if found:
+        match = min(found, key=lambda m: m.start())
+    else:
+        before = _STARTED_BEFORE.search(text)
+        if before is not None and not _LAST_WORKED.search(text[: before.start()]):
+            match = before
+        elif answers_when and _ANSWER_IS_A_TIME.match(text):
+            match = _ANSWER_IS_A_TIME.match(text)
+        else:
+            return None
+    when = re.sub(rf"\b({_WEEKDAY})\b", lambda d: d.group(1).capitalize(), match.group("when").strip())
+    when = re.sub(r"\bi\b", "I", when)
+    if match.re is _STARTED_FOR:
+        return f"for {when}"
+    return f"since {when}" if match.groupdict().get("since") else when
+
+
 # --- spelled letters ------------------------------------------------------------
 #
 # Callers spell names and email addresses letter by letter, and transcription
@@ -382,7 +475,7 @@ _SPELLING_FILLER = {
     "uh", "okay", "ok", "so", "the", "letters", "letter", "first", "last", "surname", "email", "address",
     "yes", "yeah", "sure", "and", "then", "capital", "small", "lowercase", "uppercase",
     # Corrections said around the spelling: "No, it's Y A S H..."
-    "no", "nope", "not", "wrong", "incorrect", "correct", "right", "actually", "sorry", "sir", "madam",
+    "no", "nope", "not", "wrong", "incorrect", "correct", "right", "actually", "sorry", "sir", "madam", "but",
     # Around an email address: "my username is ... and the domain is ...", "... please"
     "username", "domain", "please", "thanks",
 }
@@ -403,6 +496,12 @@ def _spelled_tokens(text: str) -> list[str]:
 
 def _decode(text: str, *, symbols: bool) -> tuple[str, int]:
     """(decoded characters, how many came from single spelled letters)."""
+    parts, spelled = _decode_parts(text, symbols=symbols)
+    return "".join(parts), spelled
+
+
+def _decode_parts(text: str, *, symbols: bool) -> tuple[list[str], int]:
+    """The decoded pieces in order: single spelled letters, symbols, digits, and whole words."""
     tokens = _spelled_tokens(text)
     out: list[str] = []
     spelled = 0
@@ -447,7 +546,7 @@ def _decode(text: str, *, symbols: bool) -> tuple[str, int]:
         spelled += repeat
         repeat = 1
         i += 1
-    return "".join(out), spelled
+    return out, spelled
 
 
 def looks_spelled(text: str) -> bool:
@@ -455,9 +554,38 @@ def looks_spelled(text: str) -> bool:
     return _decode(text, symbols=True)[1] >= 3
 
 
+def _same_spoken_word(word: str, spelled: str) -> bool:
+    """A word said aloud next to its own spelling ("Rakesh, R A K E S H"), allowing for a recognizer's
+    small slip in the spoken form ("Rakash"). A fragment the recognizer joined ("YASH W A N T H") is not one."""
+    word, spelled = word.lower(), spelled.lower()
+    return word == spelled or (len(spelled) >= 4 and _edit_distance(word, spelled) <= max(1, len(spelled) // 4))
+
+
+def _without_repeated_words(parts: list[str]) -> str:
+    """Join the pieces of a spelled name, dropping a whole word that only repeats the spelling beside it.
+
+    Seen on a test call: the read-back "R A K E S H, is that correct?" answered with "Yeah, that's right, Rakesh,
+    R A K E S H." -- one name, said then spelled, not "Rakeshrakesh". The spelled letters win."""
+    groups: list[list] = []  # [text, is a run of single spelled letters]
+    for part in parts:
+        letter = len(part) == 1 and part.isalpha()
+        if letter and groups and groups[-1][1]:
+            groups[-1][0] += part
+        else:
+            groups.append([part, letter])
+    kept = []
+    for index, (text, is_run) in enumerate(groups):
+        beside = [groups[j][0] for j in (index - 1, index + 1) if 0 <= j < len(groups) and groups[j][1]]
+        if not is_run and any(len(run) >= 3 and _same_spoken_word(text, run) for run in beside):
+            continue
+        kept.append(text)
+    return "".join(kept)
+
+
 def decode_spelled(text: str) -> str | None:
     """A name spelled letter by letter -> "Yashwanth". None if it wasn't spelled."""
-    decoded, spelled = _decode(text, symbols=False)
+    parts, spelled = _decode_parts(text, symbols=False)
+    decoded = _without_repeated_words(parts)
     if spelled < 3 or not decoded.isalpha():
         return None
     return decoded.capitalize()

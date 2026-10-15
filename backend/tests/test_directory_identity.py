@@ -620,7 +620,10 @@ async def test_the_summary_is_written_once_and_the_email_has_the_same_shape_with
     body = sent_emails[0]["body_html"]
     assert "Caller:" in body and "Maria Example" in body and "Issue:" in body and "Summary:" in body
     assert "Summary of issue A." in body
-    for absent in ("Extension", "Location", "Teams", "Identity", "2001", "Test Clinic", "directory"):
+    # The office extension is shown like the email: here the one on the directory entry the caller said yes to.
+    # Nothing else from the directory reaches the email.
+    assert "Extension:<br>\n2001<br>\n" in body
+    for absent in ("Location", "Teams", "Identity", "Test Clinic", "directory"):
         assert absent not in body
     ticket = await _ticket(client, filed["ticket_id"])
     assert ticket["ai_summary"] == "Summary of issue A."

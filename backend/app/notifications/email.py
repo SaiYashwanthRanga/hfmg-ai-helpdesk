@@ -1,9 +1,9 @@
 import logging
 
 from app.core.config import get_settings
-from app.db.models import Ticket
+from app.db.models import CallerType, Ticket
 from app.notifications.factory import get_email_provider
-from app.services.ticket_text import extract_issue
+from app.services.ticket_text import extract_intake_value, extract_issue
 
 logger = logging.getLogger("hfmg.notifications.email")
 
@@ -36,6 +36,8 @@ def _build_body(
     summary: str | None,
     *,
     email: str | None = None,
+    extension: str | None = None,
+    with_extension: bool = False,
     ticket_number: str | None = None,
 ) -> str:
     """Who to call back, the number and email to reach them on, the issue, its summary and the
@@ -47,12 +49,17 @@ def _build_body(
     caller, number, summary or ticket number that is not available is left out, not blank. The
     email address is always shown, so the helpdesk can see at a glance whether it has one to fall
     back on: "Not provided" when there is none (never a guess, and never an address that was not
-    confirmed: see `ticket.email`)."""
+    confirmed: see `ticket.email`).
+
+    `with_extension`: the office extension is shown the same way, right after the email -- "Not provided" when
+    the caller gave none. It is shown exactly as the ticket records it, with any note ("unverified: not found in
+    the directory"), so an extension nobody checked never reads as checked."""
     lines: list[str] = []
     for label, value in (
         ("Caller", caller),
         ("Callback Number", callback),
         ("Email", (email or "").strip() or NOT_PROVIDED),
+        ("Extension", ((extension or "").strip() or NOT_PROVIDED) if with_extension else None),
         ("Issue", issue),
         ("Summary", summary),
         ("Ticket Number", ticket_number),
@@ -107,6 +114,10 @@ async def send_ticket_notification(ticket: Ticket, event: str) -> None:
             extract_issue(ticket.description),
             ticket.ai_summary,
             email=ticket.email,
+            # An employee's office extension, from the ticket's intake details. Not for a patient request:
+            # patients have no extension, so the line would only be noise.
+            extension=extract_intake_value(ticket.description, "Extension"),
+            with_extension=ticket.caller_type is not CallerType.PATIENT_SUPPORT,
             ticket_number=ticket.ticket_number,
         )
 

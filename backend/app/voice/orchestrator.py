@@ -257,11 +257,20 @@ async def handle_turn(
         return await _handle_failure(db, session)
 
     if session.state in _GOODBYE_STATES and nlu.is_goodbye(utterance):
-        return await _caller_leaving(db, session)
+        # "My extension is 3006, thanks, bye": what the caller said on the way out is kept first.
+        noted = _extension_before_leaving(session, utterance, directory)
+        leaving = await _caller_leaving(db, session)
+        return _lead_with(session, leaving, noted) if noted else leaving
 
     late = _maybe_late_server(session, utterance)
     if late is not None:
         return late
+    late, extension_noted, utterance = _take_late_extension(session, utterance, directory)
+    if late is not None:
+        return late
+    if extension_noted and (nlu.is_goodbye(utterance) or _only_goodbye(utterance)):
+        # A longer "... and my extension is 3006, thanks, bye bye": the extension is recorded, then the call ends.
+        return _lead_with(session, await _caller_leaving(db, session), extension_noted)
 
     corrected = await _maybe_switch_caller_type(db, session, utterance)
     if corrected is not None:
@@ -293,7 +302,8 @@ async def handle_turn(
         logger.error("No handler for state %s on call %s", session.state, session.call_id)
         return await escalate(db, session, EscalationReason.SYSTEM_ERROR)
 
-    return await handler(db, session, utterance)
+    outcome = await handler(db, session, utterance)
+    return _lead_with(session, outcome, extension_noted) if extension_noted else outcome
 
 
 # --- entity confidence ------------------------------------------------------------
@@ -640,7 +650,7 @@ def _record_description(session: VoiceCallSession, result: nlu.TurnResult) -> No
         category_confidence=result.confidence,
         model_priority=(result.priority or Priority.MEDIUM).value,
         short_issue=extras.get("short_issue"),
-        started=extras.get("started"),
+        started=extras.get("started") or nlu.quick_started(_last_caller_words(session)),
         details=None,  # belongs to the previous issue if the caller reports another
         **impact,
     )
@@ -690,6 +700,7 @@ async def _handle_details(db: AsyncSession, session: VoiceCallSession, utterance
     if session.collected.get("pending_question"):
         return await _handle_clarification(db, session, utterance)
     asked = _details_question(session)
+    asked_when = not session.collected.get("started")  # the question asked when it started
     result = await nlu.interpret_details(utterance, asked=asked)
 
     if _wants_human(utterance, result):
@@ -711,7 +722,21 @@ async def _handle_details(db: AsyncSession, session: VoiceCallSession, utterance
         }
         update_collected(session, **{k: v for k, v in values.items() if v is not None})
         _apply_priority_rules(session)
+    _started_from_words(session, utterance, answers_when=asked_when)
     return await _next_step(db, session)
+
+
+def _started_from_words(session: VoiceCallSession, utterance: str, *, answers_when: bool = False) -> None:
+    """The caller said when it started but no start time was recorded: keep what they said.
+
+    Seen on a test call: "it was working yesterday and expired today" left the ticket with no start time, and
+    the question that asks for it is only asked once. Only fills a gap -- a start time already recorded (by the
+    model, or a correction at the read-back) is never overwritten."""
+    if session.collected.get("started") or _is_patient_call(session):
+        return
+    said = nlu.quick_started(utterance, answers_when=answers_when)
+    if said:
+        update_collected(session, started=said)
 
 
 _MIN_FALLBACK_WORDS = 4
@@ -834,12 +859,68 @@ async def _handle_identity_confirmation(
         return await _identity_from_identifier(db, session, identifier, directory)
 
     verdict = nlu.quick_yes_no(utterance, strict=True)
+    if verdict is None and _rejects_proposal(utterance):
+        verdict = False
     if verdict is True:
         return await _identity_confirmed(db, session)
     if verdict is False:
+        rejected = (session.collected.get("directory") or {}).get("proposed_name")
         _discard_proposal(session)
+        result = await _name_from_rejection(session, utterance, rejected)
+        if _wants_human(utterance, result):
+            return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
         return await _next_step(db, session, acknowledgement=scripts.IDENTITY_DECLINED)
     return await _identity_unclear(db, session)
+
+
+#: "Not me", "wrong person", "this isn't ...", "I'm not ...": the caller turning the proposed name down.
+_NOT_THEM = re.compile(
+    r"\bnot me\b|\bwrong (?:person|name|number)\b|\b(?:i'?m|i am|this is|it'?s|that'?s) not\b|\b(?:this|that|it) isn'?t\b",
+    re.IGNORECASE,
+)
+
+
+def _rejects_proposal(utterance: str) -> bool:
+    """A no that is more than a bare no: "No, actually this is Rakesh", "Nope, it's not me, I'm Rakesh".
+
+    Turning a proposal down is always safe -- nothing is recorded from the directory -- so a no is a no however
+    long it is or whatever follows it. Only a yes has to be short and plain (quick_yes_no strict). Before this, a
+    long no was "unclear" and the rejected name was proposed again, where a short "Yes, Rakesh here" would have
+    confirmed it."""
+    words = re.findall(r"[a-z']+", (utterance or "").lower())
+    if not words or words[0] in nlu._YES:
+        return False
+    return words[0] in nlu._NO or words[0] == "not" or bool(_NOT_THEM.search(utterance))
+
+
+#: The caller's own name said with the no: "No, this is Rakesh", "Nope, I'm Rakesh from IT".
+_NAME_CUE = re.compile(r"\b(?:this is|i'?m|i am|my name|name is|it'?s|speaking)\b", re.IGNORECASE)
+
+
+def _same_person_name(name: str, other: str | None) -> bool:
+    """Does `name` share a part with `other` (allowing a recognizer's one-letter slip)?"""
+    theirs = names.parts(other)
+    return any(
+        part == mine or (len(mine) >= 4 and nlu._edit_distance(part, mine) <= 1)
+        for mine in names.parts(name) for part in theirs
+    )
+
+
+async def _name_from_rejection(
+    session: VoiceCallSession, utterance: str, rejected: str | None
+) -> nlu.TurnResult:
+    """Take the caller's own name (and department) from a no that carries it, so they are not asked again. Never
+    the name they just turned down: a model reading of "No, I'm not Chandu" that comes back as Chandu is dropped,
+    and the rejected name is not sent to the model at all. Returns the model's result (empty when not asked)."""
+    if not _NAME_CUE.search(utterance or ""):
+        return nlu.TurnResult()
+    result = await nlu.interpret_name(utterance, asked="Am I speaking with the person listed in our directory for this phone number?")
+    if result.value and not _same_person_name(result.value, rejected):
+        _set_name(session, result.value, model_confidence=result.extras.get("name_confidence"))
+        department = result.extras.get("department")
+        if department and not _only_a_system_name(utterance, department):
+            _set_department(session, department)
+    return result
 
 
 async def _identity_confirmed(db: AsyncSession, session: VoiceCallSession) -> TurnOutcome:
@@ -916,6 +997,8 @@ async def _handle_name_confirmation(db: AsyncSession, session: VoiceCallSession,
         return await _take_spelled_name_part(db, session, utterance, step)
     if collected.get("name_reconfirm"):
         return await _handle_name_reconfirmation(db, session, utterance)
+    if _affirms_name(collected["caller_name"], utterance):
+        return await _name_confirmed(db, session)
 
     if nlu.looks_spelled(utterance):
         # "No, it's Y A S H W A N T H" -- corrected in the same breath, letter by letter: taken as spelled.
@@ -944,6 +1027,8 @@ async def _handle_name_confirmation(db: AsyncSession, session: VoiceCallSession,
 
 async def _handle_name_reconfirmation(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
     """The corrected name was read back. Yes -> done. No again -> another try, then accept."""
+    if _affirms_name(session.collected["caller_name"], utterance):
+        return await _name_confirmed(db, session)
     if nlu.looks_spelled(utterance):
         spelled = nlu.decode_spelled(utterance)
         if spelled:
@@ -958,6 +1043,59 @@ async def _handle_name_reconfirmation(db: AsyncSession, session: VoiceCallSessio
         return await _next_step(db, session, acknowledgement=scripts.NAME_ACCEPT_AS_SPOKEN)
     update_collected(session, name_reconfirm=False)
     return _ask_to_spell(session)
+
+
+#: A yes that is really a change: "yes, but...", "yes, just add an H", "yes, with a double S".
+_NAME_EDIT = re.compile(
+    r"\b(?:add|remove|delete|change|missing|extra|replace|instead|without|with an?|double|one more|another)\b",
+    re.IGNORECASE,
+)
+
+
+def _affirms_name(name: str, utterance: str) -> bool:
+    """A yes to the spelled read-back, said with more than "yes": "Yes, that's correct. My name is Rakesh.",
+    "Yeah, that's right, Rakesh, R A K E S H."
+
+    The same rules as a plain yes, applied to a longer answer: it must open with a yes, and carry no no, no "but"
+    and no edit instruction (those still go to the correction steps). Any spelling in it must be the name that was
+    read back. A name the caller only says aloud again is not a correction: the read-back was spelled because the
+    spoken form is the unreliable one, so a recognizer's "Rakash" in "yes, Rakash" never replaces "R A K E S H"."""
+    text = (utterance or "").lower()
+    words = re.findall(r"[a-z']+", text)
+    if not words:
+        return False
+    opens_with_yes = words[0] in nlu._YES or (
+        words[0] in ("that's", "thats", "that", "it's", "its") and any(w in nlu._YES for w in words[1:3])
+    )
+    if not opens_with_yes or nlu.mentions_escalation(text):
+        return False
+    if any(w in nlu._NO or w == "not" for w in words) or any(p in text for p in nlu._NEGATED_YES):
+        return False
+    if (nlu._CONTRAST - {"just"}).intersection(words) or _NAME_EDIT.search(text):
+        return False
+    current = names.parts(name)
+    spelled_answer = nlu.looks_spelled(utterance)
+    if spelled_answer:
+        spelled = (nlu.decode_spelled(utterance) or "").lower()
+        if not spelled or (spelled != "".join(current) and spelled not in current):
+            return False
+    # Anything else must be the name said again. A word that is neither ("Yes, it's Rakesh Kumar") may add to the
+    # name: the existing correction step reads it, and reads the result back.
+    for word in words:
+        if word in _AFFIRM_WORDS or (spelled_answer and (len(word) == 1 or word in nlu._LETTER_NAMES)):
+            continue
+        if not any(nlu._same_spoken_word(word, part) for part in current):
+            return False
+    return True
+
+
+#: Words a yes to the name read-back may carry besides the name itself.
+_AFFIRM_WORDS = frozenset(nlu._YES | {
+    "that's", "thats", "that", "it's", "its", "it", "is", "was", "my", "name", "the", "spelling", "spelled", "spell",
+    "perfect", "good", "fine", "great", "ok", "okay", "i", "i'm", "im", "am", "this", "speaking", "so", "um", "uh",
+    "you", "got", "thank", "thanks", "sir", "madam", "ma'am", "all", "totally", "completely", "and", "too", "as",
+    "well", "letters", "spot", "on", "there", "just", "only",
+})
 
 
 def _ask_to_spell(session: VoiceCallSession) -> TurnOutcome:
@@ -1335,6 +1473,7 @@ async def _handle_clarification(db: AsyncSession, session: VoiceCallSession, utt
         update_collected(session, pending_question=None)
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
     _record_clarification(session, kind, result.extras.get("answer", "unclear"), utterance)
+    _started_from_words(session, utterance)
     return await _next_step(db, session)
 
 
@@ -1539,6 +1678,7 @@ async def _handle_diagnostics(db: AsyncSession, session: VoiceCallSession, utter
         return await _next_step(db, session)
     state, updates, reask = diagnostics.record(state, utterance)
     update_collected(session, diagnostics=state, **updates)
+    _started_from_words(session, utterance)  # "Was it working before?" -- "Yes, until yesterday; it expired today."
     if reask:
         session.state = VoiceCallState.COLLECT_DIAGNOSTICS
         return TurnOutcome(_speak(session, _ask(session, reask)))
@@ -1722,9 +1862,20 @@ async def _extension_settled(
     db: AsyncSession, session: VoiceCallSession, extension: str | None, source: str,
     directory: UserDirectoryService | None,
 ) -> TurnOutcome:
-    """Record the answer and move on. A caller-given extension is checked against the directory only to
-    note how it compares for the helpdesk; it never changes who the caller is, and another employee's
-    name is never said or stored."""
+    """Record the answer and move on."""
+    _record_extension(session, extension, source, directory)
+    if extension:
+        acknowledgement = scripts.EXTENSION_NOTED.format(extension=" ".join(extension))
+    else:
+        acknowledgement = scripts.EXTENSION_NONE if source == "none" else None
+    return await _next_step(db, session, acknowledgement=acknowledgement)
+
+
+def _record_extension(
+    session: VoiceCallSession, extension: str | None, source: str, directory: UserDirectoryService | None
+) -> None:
+    """A caller-given extension is checked against the directory only to note how it compares for the
+    helpdesk; it never changes who the caller is, and another employee's name is never said or stored."""
     note = None
     c = session.collected
     # The extension the directory has for this caller ID (a confirmed identity, or the caller-ID match).
@@ -1750,11 +1901,160 @@ async def _extension_settled(
         elif result.status is LookupStatus.NOT_FOUND:
             note = "unverified: not found in the directory"
     update_collected(session, extension=extension, extension_source=source, extension_note=note)
-    if extension:
-        acknowledgement = scripts.EXTENSION_NOTED.format(extension=" ".join(extension))
+
+
+# --- an extension corrected after the extension question ----------------------------------------------------
+#
+# "Sorry, my extension is 3006" while the email question is open. Seen on a test call: the email step read every
+# answer as an address, so the correction was taken for a failed email, the caller was asked to spell it again, and
+# the extension stayed wrong. Like a server remembered late, the correction is recorded (and checked against the
+# directory exactly as at the extension question: noted, never marked verified), said back, and the question that
+# was open is asked again -- without counting as an answer to it. When the same sentence also answers that question
+# ("rakesh at hfmg dot net, and my extension is 3006"), the extension clause is taken out and the rest is answered
+# as usual, so neither is lost.
+
+_EXTENSION_CORRECTION_STATES = (
+    VoiceCallState.COLLECT_EMAIL,
+    VoiceCallState.CONFIRM_EMAIL,
+    VoiceCallState.CONFIRM_CALLBACK_NUMBER,
+    VoiceCallState.CONFIRM_SUMMARY,
+)
+_DIGIT_TOKEN = r"(?:\d+|\b(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine|double|triple)\b)"
+_DIGIT_RUN = rf"{_DIGIT_TOKEN}(?:[\s,.-]+{_DIGIT_TOKEN})*"
+#: "..., not 3000": the number being corrected away from, which is not the extension.
+_NOT_THIS_NUMBER = re.compile(rf"\b(?:not|instead of)\s+{_DIGIT_RUN}", re.IGNORECASE)
+#: The extension clause itself: "and my extension is 3006", "ext. three zero zero six", "my office extension: 3006".
+#: Only the word "extension" makes it one: digits alone at the email question may be part of the address.
+_EXTENSION_CLAUSE = re.compile(
+    rf"(?:\b(?:and|also|plus)\s+)?(?:\b(?:my|the|our)\s+)?(?:\boffice\s+)?\bext(?:ension)?\b\.?(?:\s+number)?"
+    rf"(?:\s+(?:is|was|should be|it's|its|actually))*[\s:,-]*(?P<digits>{_DIGIT_RUN})",
+    re.IGNORECASE,
+)
+#: What is left of a correction that says nothing else ("Oh, sorry, my extension is 3006").
+_CORRECTION_FILLER = frozenset({
+    "oh", "sorry", "wait", "actually", "so", "um", "uh", "and", "also", "plus", "the", "my", "it's", "its", "is", "it",
+    "ok", "okay", "hold", "on", "hang", "by", "way", "btw", "oops", "just", "one", "more", "thing", "correction",
+    "i", "meant", "mean", "said", "that", "was", "wrong", "earlier",
+})
+
+
+def _late_extension(session: VoiceCallSession, utterance: str) -> tuple[str, str] | None:
+    """(the extension, everything else the caller said) for an answer that explicitly gives the extension while a
+    later question is open, else None. "rakesh at hfmg dot net, and my extension is 3006" gives ("3006",
+    "rakesh at hfmg dot net"): both are used."""
+    if (
+        not utterance
+        or session.state not in _EXTENSION_CORRECTION_STATES
+        or _is_patient_call(session)
+        or issue_filed(session)
+    ):
+        return None
+    text = _NOT_THIS_NUMBER.sub(" ", utterance)
+    clause = _EXTENSION_CLAUSE.search(text)
+    if clause is None:
+        return None
+    digits = _extension_digits(clause.group("digits"))
+    if not 2 <= len(digits) <= 6:
+        return None
+    rest = f"{text[:clause.start()]} {text[clause.end():]}"
+    rest = re.sub(r"^[\s,.;:!-]*(?:(?:and|also|plus)\b)?[\s,.;:!-]*", "", " ".join(rest.split()))
+    return normalize_extension(digits), rest.strip(" ,.;:-")
+
+
+def _extension_before_leaving(
+    session: VoiceCallSession, utterance: str, directory: UserDirectoryService | None
+) -> str | None:
+    """An extension said in the same breath as goodbye, recorded before the call is wrapped up. Returns the
+    acknowledgement to say, or None when there was none.
+
+    The goodbye check comes first in every turn, so before this "3006, thanks, bye" at the extension question, or
+    "my extension is 3006, bye" at the email question, ended the call and the extension was lost."""
+    if session.state == VoiceCallState.COLLECT_EXTENSION:
+        if _is_patient_call(session):
+            return None
+        digits = _extension_digits(utterance)  # the question asked for it: no "extension" word needed
+        extension = normalize_extension(digits) if 2 <= len(digits) <= 6 else None
     else:
-        acknowledgement = scripts.EXTENSION_NONE if source == "none" else None
-    return await _next_step(db, session, acknowledgement=acknowledgement)
+        found = _late_extension(session, utterance)
+        extension = found[0] if found else None
+    if not extension:
+        return None
+    _record_extension(session, extension, "caller", directory)
+    return scripts.EXTENSION_NOTED.format(extension=" ".join(extension))
+
+
+#: Sign-off words: what is left of "... my extension is 3006, okay, thank you so much, have a good day, bye bye".
+_SIGN_OFF = frozenset({
+    "thank", "thanks", "you", "much", "so", "bye", "goodbye", "byebye", "bye-bye", "have", "a", "good", "great", "nice",
+    "day", "cheers", "take", "care", "that's", "all", "see", "ya", "later", "to", "say", "for", "your", "help",
+})
+
+
+def _only_goodbye(rest: str) -> bool:
+    """Is what is left of a correction a goodbye and nothing else, however long? (nlu.is_goodbye stops at seven
+    words, which a correction followed by a polite goodbye easily passes.)"""
+    words = re.findall(r"[a-z'-]+", (rest or "").lower())
+    return (any(w in ("bye", "goodbye", "byebye", "bye-bye") for w in words)
+            and all(w in _SIGN_OFF or w in _CORRECTION_FILLER for w in words))
+
+
+def _says_more(rest: str) -> bool:
+    """Is there an answer to the open question left once the extension clause is taken out?"""
+    return any(w not in _CORRECTION_FILLER for w in re.findall(r"[a-z0-9@']+", (rest or "").lower()))
+
+
+def _lead_with(session: VoiceCallSession, outcome: TurnOutcome, line: str) -> TurnOutcome:
+    """Say `line` first in this turn's reply, and keep the transcript's agent line the same as what is spoken."""
+    outcome.lines = [line, *outcome.lines]
+    turns = session.turns or []
+    if turns and turns[-1].get("role") == "agent":
+        session.turns = [*turns[:-1], {**turns[-1], "text": f"{line} {turns[-1].get('text') or ''}".strip()}]
+    return outcome
+
+
+def _open_question(session: VoiceCallSession) -> str:
+    """The question that was open, asked again as it stands now (never a line that names the old extension)."""
+    c = session.collected
+    fix = c.get("email_fix") or {}
+    if session.state == VoiceCallState.COLLECT_EMAIL:
+        return {"local": scripts.EMAIL_FIX_LOCAL, "domain": scripts.EMAIL_FIX_DOMAIN}.get(
+            fix.get("step"), scripts.EMAIL_ASK_NO_NAME)
+    if session.state == VoiceCallState.CONFIRM_EMAIL:
+        if fix.get("step") == "which":
+            return scripts.EMAIL_WHICH_PART
+        if c.get("email_source") == "directory" and c.get("email_candidate"):
+            return scripts.EMAIL_DIRECTORY_CONFIRM.format(email=scripts.spoken_email(c["email_candidate"]))
+        return scripts.EMAIL_CONFIRM.format(email=scripts.spoken_email(c.get("email") or ""))
+    return scripts.SUMMARY_REST_CORRECT  # the read-back: the extension is not in it, so only the rest is asked
+
+
+def _take_late_extension(
+    session: VoiceCallSession, utterance: str, directory: UserDirectoryService | None
+) -> tuple[TurnOutcome | None, str | None, str]:
+    """(a reply, the acknowledgement, the utterance left for the open question).
+
+    No extension in it: (None, None, utterance), and nothing changes. Only an extension: it is recorded and the open
+    question is asked again -- (reply, None, ""). An extension and an answer ("rakesh at hfmg dot net, and my
+    extension is 3006"): the extension is recorded and the rest goes to the open question as its answer, with the
+    acknowledgement said first -- (None, acknowledgement, rest)."""
+    found = _late_extension(session, utterance)
+    if found is None:
+        return None, None, utterance
+    extension, rest = found
+    _record_extension(session, extension, "caller", directory)
+    noted = scripts.EXTENSION_NOTED.format(extension=" ".join(extension))
+    if _says_more(rest):
+        return None, noted, rest
+    return _ask_after_extension(session, noted), None, ""
+
+
+def _ask_after_extension(session: VoiceCallSession, noted: str) -> TurnOutcome:
+    if session.state == VoiceCallState.CONFIRM_CALLBACK_NUMBER:
+        return _ask_callback_confirmation(session, preamble=noted)
+    if session.state == VoiceCallState.CONFIRM_SUMMARY:
+        update_collected(session, summary_rounds=session.collected.get("summary_rounds", 0) + 1,
+                         summary_awaiting_change=False)
+    return TurnOutcome(_speak(session, _ask(session, f"{noted} {_open_question(session)}")))
 
 
 def _extension_detail(collected: dict, confirmed: bool, who: dict) -> str | None:

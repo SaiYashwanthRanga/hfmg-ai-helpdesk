@@ -588,6 +588,7 @@ async def test_ticket_email_has_caller_callback_issue_and_summary_only(db_sessio
         '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px">'
         "Caller:<br>\nAnn<br>\n<br>\nCallback Number:<br>\n+15550001111<br>\n<br>\n"
         "Email:<br>\nNot provided<br>\n<br>\n"
+        "Extension:<br>\nNot provided<br>\n<br>\n"
         "Issue:<br>\nBack office has no wifi.<br>\n<br>\nSummary:<br>\nBack office lost wifi.<br>\n<br>\n"
         f"Ticket Number:<br>\n{ticket.ticket_number}</div>"
     )
@@ -652,6 +653,6 @@ async def test_voice_ticket_without_name_or_number_emails_issue_only(db_session,
     body = values(parse_parts(recorder.requests[0]), "BodyHtml")[0]
     assert body == (
         '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px">'
-        "Email:<br>\nNot provided<br>\n<br>\nIssue:<br>\nThe printer is jammed.<br>\n<br>\n"
+        "Email:<br>\nNot provided<br>\n<br>\nExtension:<br>\nNot provided<br>\n<br>\nIssue:<br>\nThe printer is jammed.<br>\n<br>\n"
         f"Ticket Number:<br>\n{created.ticket_number}</div>"
     )
