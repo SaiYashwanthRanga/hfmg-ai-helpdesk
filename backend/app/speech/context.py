@@ -72,10 +72,10 @@ _STATE_HINTS: dict[str, str] = {
         "letters into a word and do not correct the spelling."
     ),
     "SPELL_EMAIL": (
-        "The caller is spelling the part of their email address before the at sign, one letter at a "
-        "time, and may say dot, underscore, hyphen or numbers. Write every letter separately, separated "
-        "by spaces, and write dot, underscore and hyphen as those words, exactly as heard, for example: "
-        "R A N G A dot S A I. Do not join letters into words."
+        "The caller gives their email address: said as words, spelled one letter at a time, or a mix, and may "
+        "say dot, underscore, hyphen, numbers, at, and the domain. Write spelled letters separately, separated "
+        "by spaces, and write dot, underscore, hyphen and at as those words, exactly as heard, for example: "
+        "ranga dot S A I at H F M G dot net. Do not join spelled letters into words or change names."
     ),
     # Correcting only the domain of an address: letters of the name, then dot, then the ending.
     "SPELL_EMAIL_DOMAIN": (

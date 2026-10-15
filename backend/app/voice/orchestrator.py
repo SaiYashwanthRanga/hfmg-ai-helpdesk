@@ -1430,10 +1430,40 @@ def _propose_callback(session: VoiceCallSession, number: str) -> TurnOutcome:
     return _ask_callback_confirmation(session)
 
 
+async def _email_still_being_given(
+    db: AsyncSession, session: VoiceCallSession, utterance: str
+) -> TurnOutcome | None:
+    """An email fragment heard at the callback-number question, while the address was never settled.
+
+    Seen on a call: email was dropped after "you're not listening", and the caller's "A dot S-A-I-Y" was then
+    answered with "I didn't catch a yes or a no". If the agent (not the caller) left the email unresolved, an answer
+    that is plainly part of an address goes back to the email, adding to what was already said -- once per call. A
+    caller who chose to skip it is never asked again, and a phone number or a yes/no is the callback answer."""
+    c = session.collected
+    if (
+        _is_patient_call(session)
+        or "email" not in (c.get("asked") or [])
+        or c.get("email_confirmed")
+        or c.get("email_skipped") == "caller"
+        or c.get("email_reopened")
+        or nlu.quick_yes_no(utterance) is not None
+        or nlu.count_digits(utterance) >= 7
+    ):
+        return None
+    fragment = nlu.read_email_fragment(utterance)
+    if not fragment.has_content or not (nlu.looks_spelled(utterance) or fragment.said_at or "." in (fragment.local or "")):
+        return None
+    update_collected(session, email_reopened=True, email_skipped=None)
+    return await _email_progress(db, session, fragment, preamble=scripts.EMAIL_BACK_TO_EMAIL)
+
+
 async def _handle_callback_confirmation(
     db: AsyncSession, session: VoiceCallSession, utterance: str
 ) -> TurnOutcome:
     collected = session.collected
+    unfinished = await _email_still_being_given(db, session, utterance)
+    if unfinished is not None:
+        return unfinished
     result = await nlu.interpret_yes_no("Is that the best number to reach you on?", utterance)
 
     if _wants_human(utterance, result):
@@ -2314,30 +2344,190 @@ def _ask_for_email(
     return TurnOutcome(_speak(session, _ask(session, prompt)))
 
 
+# --- collecting an email address ----------------------------------------------------------------------------------
+#
+# Seen on a test call: "Ranga dot S-I-S-1" was read back at once; "Actually, it's SAI dot..." restarted the spelling;
+# the caller said "you're not listening", email was dropped, and "A dot S-A-I-Y" landed on the callback-number
+# question. Email collection is now a small state machine inside the two email states, kept in `collected`:
+#
+#   collecting   email_draft = {local, domain, open}: what the caller has dictated so far, kept across turns. A turn
+#                that ends mid-address ("SAI dot...") keeps it and asks them to go on; a correction ("actually,
+#                it's ...") replaces it, or only the segment it fixes; a continuation is added to it.
+#   read-back    a complete address is validated in code and read back once (CONFIRM_EMAIL).
+#   correction   at the read-back, a "no" with an address in it edits the draft; a bare "no" asks which part.
+#   confirmed    email_confirmed=True: only now can the address reach a ticket.
+#   skipped      the caller said skip, or chose to after the agent offered (it always offers before giving up).
+#
+# "You're not listening" / "let me finish" stops the prompts: the agent apologises, waits, and the next answer is
+# still read as the address. Words are read by rules; the model is only asked about a whole answer the rules could
+# not read, and anything it returns is validated the same way. Email stays optional throughout.
+
+#: The caller is frustrated, or wants to finish: stop prompting and listen.
+_EMAIL_INTERRUPTED = re.compile(
+    r"\b(?:you(?:'re| are)? not listening|not listening to me|let me (?:finish|speak|talk|say it)|"
+    r"(?:you(?:'re| are)?|stop|keep) (?:interrupting|cutting me off)|i(?:'m| am) not (?:done|finished)|"
+    r"i was(?:n'?t| not) (?:done|finished)|i hadn'?t finished|let me complete)\b",
+    re.IGNORECASE,
+)
+#: The caller needs a moment.
+_EMAIL_PAUSE = re.compile(
+    r"^\W*(?:(?:hold on|hang on|wait|one (?:second|sec|moment|minute)|give me a (?:second|sec|moment|minute)|"
+    r"just a (?:second|sec|moment|minute)|let me (?:think|check|see))\W*)+$",
+    re.IGNORECASE,
+)
+#: "Try again", "once more" -- the answer to the offer to skip.
+_EMAIL_TRY_AGAIN = re.compile(r"\b(?:try (?:again|once more)|once more|one more (?:time|try)|again)\b", re.IGNORECASE)
+
+
+def _email_draft(session: VoiceCallSession) -> dict:
+    return dict(session.collected.get("email_draft") or {})
+
+
+def _read_back_email(session: VoiceCallSession, email: str, *, preamble: str | None = None) -> TurnOutcome:
+    local, _, domain = email.partition("@")
+    update_collected(session, email=email, email_confirmed=False,  # read back first: not the caller's yet
+                     email_draft={"local": local, "domain": domain, "open": False})  # what a correction edits
+    session.state = VoiceCallState.CONFIRM_EMAIL
+    prompt = scripts.EMAIL_CONFIRM.format(email=scripts.spoken_email(email))
+    return TurnOutcome(_speak(session, _ask(session, f"{preamble} {prompt}" if preamble else prompt)))
+
+
+def _ask_email(session: VoiceCallSession, prompt: str) -> TurnOutcome:
+    session.state = VoiceCallState.COLLECT_EMAIL
+    return TurnOutcome(_speak(session, _ask(session, prompt)))
+
+
+async def _skip_email(
+    db: AsyncSession, session: VoiceCallSession, *, preamble: str | None = None, by: str = "caller"
+) -> TurnOutcome:
+    """Carry on without an email. `by`: "caller" (they said skip) or "agent" (it could not be understood); only the
+    second may be reopened if the caller turns out to be still dictating."""
+    draft = _email_draft(session)
+    update_collected(session, email=None, email_confirmed=False, email_fix=None, email_skipped=by,
+                     email_draft=draft if by == "agent" else {})
+    return await _finish_collection(db, session, preamble=preamble)
+
+
+async def _email_give_up_or_offer(db: AsyncSession, session: VoiceCallSession) -> TurnOutcome:
+    """Too many unsuccessful tries: ask once whether to try again or skip -- never just move on -- and only then
+    carry on without it. The draft is kept, so an answer that carries on dictating still counts."""
+    update_collected(session, email=None, email_fix=None)
+    if session.collected.get("email_skip_offered"):
+        return await _skip_email(db, session, preamble=scripts.EMAIL_GIVE_UP, by="agent")
+    update_collected(session, email_skip_offered=True)
+    return _ask_email(session, scripts.EMAIL_OFFER_SKIP)
+
+
+async def _email_failed(db: AsyncSession, session: VoiceCallSession, prompt: str) -> TurnOutcome:
+    """An answer that could not be read. Email is optional, so this never counts toward escalation."""
+    session.email_attempt_count += 1
+    limit = 1 if session.collected.get("email_frustrated") else settings.voice_max_email_attempts
+    if session.email_attempt_count >= limit:
+        return await _email_give_up_or_offer(db, session)
+    return _ask_email(session, prompt)
+
+
+def _replace_closest_segment(local: str, segment: str) -> str:
+    """"ranga.sis1" corrected with "sai" -> "ranga.sai": a one-segment correction replaces the segment it is
+    closest to, and nothing else."""
+    parts = local.split(".")
+    closest = min(range(len(parts)), key=lambda i: nlu._edit_distance(parts[i], segment))
+    parts[closest] = segment
+    return ".".join(parts)
+
+
+async def _email_progress(
+    db: AsyncSession, session: VoiceCallSession, fragment: "nlu.EmailFragment", *, preamble: str | None = None
+) -> TurnOutcome:
+    """Add one turn of dictation to the draft, then read back a complete address, or ask for what is missing."""
+    draft = _email_draft(session)
+    local, domain, was_open = draft.get("local"), draft.get("domain"), bool(draft.get("open"))
+    if fragment.local:
+        piece = fragment.local
+        if was_open and not fragment.correction and local:
+            local = local + piece  # carrying on from "... sai dot"
+        elif (fragment.correction and local and not fragment.incomplete and not fragment.said_at
+              and "." not in piece.strip("._-") and "." in local.strip("._-")):
+            local = _replace_closest_segment(local.strip("._-"), piece)  # "no, it's S A I"
+        else:
+            local = piece  # a new address, or a correction that starts it again
+    if fragment.domain:
+        domain = fragment.domain
+    unfinished = fragment.incomplete or (fragment.said_at and not fragment.domain) or (bool(domain) and not local)
+    awaiting = "domain" if (fragment.said_at and not domain and local) else "local" if (domain and not local) else None
+    update_collected(session, email_draft={"local": local, "domain": domain, "open": unfinished, "awaiting": awaiting},
+                     email=None, email_fix=None)
+    lead = f"{preamble} " if preamble else ""
+    if awaiting == "domain":
+        return _ask_email(session, f"{lead}{scripts.EMAIL_ASK_DOMAIN}")
+    if awaiting == "local":  # only a domain so far
+        return _ask_email(session, f"{lead}{scripts.EMAIL_ASK_LOCAL}")
+    if unfinished:
+        prompt = scripts.EMAIL_CONTINUE_AGAIN if was_open else scripts.EMAIL_CONTINUE
+        return _ask_email(session, f"{lead}{prompt}")
+    email = nlu.normalize_email(f"{local.strip('._-')}@{domain or nlu.HOME_EMAIL_DOMAIN}")
+    if email is None or not _ticket_accepts_email(email):
+        update_collected(session, email_draft={})
+        return await _email_failed(db, session, f"{lead}{scripts.EMAIL_RETRY}")
+    return _read_back_email(session, email, preamble=preamble)
+
+
 async def _handle_email(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
-    fix = session.collected.get("email_fix")
+    collected = session.collected
+    fix = collected.get("email_fix")
     if fix and fix.get("step") in ("local", "domain"):
         return await _handle_email_section(db, session, utterance, fix)
-    result = await nlu.interpret_email(utterance)
-
-    if _wants_human(utterance, result):
+    if nlu.mentions_escalation(utterance):
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
 
+    if _EMAIL_INTERRUPTED.search(utterance):
+        update_collected(session, email_frustrated=True)
+        fragment = nlu.read_email_fragment(utterance)
+        if fragment.has_content:
+            return await _email_progress(db, session, fragment, preamble=scripts.EMAIL_SORRY_INTERRUPTED)
+        update_collected(session, email_draft={**_email_draft(session), "open": bool(_email_draft(session).get("local"))})
+        return _ask_email(session, scripts.EMAIL_LET_ME_FINISH)  # not an attempt: the next answer is still the address
+    if _EMAIL_PAUSE.match(utterance):
+        return _ask_email(session, scripts.EMAIL_TAKE_YOUR_TIME)
+
+    if collected.get("email_skip_offered") and not collected.get("email_skip_answered"):
+        update_collected(session, email_skip_answered=True)
+        verdict = nlu.quick_yes_no(utterance)
+        if nlu.email_declined(utterance) or verdict is False:
+            return await _skip_email(db, session, preamble=scripts.EMAIL_SKIPPED)
+        if verdict is True or _EMAIL_TRY_AGAIN.search(utterance):
+            session.email_attempt_count = 0
+            update_collected(session, email_draft={})
+            return _ask_email(session, scripts.EMAIL_ASK_AGAIN)
+
+    if nlu.email_declined(utterance) or utterance.strip().lower().strip(".!") in ("skip", "skip it", "no email"):
+        return await _skip_email(db, session)
+
+    awaiting = _email_draft(session).get("awaiting")
+    if awaiting in ("local", "domain"):
+        # "And the part after the at sign?" -- "h f m g dot net": that part, with no "at" needed.
+        section = nlu.parse_email_section(utterance, awaiting)
+        if section:
+            fragment = nlu.EmailFragment(local=section) if awaiting == "local" else nlu.EmailFragment(domain=section)
+            return await _email_progress(db, session, fragment)
+    fragment = nlu.read_email_fragment(utterance, continuing=bool(_email_draft(session).get("open")))
+    if fragment.has_content:
+        return await _email_progress(db, session, fragment)
+    if _email_draft(session).get("open"):
+        return await _email_failed(db, session, scripts.EMAIL_CONTINUE_UNCLEAR)
+
+    # Nothing the rules could read: the model may still make out a whole address. Validated like any other.
+    result = await nlu.interpret_email(utterance)
+    if _wants_human(utterance, result):
+        return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
     if result.extras.get("declined"):
-        return await _finish_collection(db, session)
-
-    session.email_attempt_count += 1
-
+        return await _skip_email(db, session)
     if result.failed or not _ticket_accepts_email(result.value):
-        # Email is optional, so a failure here never counts toward escalation.
-        if session.email_attempt_count >= settings.voice_max_email_attempts:
-            return await _finish_collection(db, session, preamble=scripts.EMAIL_GIVE_UP)
-        return TurnOutcome(_speak(session, _ask(session, scripts.EMAIL_RETRY)))
-
-    update_collected(session, email=result.value, email_confirmed=False)  # read back first: not the caller's yet
-    session.state = VoiceCallState.CONFIRM_EMAIL
-    prompt = scripts.EMAIL_CONFIRM.format(email=scripts.spoken_email(result.value))
-    return TurnOutcome(_speak(session, _ask(session, prompt)))
+        return await _email_failed(db, session, scripts.EMAIL_RETRY)
+    session.email_attempt_count += 1
+    local, _, domain = result.value.partition("@")
+    update_collected(session, email_draft={"local": local, "domain": domain, "open": False})
+    return _read_back_email(session, result.value)
 
 
 async def _handle_email_confirmation(
@@ -2346,6 +2536,10 @@ async def _handle_email_confirmation(
     collected = session.collected
     if collected.get("email_source") == "directory":
         return await _handle_directory_email_answer(db, session, utterance)
+    if _EMAIL_INTERRUPTED.search(utterance) or _EMAIL_PAUSE.match(utterance):
+        # Stop and listen: back to collecting, keeping what they said as the draft to edit.
+        update_collected(session, email=None, email_fix=None, email_frustrated=bool(_EMAIL_INTERRUPTED.search(utterance)))
+        return await _handle_email(db, session, utterance)
     fix = collected.get("email_fix")
     if fix and fix.get("step") == "which":
         return await _handle_email_which_part(db, session, utterance, fix)
@@ -2355,12 +2549,24 @@ async def _handle_email_confirmation(
     if _wants_human(utterance, result):
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
 
-    if result.yes_no is True:
+    if result.yes_no is True and not _corrects_address(utterance):
         update_collected(session, email_confirmed=True)  # only now may the address reach a ticket
         return await _finish_collection(db, session)
 
+    if _corrects_address(utterance):
+        # "No, actually it's SAI dot...": an edit of the address just read back, never a restart.
+        fragment = nlu.read_email_fragment(utterance)
+        fragment.correction = True
+        update_collected(session, email_fixes=collected.get("email_fixes", 0) + 1)
+        return await _email_progress(db, session, fragment)
+
     # Wrong or unclear: find out which part, and ask for that part alone.
     return await _start_email_fix(db, session, utterance)
+
+
+def _corrects_address(utterance: str) -> bool:
+    """An answer to the read-back that carries address words of its own (not "which part")."""
+    return _which_email_part(utterance) is None and nlu.read_email_fragment(utterance).has_content
 
 
 # --- correcting one part of an email address ----------------------------------------------------------
@@ -2384,11 +2590,10 @@ def _which_email_part(utterance: str) -> str | None:
 
 
 async def _retry_email_from_scratch(db: AsyncSession, session: VoiceCallSession) -> TurnOutcome:
-    update_collected(session, email=None, email_fix=None)
+    update_collected(session, email=None, email_fix=None, email_draft={})
     if session.email_attempt_count >= settings.voice_max_email_attempts:
-        return await _finish_collection(db, session, preamble=scripts.EMAIL_GIVE_UP)
-    session.state = VoiceCallState.COLLECT_EMAIL
-    return TurnOutcome(_speak(session, _ask(session, scripts.EMAIL_RETRY)))
+        return await _email_give_up_or_offer(db, session)
+    return _ask_email(session, scripts.EMAIL_RETRY)
 
 
 async def _start_email_fix(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
@@ -2398,7 +2603,7 @@ async def _start_email_fix(db: AsyncSession, session: VoiceCallSession, utteranc
     if not local or not domain:
         return await _retry_email_from_scratch(db, session)
     if collected.get("email_fixes", 0) >= MAX_EMAIL_FIXES:
-        return await _finish_collection(db, session, preamble=scripts.EMAIL_GIVE_UP)
+        return await _email_give_up_or_offer(db, session)
     fix = {"local": local, "domain": domain, "tries": 0}
     part = _which_email_part(utterance)
     if part == "both":
@@ -2422,6 +2627,13 @@ async def _handle_email_which_part(
         part = "local"
     if part in ("local", "domain"):
         return await _begin_email_section(db, session, utterance, fix, part)
+    if part is None and _corrects_address(utterance):
+        # "Actually, it's SAI dot..." in answer to "which part?": the caller is giving the address, not choosing a
+        # part. Taken as an edit of what was read back -- seen on a call, this restarted the spelling instead.
+        update_collected(session, email_fix=None, email_draft={"local": fix["local"], "domain": fix["domain"], "open": False})
+        fragment = nlu.read_email_fragment(utterance)
+        fragment.correction = True
+        return await _email_progress(db, session, fragment)
     return await _retry_email_from_scratch(db, session)  # both, or still not clear: start the address over
 
 
@@ -2466,10 +2678,7 @@ async def _apply_email_section(db: AsyncSession, session: VoiceCallSession, part
     update_collected(session, email_fix=None, email_fixes=session.collected.get("email_fixes", 0) + 1)
     if email is None or not _ticket_accepts_email(email):  # the parts do not make an address: ask again
         return await _retry_email_from_scratch(db, session)
-    update_collected(session, email=email, email_confirmed=False)  # the whole address is read back again
-    session.state = VoiceCallState.CONFIRM_EMAIL
-    prompt = scripts.EMAIL_CONFIRM.format(email=scripts.spoken_email(email))
-    return TurnOutcome(_speak(session, _ask(session, prompt)))
+    return _read_back_email(session, email)  # the whole address is read back again
 
 
 async def _handle_directory_email_answer(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:

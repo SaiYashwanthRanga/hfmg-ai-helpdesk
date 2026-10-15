@@ -162,7 +162,7 @@ async def test_a_directory_address_that_is_not_the_callers_is_never_used_and_the
     await call.report()
     await call.turn("yes")  # "Am I speaking with Hal Mismatch?"
     asked = await call.department("Hal Mismatch")
-    assert "on file" not in " ".join(asked["lines"]) and "spell the part before the at sign" in " ".join(asked["lines"])
+    assert "on file" not in " ".join(asked["lines"]) and "say it naturally, spell it, or say skip" in " ".join(asked["lines"])
 
     await call.turn("hal at h f m g dot net")
     await call.turn("yes")

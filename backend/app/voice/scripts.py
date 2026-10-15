@@ -187,13 +187,36 @@ SUMMARY_SERVER_NOTED = "Thanks, I have {server} for the server."
 # Spelled, not said: transcription garbles spoken names in addresses
 # ("saiyashwanth" -> "sichuan") but gets spelled letters right. Almost every
 # caller is @hfmg.net, so only the part before the @ is needed.
+# Said naturally or spelled: forcing letter-by-letter spelling made callers dictate in pieces, and the pieces were
+# taken as the whole address (see orchestrator: collecting an email address).
 EMAIL_ASK = (
-    "Thanks, {first_name}. What's your HFMG email? Just spell the part before the at sign, "
-    "or say skip."
+    "Thanks, {first_name}. What's your HFMG email address? You can say it naturally, spell it, or say skip."
 )
-EMAIL_ASK_NO_NAME = "What's your HFMG email? Just spell the part before the at sign, or say skip."
+EMAIL_ASK_NO_NAME = "What's your HFMG email address? You can say it naturally, spell it, or say skip."
 EMAIL_CONFIRM = "I have {email}. Is that correct?"
-EMAIL_RETRY = "Let's try once more. Please spell the part before the at sign, slowly, one letter at a time."
+EMAIL_RETRY = "Let's try once more. Please say your email address again, the whole address or spelled out, or say skip."
+# The caller stopped mid-address ("S A I dot..."): what they said is kept.
+EMAIL_CONTINUE = "Of course, take your time. Please continue with the rest of your email address."
+EMAIL_CONTINUE_AGAIN = "Please go on with the rest of your email address."
+EMAIL_CONTINUE_UNCLEAR = "Sorry, I didn't catch that part. Please go on with the rest of your email address."
+EMAIL_ASK_DOMAIN = "And the part after the at sign?"
+EMAIL_ASK_LOCAL = "And the part before the at sign?"
+# "You're not listening" / "let me finish": stop prompting; the next answer is still the address.
+EMAIL_LET_ME_FINISH = (
+    "Sorry, I interrupted you. Please go ahead and give me your complete email address. I'll wait until you've "
+    "finished."
+)
+EMAIL_SORRY_INTERRUPTED = "Sorry for interrupting."
+EMAIL_TAKE_YOUR_TIME = "Of course, take your time."
+# Before email is ever given up on, the caller chooses.
+EMAIL_OFFER_SKIP = (
+    "I'm having trouble getting your email address. Would you like to try once more, or skip it? "
+    "Our IT team can still reach you by phone."
+)
+EMAIL_ASK_AGAIN = "Okay. Please say your full email address, or spell it."
+EMAIL_SKIPPED = "No problem, we'll leave the email off."
+# An email fragment heard at a later question while the address was still unresolved.
+EMAIL_BACK_TO_EMAIL = "Sorry, let's finish your email address first."
 # A wrong read-back: find out which part, then ask for that part alone.
 EMAIL_WHICH_PART = "Sorry about that. Was it the part before the at sign that was wrong, the part after it, or both?"
 EMAIL_FIX_LOCAL = "Okay, just the part before the at sign. Please spell it slowly, one letter at a time."
@@ -368,19 +391,25 @@ def spelled_name(name: str) -> str:
 _SAID_PUNCTUATION = {".": "dot", "_": "underscore", "-": "hyphen", "+": "plus", "%": "percent"}
 
 
-def _spell(text: str) -> str:
-    return " ".join(_SAID_PUNCTUATION.get(char, char) for char in text)
+def _spell(text: str) -> list[str]:
+    """Each character on its own: a letter as a capital (said as the letter -- "A" is "ay", never the word "a"),
+    punctuation as its word."""
+    return [_SAID_PUNCTUATION.get(char, char.upper()) for char in text]
 
 
 def spoken_email(email: str) -> str:
-    """Render jsmith@hfmg.net as "j s m i t h at h f m g dot net".
+    """Render jsmith@hfmg.net as "J, S, M, I, T, H, at, H, F, M, G, dot, net".
 
-    Every character is said, and punctuation as a word ("j.smith" is "j dot s m i t h"): a lone
-    "." or "_" is a pause to the speech synthesizer, so the caller could not hear a wrong one.
-    The domain name is spelled out but the ending (net, com) is spoken as a word, which is how
-    people read addresses aloud.
+    Read back slowly, one character at a time: the comma after each is a pause every speech synthesizer makes.
+    Separated by spaces alone the letters ran together and the caller could not follow them (seen on a test call).
+    Every character is said, and punctuation as a word ("j.smith" is "J, dot, S, M, ..."): a lone "." or "_" is a
+    pause to the synthesizer, so the caller could not hear a wrong one. The domain name is spelled out but the
+    ending (net, com) is said as a word, which is how people read addresses aloud.
     """
     local, _, domain = email.partition("@")
     parts = domain.split(".")
-    spelled = [_spell(part) for part in parts[:-1]] + parts[-1:]
-    return f"{_spell(local)} at {' dot '.join(spelled)}"
+    tokens = _spell(local) + ["at"]
+    for part in parts[:-1]:
+        tokens += _spell(part) + ["dot"]
+    tokens += parts[-1:]
+    return ", ".join(token for token in tokens if token)

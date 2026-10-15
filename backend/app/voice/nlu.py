@@ -694,6 +694,87 @@ def split_spoken_email(text: str) -> tuple[str | None, str | None]:
     )
 
 
+@dataclass
+class EmailFragment:
+    """One turn of an address being dictated, read in code. The address is assembled across turns from these and
+    validated before it is ever read back; nothing here guesses a missing letter or completes a domain."""
+
+    local: str | None = None  # before "at" (or the whole of it when there is no "at"); may end with "." "_" "-"
+    domain: str | None = None  # after "at", when it could be read
+    said_at: bool = False  # the caller said "at": a domain was given, or is coming
+    incomplete: bool = False  # it ends on "dot", "underscore", "at", "..." -- the caller is not finished
+    correction: bool = False  # "actually", "no, it's", "I mean": replaces what was said before, never appends
+
+    @property
+    def has_content(self) -> bool:
+        return bool(self.local or self.domain)
+
+
+#: How a caller opens a correction: "No, actually it's ...", "Sorry, I mean ...".
+_EMAIL_CORRECTION_LEAD = re.compile(
+    r"^\W*(?:(?:no|nope|sorry|actually|oh|um+|uh+|i mean|i meant|correction|instead|rather|not that|wait|hang on|"
+    r"hold on)\b[\s,.]*)+",
+    re.IGNORECASE,
+)
+#: How a caller opens an answer: "Okay, it's ...", "My email is ...".
+_EMAIL_ANSWER_LEAD = re.compile(
+    r"^\W*(?:(?:ok|okay|so|yes|yeah|it'?s|it is|that'?s|that is|my email(?: address)? is|email(?: address)? is|"
+    r"the email is|my username is|username is|the address is|and|then|starting with|it starts with)\b[\s,.:]*)+",
+    re.IGNORECASE,
+)
+#: The caller stopped mid-address: "S A I dot...", "ranga underscore", "... at".
+_EMAIL_UNFINISHED = re.compile(
+    r"(?:\b(?:dot|period|point|underscore|underline|dash|hyphen|at|and|then)\W*|\.\.\.\s*|…\s*|[_-]\s*)$",
+    re.IGNORECASE,
+)
+_HOME_DOMAIN_NAME = re.compile(r"^h\s*f\s*m\s*g$|^hfmg$")
+#: Talk about the address rather than the address: "the part before the at sign", "after the at symbol".
+_ABOUT_THE_ADDRESS = re.compile(r"\b(?:part|before|after|sign|symbol|listening|understand)\b")
+_ENDS_LIKE_A_DOMAIN = re.compile(r"\.(?:net|com|org|edu|gov|us|io|co)$")
+
+
+def _looks_dictated(text: str, *, continuing: bool = False) -> bool:
+    """Dictation, not conversation: spelled letters or spoken symbols ("dot", "underscore", "at"). A single plain
+    word counts only when it carries on an address the caller had not finished ("sai dot..." then "yashwanth"); on
+    its own ("gibberish") it is left to the model, as before. "I said it right" is never an address."""
+    words = re.findall(r"[a-z0-9']+", text)
+    if len(words) <= 1:
+        return bool(words) and (continuing or len(words[0]) == 1)
+    singles = sum(1 for w in words if len(w) == 1)
+    return singles >= 2 or bool(re.search(r"\b(?:dot|underscore|underline|hyphen|dash|at|period)\b|[@._]", text))
+
+
+def read_email_fragment(utterance: str, *, continuing: bool = False) -> EmailFragment:
+    """Read what the caller said at the email question into a fragment (rule-based, no model call). `continuing`:
+    the caller is finishing an address they stopped in the middle of."""
+    text = (utterance or "").replace("…", " ... ").strip()
+    correction = bool(_EMAIL_CORRECTION_LEAD.match(text))
+    for _ in range(3):  # "No, actually, it's ..." -- the leads can come in any order
+        text = _EMAIL_ANSWER_LEAD.sub("", _EMAIL_CORRECTION_LEAD.sub("", text)).strip()
+    incomplete = bool(_EMAIL_UNFINISHED.search(text))
+    # "S-I-S-1": a hyphen between single characters is spelling, not a hyphen in the address.
+    spelled = re.sub(r"(?<![a-z0-9])([a-z0-9])-(?=[a-z0-9](?![a-z0-9]))", r"\1 ", text, flags=re.IGNORECASE)
+    spelled = re.sub(r"(?<![a-z0-9])([a-z0-9])-(?=[a-z0-9](?![a-z0-9]))", r"\1 ", spelled, flags=re.IGNORECASE)
+    prepared = _spoken_symbols(spelled.replace("...", " ").rstrip(" ,!?."))
+    if (not prepared.strip() or not _looks_dictated(prepared, continuing=continuing) or _dictation(prepared) is None
+            or _ABOUT_THE_ADDRESS.search(prepared)):
+        return EmailFragment(incomplete=incomplete and bool(prepared.strip()), correction=correction)
+    markers = list(_AT_PHRASE.finditer(prepared))
+    said_at = bool(markers)
+    local_text, domain_text = (prepared[: markers[-1].start()], prepared[markers[-1].end():]) if markers else (prepared, "")
+    local = _decode(local_text, symbols=True)[0].lstrip(".-_")
+    if not incomplete or said_at:
+        local = local.rstrip(".-_")  # a joiner is only kept when the caller stopped right after it
+    local = local if local and _LOCAL_OK.match(local.rstrip(".-_") or "x") and local.rstrip(".-_") else None
+    if local and not said_at and _ENDS_LIKE_A_DOMAIN.search(local):
+        local = None  # "john smith hfmg dot net": a domain with no "at" -- unreadable, never completed for them
+    domain = None
+    if domain_text.strip():
+        decoded = _decode(domain_text, symbols=True)[0].strip(".-")
+        domain = HOME_EMAIL_DOMAIN if _HOME_DOMAIN_NAME.match(decoded) else _domain_part(decoded)
+    return EmailFragment(local=local, domain=domain, said_at=said_at, incomplete=incomplete, correction=correction)
+
+
 def parse_email_section(text: str, kind: str) -> str | None:
     """Only the username ("local") or only the domain, said on its own to correct that part.
     If the caller says the whole address, the part asked for is taken from it."""

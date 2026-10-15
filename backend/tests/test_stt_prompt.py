@@ -21,7 +21,8 @@ async def test_name_prompt_covers_name_and_department():
 async def test_email_step_uses_the_spelling_prompt():
     prompt = context.stt_prompt("COLLECT_EMAIL")
     assert prompt == context.transcription_prompt("SPELL_EMAIL")
-    assert "at sign" in prompt
+    # The address may be said as words or spelled, with "at" and the domain: both are written down as heard.
+    assert "spelled one letter at a time" in prompt and "at, and the domain" in prompt
     assert "Vocabulary" not in prompt  # vocabulary would pull letters toward words
 
 

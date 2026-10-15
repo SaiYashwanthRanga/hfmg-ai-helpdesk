@@ -110,13 +110,17 @@ async def test_an_address_that_cannot_be_read_fails_rather_than_being_invented()
 
 
 @pytest.mark.parametrize("email, spoken", [
-    ("jsmith@hfmg.net", "j s m i t h at h f m g dot net"),
-    ("john.smith@hfmg.net", "j o h n dot s m i t h at h f m g dot net"),
-    ("j_smith-2@hfmg.net", "j underscore s m i t h hyphen 2 at h f m g dot net"),
-    ("tom@hmfg.net", "t o m at h m f g dot net"),  # spelled as it is: hmfg is not read as hfmg
+    ("jsmith@hfmg.net", "J, S, M, I, T, H, at, H, F, M, G, dot, net"),
+    ("john.smith@hfmg.net", "J, O, H, N, dot, S, M, I, T, H, at, H, F, M, G, dot, net"),
+    ("j_smith-2@hfmg.net", "J, underscore, S, M, I, T, H, hyphen, 2, at, H, F, M, G, dot, net"),
+    ("tom@hmfg.net", "T, O, M, at, H, M, F, G, dot, net"),  # spelled as it is: hmfg is not read as hfmg
+    ("ranga.sai@hfmg.net", "R, A, N, G, A, dot, S, A, I, at, H, F, M, G, dot, net"),  # "A" the letter, not "a"
 ])
-async def test_every_character_is_said_so_a_wrong_one_can_be_heard(email, spoken):
+async def test_every_character_is_said_slowly_so_a_wrong_one_can_be_heard(email, spoken):
     assert scripts.spoken_email(email) == spoken
+    # One character at a time: a pause (comma) after each, so the letters never run together.
+    assert all(len(token) == 1 or token in ("at", "dot", "underscore", "hyphen", "net", "com", "org")
+               for token in spoken.split(", "))
 
 
 # --- an address already on file is offered only when it is safe to ----------------------------------------
@@ -227,9 +231,9 @@ async def _says(client, call_id, utterance, confidence=None):
 
 
 @pytest.mark.parametrize("spoken, email, read_back", [
-    ("john dot smith at h f m g dot net", "john.smith@hfmg.net", "j o h n dot s m i t h at h f m g dot net"),
-    ("j smith underscore two at hfmg dot net", "jsmith_2@hfmg.net", "j s m i t h underscore 2 at h f m g dot net"),
-    ("john hyphen smith at the rate of hfmg dot net", "john-smith@hfmg.net", "j o h n hyphen s m i t h at h f m g dot net"),
+    ("john dot smith at h f m g dot net", "john.smith@hfmg.net", "J, O, H, N, dot, S, M, I, T, H, at, H, F, M, G, dot, net"),
+    ("j smith underscore two at hfmg dot net", "jsmith_2@hfmg.net", "J, S, M, I, T, H, underscore, 2, at, H, F, M, G, dot, net"),
+    ("john hyphen smith at the rate of hfmg dot net", "john-smith@hfmg.net", "J, O, H, N, hyphen, S, M, I, T, H, at, H, F, M, G, dot, net"),
 ])
 async def test_a_spoken_address_is_read_back_in_full_and_used_only_after_a_yes(
     make_call, client, db_session, sent_emails, spoken, email, read_back
@@ -250,12 +254,16 @@ async def test_an_address_the_caller_cannot_be_understood_on_is_never_invented(m
     call = make_call("acc-nothing")
     await _at_email_question(call)
 
-    first = await call.turn("john smith hfmg dot net")  # no "at"
-    second = await call.turn("john at hfmg net")  # no "dot"
+    first = await call.turn("john smith hfmg dot net")  # no "at": never completed with a domain for them
+    second = await call.turn("john at hfmg net")  # no "dot": the domain is missing, so only that is asked for
+    third = await call.turn("hfmg net")  # still not a domain
+    filed = await call.turn("skip")  # offered the choice, the caller skips
 
     assert scripts.EMAIL_RETRY in _said(first)
-    assert second["ticket_id"]  # two failures: email is skipped, the ticket is still filed
-    assert (await _ticket(client, second["ticket_id"]))["email"] is None
+    assert _said(second) == scripts.EMAIL_ASK_DOMAIN
+    assert scripts.EMAIL_OFFER_SKIP in _said(third)  # asked, never just dropped
+    assert filed["ticket_id"]  # the ticket is still filed, without an address nobody gave in full
+    assert (await _ticket(client, filed["ticket_id"]))["email"] is None
 
 
 # -- fixing one part --------------------------------------------------------------------------------------------------------
@@ -276,7 +284,7 @@ async def test_a_wrong_username_is_fixed_alone_and_the_domain_is_not_asked_again
     assert speech_context.recognition_mode(session.state.value, session.collected) == "SPELL_EMAIL"
 
     readback = await call.turn("m l o p e z")
-    assert "m l o p e z at h f m g dot net" in _said(readback)  # the domain was kept as heard
+    assert "M, L, O, P, E, Z, at, H, F, M, G, dot, net" in _said(readback)  # the domain was kept as heard
     filed = await call.turn("yes")
     assert (await _ticket(client, filed["ticket_id"]))["email"] == "mlopez@hfmg.net"
 
@@ -293,7 +301,7 @@ async def test_a_wrong_domain_is_fixed_alone_and_the_username_is_kept(make_call,
     assert speech_context.recognition_mode(session.state.value, session.collected) == "SPELL_EMAIL_DOMAIN"
 
     readback = await call.turn("h f m g dot net")
-    assert "m l o p e z at h f m g dot net" in _said(readback)  # the username was kept
+    assert "M, L, O, P, E, Z, at, H, F, M, G, dot, net" in _said(readback)  # the username was kept
     filed = await call.turn("yes")
     assert (await _ticket(client, filed["ticket_id"]))["email"] == "mlopez@hfmg.net"
 
@@ -304,9 +312,9 @@ async def test_the_corrected_part_can_come_in_the_same_breath_as_the_no(make_cal
     await call.turn("m lopes at gmail dot com")
 
     domain_fixed = await call.turn("no, the domain is h f m g dot net")
-    assert "m l o p e s at h f m g dot net" in _said(domain_fixed)  # only the domain changed
+    assert "M, L, O, P, E, S, at, H, F, M, G, dot, net" in _said(domain_fixed)  # only the domain changed
     local_fixed = await call.turn("no it's m l o p e z")  # a spelled username
-    assert "m l o p e z at h f m g dot net" in _said(local_fixed)
+    assert "M, L, O, P, E, Z, at, H, F, M, G, dot, net" in _said(local_fixed)
     filed = await call.turn("yes")
     assert (await _ticket(client, filed["ticket_id"]))["email"] == "mlopez@hfmg.net"
 
@@ -347,9 +355,11 @@ async def test_corrections_are_bounded_and_the_ticket_is_still_filed_without_the
         await call.turn("the part before the at sign")
         await call.turn(guess)
 
-    filed = await call.turn("no")
+    offered = await call.turn("no")
+    filed = await call.turn("skip it")
 
-    assert scripts.EMAIL_GIVE_UP in _said(filed) and filed["ticket_id"]
+    assert scripts.EMAIL_OFFER_SKIP in _said(offered)  # the caller chooses; email is never just dropped
+    assert scripts.EMAIL_SKIPPED in _said(filed) and filed["ticket_id"]
     assert (await _ticket(client, filed["ticket_id"]))["email"] is None  # never filed with an address nobody confirmed
 
 
@@ -361,7 +371,7 @@ async def test_a_confirmed_caller_is_offered_their_address_on_file_and_a_yes_use
 
     offered = await _confirmed_at_email_step(call, "Dana Sample")
 
-    assert scripts.EMAIL_DIRECTORY_CONFIRM.format(email="d a n a dot s a m p l e at e x a m p l e dot org") in _said(offered)
+    assert scripts.EMAIL_DIRECTORY_CONFIRM.format(email=scripts.spoken_email("dana.sample@example.org")) in _said(offered)
     session = await _session(db_session, "acc-dir-yes")
     assert session.state.value == "CONFIRM_EMAIL" and not session.collected.get("email")  # an offer, not yet an address
     filed = await call.turn("yes")
@@ -376,7 +386,7 @@ async def test_declining_the_address_on_file_asks_the_usual_question_and_takes_w
     await _confirmed_at_email_step(call, "Dana Sample")
 
     asked = await call.turn("no")
-    assert "Okay." in _said(asked) and "spell the part before the at sign" in _said(asked)
+    assert "Okay." in _said(asked) and "say it naturally, spell it, or say skip" in _said(asked)
     assert (await _session(db_session, "acc-dir-no")).collected.get("email_candidate") is None
     await call.turn("d sample at h f m g dot net")
     filed = await call.turn("yes")
@@ -390,7 +400,7 @@ async def test_a_different_address_given_in_answer_to_the_offer_is_read_back_lik
 
     readback = await call.turn("no it's d sample at h f m g dot net")
 
-    assert "d s a m p l e at h f m g dot net. Is that correct?" in _said(readback)
+    assert "D, S, A, M, P, L, E, at, H, F, M, G, dot, net. Is that correct?" in _said(readback)
     filed = await call.turn("yes")
     assert (await _ticket(client, filed["ticket_id"]))["email"] == "dsample@hfmg.net"
 
@@ -407,7 +417,7 @@ async def test_an_address_that_is_missing_or_not_theirs_is_not_offered_and_the_c
 
     asked = await _confirmed_at_email_step(call, name)
 
-    assert "on file" not in _said(asked) and "spell the part before the at sign" in _said(asked)
+    assert "on file" not in _said(asked) and "say it naturally, spell it, or say skip" in _said(asked)
     session = await _session(db_session, call.call_id)
     assert session.state.value == "COLLECT_EMAIL"
     await call.turn("skip")
@@ -421,7 +431,7 @@ async def test_an_address_the_ticket_form_would_reject_is_never_offered(make_cal
 
     asked = await _confirmed_at_email_step(call, "Zed Reserved")
 
-    assert "on file" not in _said(asked) and "spell the part before the at sign" in _said(asked)
+    assert "on file" not in _said(asked) and "say it naturally, spell it, or say skip" in _said(asked)
     await call.turn("zed at h f m g dot net")
     filed = await call.turn("yes")
     assert (await _ticket(client, filed["ticket_id"]))["email"] == "zed@hfmg.net"
@@ -454,11 +464,11 @@ async def test_a_misspelled_domain_on_file_is_offered_as_it_is_never_repaired_an
 
     offered = await _confirmed_at_email_step(call, "Tom Typo")
 
-    assert "t o m dot t y p o at h m f g dot net on file" in _said(offered)  # hmfg, spelled out so it can be noticed
-    assert "h f m g" not in _said(offered)
+    assert "T, O, M, dot, T, Y, P, O, at, H, M, F, G, dot, net on file" in _said(offered)  # hmfg, spelled out so it can be noticed
+    assert "H, F, M, G" not in _said(offered)
     asked = await call.turn("no")
     readback = await call.turn("tom dot typo at h f m g dot net")  # what the caller says is what is kept
-    assert "t o m dot t y p o at h f m g dot net" in _said(readback)
+    assert "T, O, M, dot, T, Y, P, O, at, H, F, M, G, dot, net" in _said(readback)
     filed = await call.turn("yes")
     assert (await _ticket(client, filed["ticket_id"]))["email"] == "tom.typo@hfmg.net"
 
@@ -475,7 +485,7 @@ async def test_the_misspelled_domain_on_file_is_filed_unchanged_if_the_caller_co
 async def test_an_address_on_file_in_mixed_case_is_offered_and_filed_in_lower_case(make_call, client, db_session, sent_emails):
     call = make_call("acc-dir-case", UNA)
     offered = await _confirmed_at_email_step(call, "Una Upper")
-    assert "u n a dot u p p e r at e x a m p l e dot org on file" in _said(offered)
+    assert f"{scripts.spoken_email('una.upper@example.org')} on file" in _said(offered)
 
     filed = await call.turn("yes")
 
@@ -579,7 +589,7 @@ async def test_simultaneous_calls_keep_their_own_names_addresses_and_corrections
     # The first dictates correctly, the second gets the domain wrong, the third takes the address on file.
     await asyncio.gather(first.turn("john dot smith at h f m g dot net"), second.turn("a b c at gmail dot com"), third.turn("yes"))
     _, fixed = await asyncio.gather(first.turn("yes"), second.turn("no, the domain is h f m g dot net"))
-    assert "a b c at h f m g dot net" in _said(fixed)
+    assert "A, B, C, at, H, F, M, G, dot, net" in _said(fixed)
     await second.turn("yes")
 
     tickets = [await _ticket(client, (await _session(db_session, cid)).ticket_id) for cid in ("acc-par-1", "acc-par-2", "acc-par-3")]

@@ -84,7 +84,7 @@ async def test_happy_path_skips_phone_question_when_caller_id_present(db_session
     monkeypatch.setattr(nlu, "interpret_name", lambda u, **k: _async(extracted("Maria Lopez")))
     out = await orchestrator.handle_turn(db_session, session, utterance="Maria Lopez")
     assert session.state == VoiceCallState.COLLECT_EMAIL
-    assert "spell the part before the at sign" in out.text
+    assert "say it naturally, spell it, or say skip" in out.text
     assert session.collected["phone_number"] == CALLER_ID
 
     monkeypatch.setattr(nlu, "interpret_email", lambda u: _async(extracted("mlopez@hfmg.net")))
@@ -195,10 +195,12 @@ async def test_email_failures_do_not_escalate_and_skip_after_two_tries(db_sessio
     assert session.state == VoiceCallState.COLLECT_EMAIL
     assert session.misunderstanding_count == 0  # optional field, never counts
 
-    await orchestrator.handle_turn(db_session, session, utterance="gibberish again")
+    offered = await orchestrator.handle_turn(db_session, session, utterance="gibberish again")
+    assert offered.text == scripts.EMAIL_OFFER_SKIP  # the caller chooses: email is never just dropped
+    await orchestrator.handle_turn(db_session, session, utterance="skip")
     await db_session.commit()
 
-    # Gave up on email and completed the ticket anyway.
+    # Skipped email and completed the ticket anyway.
     assert session.misunderstanding_count == 0
     assert session.ticket_id is not None
     ticket = await db_session.get(Ticket, session.ticket_id)
