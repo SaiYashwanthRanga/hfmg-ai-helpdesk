@@ -208,7 +208,7 @@ async def test_an_unclear_answer_is_asked_once_more_then_the_number_stands(phone
     call.monkeypatch.setattr(nlu, "interpret_yes_no", lambda q, u: _async(unclear))
 
     repeat = await call.turn("hmm, maybe")
-    assert scripts.CALLBACK_REPEAT in " ".join(repeat["lines"])
+    assert " ".join(repeat["lines"]) == scripts.CALLBACK_YES_NO  # briefly: not the whole number again
     assert (await _session(db_session, "cb-unclear")).state == VoiceCallState.CONFIRM_CALLBACK_NUMBER
 
     filed = await call.turn("uh")

@@ -175,7 +175,7 @@ async def test_the_reported_call_end_to_end(make_call, client, db_session, monke
     assert "Suggested next step: Check the caller's keyboard (partly working" in intake
     for wrong in ("paper jam", "print queue", "Error shown", "shared network printer"):
         assert wrong not in intake
-    assert "Department: Development (unverified: not on HFMG's department list)" in intake
+    assert "Department: Development (given by the caller; unverified: not on HFMG's department list)" in intake
     assert "Extension: 3000 (given by the caller; unverified: the directory lists this extension for a different entry)" in intake
     assert "Started: this morning" in intake and "Work blocked: no" in intake
     for theirs in ("Lee Other", "lee.other", "Other Clinic", "Identity:"):  # nothing of the other entry is used

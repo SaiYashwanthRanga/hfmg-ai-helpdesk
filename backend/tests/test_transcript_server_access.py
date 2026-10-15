@@ -157,7 +157,7 @@ async def test_the_reported_call_is_recorded_from_what_the_caller_actually_said(
                      "Started: this morning", "Work blocked: yes",
                      "Extension: 3000 (given by the caller; unverified: the directory lists this extension for a different entry)",
                      "Read-back: read to the caller, no answer: not confirmed",
-                     "Suggested next step: Check whether 172.22.6.98 can be reached"):
+                     "Suggested next step: Verify that 172.22.6.98 is reachable"):
         assert expected in intake, expected
     for invented in INVENTED:
         assert invented not in intake.lower(), invented

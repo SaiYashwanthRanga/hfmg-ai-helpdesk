@@ -248,7 +248,9 @@ async def test_an_unclear_answer_repeats_the_question_in_the_same_wording(kind, 
 
     repeat = await call.turn("hmm, maybe")
 
-    assert _text(repeat) == f"{scripts.CALLBACK_REPEAT} {QUESTION[kind]}"
+    # Briefly, not the whole number again; worded for neither team, so it fits a patient and an employee alike.
+    assert _text(repeat) == scripts.CALLBACK_YES_NO
+    assert "IT team" not in scripts.CALLBACK_YES_NO and "support team" not in scripts.CALLBACK_YES_NO
     assert (await _session(db_session, f"cbw-unclear-{kind}")).state == VoiceCallState.CONFIRM_CALLBACK_NUMBER
 
 
@@ -266,7 +268,7 @@ async def test_a_call_with_no_caller_type_keeps_the_employee_wording_and_is_not_
 
     repeat = await call.turn("hmm, maybe")
 
-    assert _text(repeat) == f"{scripts.CALLBACK_REPEAT} {EMPLOYEE_QUESTION}"
+    assert _text(repeat) == scripts.CALLBACK_YES_NO
     assert "caller_type" not in (await _session(db_session, "cbw-missing")).collected
 
 

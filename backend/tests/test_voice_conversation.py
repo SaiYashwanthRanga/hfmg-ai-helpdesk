@@ -245,7 +245,7 @@ async def test_unlisted_department_is_flagged_on_the_ticket(db_session, monkeypa
     await _say(db_session, session, "Yes.")
     await db_session.commit()
     ticket = await db_session.get(Ticket, session.ticket_id)
-    assert "Department: AI Director (unverified" in ticket.description
+    assert "Department: AI Director (given by the caller; unverified" in ticket.description
 
 
 async def test_listed_department_is_normalized(db_session, monkeypatch, conversation):
@@ -273,7 +273,7 @@ async def test_bare_no_asks_what_to_change_then_applies_it(db_session, monkeypat
     await _say(db_session, session, "Yes.")
     await db_session.commit()
     ticket = await db_session.get(Ticket, session.ticket_id)
-    assert "Department: IT\n" in ticket.description
+    assert "Department: IT (given by the caller)\n" in ticket.description
 
 
 async def test_yes_but_is_a_correction_not_a_yes(db_session, monkeypatch, conversation):

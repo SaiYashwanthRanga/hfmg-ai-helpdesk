@@ -75,7 +75,7 @@ def _said(values: Values, key: str, default: str = "") -> str:
     """The caller's answer, trimmed to fit inside a sentence for IT ("It's FS01." -> "FS01"). The ticket's own
     line for that question keeps their exact words."""
     value = values.get(key)
-    if not value or value == "none" or value.startswith("("):
+    if not value or value in ("none", "unknown") or value.startswith("("):
         return default
     brief = _LEAD.sub("", value).strip().rstrip(".!?, ")
     return brief or default
@@ -144,20 +144,61 @@ SERVER_ACCESS = Playbook(
                  essential=True),
         Question("server_name", "Server name", "Do you know the server's name? I have the address {server}.", "host",
                  when=lambda v: is_ip(v.get("server")) and not v.get("server_name_resolved")),
-        Question("resource", "Drive, share or system", "Which drive, share or system are you trying to reach?", "text",
-                 prefill_pattern=r"\b(?:the\s+)?[A-Za-z0-9]{1,12}\s+(?:drive|share|folder)\b|\\\\[^\s]+"),
+        # What the server hosts decides the next questions; an IP address alone says nothing about it, so nothing is
+        # assumed. Seen on a test call: a drive/share question for a server nobody said had a share.
+        Question("resource_type", "What the server hosts",
+                 "Do you know whether this server hosts a database, an application, a shared drive or folder, or "
+                 "another service?", "choice",
+                 (("database", ("database", "db", "sql", "oracle", "postgres", "mysql")),
+                  ("file_share", ("share", "shared drive", "folder", "drive", "file server", "files")),
+                  ("application", ("application", "app", "website", "web site", "portal", "software", "program",
+                                   "service")))),
+        Question("resource", "Drive, share or system", "Which shared drive or folder are you trying to reach?", "text",
+                 prefill_pattern=r"\b(?:the\s+)?[A-Za-z0-9]{1,12}\s+(?:drive|share|folder)\b|\\\\[^\s]+",
+                 when=lambda v: v.get("resource_type") == "file_share"),
+        Question("application", "Application", "Which application or service is it?", "text",
+                 when=lambda v: v.get("resource_type") == "application"),
+        Question("db_client", "Application using the database", "Which application or service connects to the database?",
+                 "text", when=lambda v: v.get("resource_type") == "database"),
         Question("error", "What happens", "What happens when you try to connect: an error message, or does it just "
                  "time out?", "text"),
+        Question("timeout_kind", "Timeout", "Is the connection timing out, or do you need a timeout setting changed?",
+                 "choice",
+                 (("setting_change", ("setting", "change", "changed", "increase", "adjust", "configure", "longer",
+                                      "extend")),
+                  ("connection_timeout", ("timing out", "times out", "timed out", "time out", "timeout",
+                                          "connection"))),
+                 when=lambda v: bool(v.get("timeout_ambiguous"))),
         Question("location", "Location", "Are you in the office or working remotely?", "choice",
                  (("remote", ("home", "remote", "remotely", "away", "off site", "offsite", "travel")),
                   ("office", ("in the office", "office", "at work", "clinic", "on site", "onsite", "building")))),
         _SCOPE,
     ),
-    next_action=lambda v: (
-        f"Check whether {_servers(v)} can be reached from the caller's location (network path and the server's "
-        f"status) and access to {_said(v, 'resource', 'the resource they need')}. Nothing was changed on the call."
-    ),
+    next_action=lambda v: _server_access_next_action(v),
 )
+
+
+def _server_access_next_action(v: Values) -> str:
+    """What IT should check, from what the caller established -- never a resource, cause or change nobody said."""
+    steps = [f"Verify that {_servers(v)} is reachable and check its status from the caller's location"]
+    kind = v.get("resource_type")
+    if kind == "database":
+        steps.append(f"check the database connection from {_said(v, 'db_client', 'the application that uses it')}")
+    elif kind == "file_share":
+        steps.append(f"check access to {_said(v, 'resource', 'the share or folder they need')}")
+    elif kind == "application":
+        steps.append(f"check {_said(v, 'application', 'the application they named')}")
+    else:
+        steps.append("establish which resource or service on it the caller needs")
+    timeout = v.get("timeout_kind")
+    if timeout == "setting_change":
+        steps.append("the caller asked for a timeout setting to be changed: confirm which setting, and approval, "
+                     "before changing anything")
+    elif timeout == "connection_timeout":
+        steps.append("connections to it are timing out")
+    elif v.get("timeout_ambiguous"):
+        steps.append("establish whether connections time out or a timeout setting needs changing")
+    return "; ".join(steps) + ". Nothing was changed on the call."
 
 NETWORK = Playbook(
     "network", "Network / VPN", noun="the network",
@@ -361,6 +402,19 @@ def choose(category: str | None, description: str | None) -> Playbook:
 
 # "my password is X", "code: X", "PIN = X": the value after an explicit "is", "was", ":" or "=" is removed.
 _SECRET = re.compile(r"\b(password|passcode|pin|code)(?:\s+(?:is|was)\s*[:=]?|\s*[:=])\s*\S+", re.IGNORECASE)
+#: The caller does not know: "Don't know", "not sure", "no idea". Recorded as unknown -- the question is not asked
+#: again, and the words never become a name, a drive or a system on the ticket ("access to Don't know").
+_UNKNOWN = re.compile(
+    r"^\W*(?:(?:um+|uh+|well|sorry|honestly)\W+)*(?:i\s+|i'?m\s+)?(?:(?:really\s+)?(?:don'?t|do\s+not|dont)\s+know|"
+    r"not\s+sure|no\s+idea|no\s+clue|dunno|unknown|not\s+certain|have\s+no\s+idea|can'?t\s+remember)\b",
+    re.IGNORECASE,
+)
+#: "Adjust the timeout": a setting to change, or a connection that times out? Asked, never assumed.
+_TIMEOUT_AMBIGUOUS = re.compile(
+    r"\b(?:adjust|change|increase|extend|raise|set|modify|update|fix|lengthen)\w*\s+(?:the\s+|a\s+|that\s+)?time\s?out\b"
+    r"|\btime\s?out\s+(?:setting|value|limit|period)\b",
+    re.IGNORECASE,
+)
 _DECLINE = re.compile(r"^\W*(no|nope|none|nothing|no error|no message|not really|i don'?t know|not sure|n/?a)\b",
                       re.IGNORECASE)
 _SECURITY = ("hacked", "phish", "ransom", "virus", "malware", "suspicious email", "clicked a link", "clicked on a link",
@@ -477,6 +531,8 @@ def _names_nothing(question: Question, utterance: str) -> bool:
 
 def _parse(question: Question, utterance: str) -> str | None:
     text = (utterance or "").lower()
+    if question.kind != "yes_no" and _UNKNOWN.match(text) and len(text.split()) <= 8:
+        return "unknown"
     if question.kind == "choice" and _short_answer_is_unclear(question, utterance):
         return None
     if question.kind == "yes_no":
@@ -507,6 +563,10 @@ def begin(
     text = (description or "").lower()
     named = hostnames(description or "")
     for question in playbook.questions:
+        if not question.when(values):
+            # A question that does not apply is never answered from the description either. Seen on a test call:
+            # "not connecting" filled in the timeout question, and the ticket claimed connections were timing out.
+            continue
         found = _parse(question, description or "") if question.kind == "choice" else None
         if question.key == "server" and named:
             found = named[0]
@@ -525,6 +585,8 @@ def begin(
     if affected_scope in ("one_person", "several_people", "whole_site") and any(q.key == "scope" for q in playbook.questions):
         values["scope"] = "no" if affected_scope == "one_person" else "yes"
         values["scope_said"] = "(from earlier in the call)"
+    if playbook is SERVER_ACCESS and _TIMEOUT_AMBIGUOUS.search(description or ""):
+        values["timeout_ambiguous"] = True
     state = {"playbook": playbook.name, "values": values, "asked": [], "pending": None, "done": False, "flags": []}
     _flag(state, description or "")
     return state
@@ -582,8 +644,14 @@ def next_prompt(state: dict) -> tuple[str, str] | None:
         if urgent and not question.essential:
             continue
         if question.key not in values and question.key not in state["asked"] and question.when(values):
-            return question.key, question.prompt.format_map(_Known(values))
+            return question.key, _prompt(question, values)
     return None
+
+
+def _prompt(question: Question, values: Values) -> str:
+    """The question as spoken, with what it names filled in ("I have the address 172.22.6.98"). Every ask and re-ask
+    goes through here: a re-ask once said the raw "{server}" to a caller."""
+    return question.prompt.format_map(_Known(values))
 
 
 class _Known(dict):
@@ -648,11 +716,17 @@ def is_confused(question: Question | None, utterance: str) -> bool:
     return question is not None and _echoes(question.prompt, utterance)
 
 
+_QUESTION_WORDS = frozenset({"which", "what", "where", "who", "how", "is", "are", "do", "does", "did", "can", "could"})
+
+
 def _echoes(prompt: str, utterance: str) -> bool:
     """The caller repeating the question ("Which printer or device is it?") rather than answering it."""
     said = re.findall(r"[a-z']+", (utterance or "").lower())
     asked = set(re.findall(r"[a-z']+", (prompt or "").lower()))
-    return len(said) >= 3 and sum(w in asked for w in said) / len(said) >= 0.8
+    # Said as a question: an answer that picks one of the options offered ("A shared drive.", "The connection is
+    # timing out.") repeats the question's words because it answers it, and must never be taken for an echo.
+    as_question = (utterance or "").strip().endswith("?") or bool(said) and said[0] in _QUESTION_WORDS
+    return as_question and len(said) >= 3 and sum(w in asked for w in said) / len(said) >= 0.8
 
 
 def _mentioned(text: str) -> list[Playbook]:
@@ -753,12 +827,12 @@ def record(state: dict, utterance: str) -> tuple[dict, dict, str | None]:
     confused = question is not None and not is_non_answer(utterance) and is_confused(question, utterance)
     if question is not None and (is_non_answer(utterance) or unclear_choice or confused) and question.key not in state["retried"]:
         state["retried"].append(question.key)
-        return state, updates, f"{CLARIFY} {question.prompt}"
+        return state, updates, f"{CLARIFY} {_prompt(question, state['values'])}"
     vague = question is not None and not _DECLINE.match((utterance or "").lower()) and _names_nothing(question, utterance)
     if vague and question.key not in state["retried"]:
         # Heard, but it names nothing ("Yeah, I'm unable to log in."): not "I didn't catch that" -- which one.
         state["retried"].append(question.key)
-        return state, updates, question.clarify or question.prompt
+        return state, updates, question.clarify or _prompt(question, state["values"])
     if question is not None:
         state["asked"].append(question.key)
         value = None if confused else _parse(question, utterance)
@@ -770,6 +844,8 @@ def record(state: dict, utterance: str) -> tuple[dict, dict, str | None]:
             extra = hostnames(utterance)[1:]
             if extra:  # "FS01 and FS02": both are affected
                 state["values"]["additional_servers"] = ", ".join(extra)
+        if state["playbook"] == "server_access" and _TIMEOUT_AMBIGUOUS.search(utterance or ""):
+            state["values"]["timeout_ambiguous"] = True
         if question.key == "scope" and value == "yes":
             updates["affected_scope"] = "whole_site" if "everyone" in state["flags"] else "several_people"
         elif question.key == "scope" and value == "no":
@@ -918,6 +994,8 @@ def ticket_lines(
             shown = f"{value} (caller said: \"{said}\")"
         if question.kind == "choice" and said and not said.startswith("("):
             shown = f"{value} (caller said: \"{said}\")" if value else f"unclear (caller said: \"{said}\")"
+        if value == "unknown":
+            shown = f"unknown (caller said: \"{said}\")" if said and not said.startswith("(") else "unknown"
         if question.kind == "text" and value is None and said and not said.startswith("("):
             shown = f"not identified (caller said: \"{said}\")"
         lines.append((question.label, shown or "unclear"))

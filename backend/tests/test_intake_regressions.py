@@ -407,13 +407,15 @@ async def test_the_department_line_says_verified_unverified_unchecked_or_missing
     from app.voice.departments import DEFAULT_DEPARTMENTS
 
     monkeypatch.setattr(settings, "voice_departments", ",".join(DEFAULT_DEPARTMENTS))
-    assert "Department: Billing\n" in orchestrator._intake_details({"department": "Billing", "department_verified": True}) + "\n"
-    assert "Department: Space Lab (unverified: not on HFMG's department list)" in orchestrator._intake_details(
+    # Always the caller's own word: on the list or not, it is never shown as checked against a directory.
+    assert "Department: Billing (given by the caller)\n" in orchestrator._intake_details(
+        {"department": "Billing", "department_verified": True}) + "\n"
+    assert "Department: Space Lab (given by the caller; unverified: not on HFMG's department list)" in orchestrator._intake_details(
         {"department": "Space Lab", "department_verified": False})
     assert "Department: not given" in orchestrator._intake_details({"caller_type": "INTERNAL_IT"})
     assert "Department" not in orchestrator._intake_details({"caller_type": "PATIENT_SUPPORT"})
     monkeypatch.setattr(settings, "voice_departments", "")  # the server has no list configured
-    assert "Department: Billing (not checked: no HFMG department list is configured)" in orchestrator._intake_details(
+    assert "Department: Billing (given by the caller; not checked: no HFMG department list is configured)" in orchestrator._intake_details(
         {"department": "Billing", "department_verified": True})
 
 

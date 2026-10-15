@@ -1457,6 +1457,10 @@ async def _email_still_being_given(
     return await _email_progress(db, session, fragment, preamble=scripts.EMAIL_BACK_TO_EMAIL)
 
 
+#: A bare acknowledgement: "Okay", "Alright", "Hmm". Never taken as a yes to a number read back.
+_ACKNOWLEDGEMENT_ONLY = re.compile(r"^\W*(?:ok(?:ay)?|alright|all right|hmm+|uh+|um+|got it|i see)\W*$", re.IGNORECASE)
+
+
 async def _handle_callback_confirmation(
     db: AsyncSession, session: VoiceCallSession, utterance: str
 ) -> TurnOutcome:
@@ -1464,7 +1468,10 @@ async def _handle_callback_confirmation(
     unfinished = await _email_still_being_given(db, session, utterance)
     if unfinished is not None:
         return unfinished
-    result = await nlu.interpret_yes_no("Is that the best number to reach you on?", utterance)
+    if _ACKNOWLEDGEMENT_ONLY.match(utterance or ""):
+        result = nlu.TurnResult()  # "Okay." acknowledges the question; it does not answer it
+    else:
+        result = await nlu.interpret_yes_no("Is that the best number to reach you on?", utterance)
 
     if _wants_human(utterance, result):
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
@@ -1488,10 +1495,12 @@ async def _handle_callback_confirmation(
                 return await _keep_current_callback(db, session)
         return _ask_alternate_callback(session)
 
-    # Neither a yes nor a no. Ask once more, then carry on with the number we have.
+    # Neither a yes nor a no ("Okay."). Not a confirmation: ask once more -- briefly, without the whole number
+    # again (seen on a test call) -- then carry on with the number we have.
     if _callback_attempts_used(session):
         return await _keep_current_callback(db, session)
-    return _ask_callback_confirmation(session, preamble=scripts.CALLBACK_REPEAT)
+    session.state = VoiceCallState.CONFIRM_CALLBACK_NUMBER
+    return TurnOutcome(_speak(session, _ask(session, scripts.CALLBACK_YES_NO)))
 
 
 async def _handle_alternate_callback(
@@ -1810,6 +1819,9 @@ def _diagnostics_next(session: VoiceCallSession) -> tuple[str | None, str | None
             # the questions) is not sent back to them in the middle of the paperwork.
             return None, None
         state = diagnostics.begin(c.get("category"), c.get("description"), c.get("affected_scope"))
+        if state["playbook"] in ("server_access", "network") and c.get("category") in (None, "Other"):
+            # Reaching a server or the network is what the Network category covers; "Other" hid it.
+            update_collected(session, category="Network")
     if state.get("done"):
         return None, None
     found = diagnostics.next_prompt(state)
@@ -3160,10 +3172,13 @@ def _intake_details(collected: dict) -> str:
     blocked = collected.get("work_blocked")
     unverified = collected.get("priority_unverified") or []
     department = collected.get("department")
+    # A department is always the caller's own word: nothing checks it against a directory.
     if department and collected.get("department_verified") is False:
-        department = f"{department} (unverified: not on HFMG's department list)"
+        department = f"{department} (given by the caller; unverified: not on HFMG's department list)"
     elif department and not departments.configured():
-        department = f"{department} (not checked: no HFMG department list is configured)"
+        department = f"{department} (given by the caller; not checked: no HFMG department list is configured)"
+    elif department:
+        department = f"{department} (given by the caller)"
     elif not department and collected.get("caller_type") != "PATIENT_SUPPORT":
         department = "not given"
     reason = collected.get("priority_reason")
@@ -3372,7 +3387,15 @@ def _say_then_ask(session: VoiceCallSession, statement: str, prompt: str) -> rep
     return reply.say_then_ask(statement, prompt)
 
 
+#: An unfilled template field ("{server}"). Seen on a test call, spoken to the caller as written.
+_PLACEHOLDER = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")
+
+
 def _speak(session: VoiceCallSession, reply_: reply.Reply) -> reply.Reply:
-    """Record what the agent said, for the transcript on the ticket."""
+    """Record what the agent said, for the transcript on the ticket. Last guard before speech: an unfilled template
+    field is never said to a caller -- it is removed, and logged as the defect it is."""
+    if any(_PLACEHOLDER.search(line) for line in reply_.lines):
+        logger.error("Call %s: an unfilled template field was removed from a spoken line", session.call_id)
+        reply_.lines = [" ".join(_PLACEHOLDER.sub("", line).split()).replace(" .", ".") for line in reply_.lines]
     record_turn(session, role="agent", text=reply_.text)
     return reply_

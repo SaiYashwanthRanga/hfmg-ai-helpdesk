@@ -158,7 +158,8 @@ CALLBACK_ASK_OTHER = "What number would you like our IT team to call instead?"
 # The same question for a patient call (caller_type PATIENT_SUPPORT).
 PATIENT_CALLBACK_ASK_OTHER = "What number would you like our support team to call instead?"
 CALLBACK_CONFIRM_NEW = "I have your callback number as {number}. Is that correct?"
-CALLBACK_REPEAT = "Sorry, I didn't catch a yes or a no."
+CALLBACK_YES_NO = "Sorry, is that the right number to call you back on? Please say yes or no."
+CALLBACK_REPEAT ="Sorry, I didn't catch a yes or a no."
 CALLBACK_KEEP_CURRENT = "No problem, we'll use {number}."
 
 # Office extension (employee calls only): asked once, and only when no caller-confirmed directory entry
