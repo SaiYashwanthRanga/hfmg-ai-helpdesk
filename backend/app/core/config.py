@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     default_from_email: str = ""
     hfmg_mail_timeout_seconds: float = 10.0
     hfmg_mail_max_retries: int = 2
+    # Ticket notifications that fail are retried in the background with a growing delay (5s, 10s, ... capped at
+    # the max delay) until they succeed or this many attempts have been made. 0 means keep trying until sent.
+    notification_max_attempts: int = 15
+    notification_retry_max_delay_seconds: float = 300.0
     # Fixed sender/recipient by design: every ticket notification goes from
     # EMAIL_FROM to HELPDESK_EMAIL, not a per-call choice.
     email_from: str = "reminder@hfmg.net"

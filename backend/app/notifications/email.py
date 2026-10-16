@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from app.core.config import get_settings
@@ -122,20 +123,40 @@ async def send_ticket_notification(ticket: Ticket, event: str) -> None:
             ticket_number=ticket.ticket_number,
         )
 
-        sent = await provider.send(
-            to=recipients,
-            from_email=settings.email_from,
-            subject=subject,
-            body=body,
-        )
+        max_attempts = settings.notification_max_attempts  # 0 = until sent
+        attempt = 0
+        while True:
+            attempt += 1
+            sent = await provider.send(
+                to=recipients,
+                from_email=settings.email_from,
+                subject=subject,
+                body=body,
+            )
+            if sent:
+                # The count, never the addresses: a quick check that every configured recipient was included.
+                logger.info(
+                    "Sent %s notification for %s to %d recipient(s) (attempt %d)",
+                    event,
+                    ticket.ticket_number,
+                    len(recipients),
+                    attempt,
+                )
+                break
 
-        if sent:
-            # The count, never the addresses: a quick check that every configured recipient was included.
-            logger.info("Sent %s notification for %s to %d recipient(s)", event, ticket.ticket_number, len(recipients))
-        else:
             # No exception detail or body here by design -- the provider already
             # logged the failure class (status code / error type) without content.
-            logger.warning("Failed to send %s notification for %s", event, ticket.ticket_number)
+            logger.warning("Failed to send %s notification for %s (attempt %d)", event, ticket.ticket_number, attempt)
+            if max_attempts and attempt >= max_attempts:
+                logger.error(
+                    "Giving up on %s notification for %s after %d attempts", event, ticket.ticket_number, attempt
+                )
+                break
+            # The mail API fails in bursts (e.g. HTTP 400 "Mail failed" when its Graph call hiccups), so back off
+            # and try again: 5s, 10s, 20s ... capped.
+            delay = min(5.0 * 2 ** (attempt - 1), settings.notification_retry_max_delay_seconds)
+            logger.info("Retrying %s notification for %s in %.0fs", event, ticket.ticket_number, delay)
+            await asyncio.sleep(delay)
     except Exception:
         # This runs as a FastAPI BackgroundTask: an exception here would
         # otherwise propagate past the (already-sent) response with no

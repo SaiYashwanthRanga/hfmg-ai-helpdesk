@@ -278,8 +278,20 @@ async def test_unconfigured_provider_skips_without_logging_body(monkeypatch, cap
     assert "Jane Caller" not in log_text
 
 
+def _no_sleep(monkeypatch) -> list[float]:
+    delays: list[float] = []
+
+    async def fake_sleep(delay):
+        delays.append(delay)
+
+    monkeypatch.setattr(email_module.asyncio, "sleep", fake_sleep)
+    return delays
+
+
 async def test_send_failure_does_not_log_body(monkeypatch, caplog):
     monkeypatch.setattr(settings, "enable_email_notifications", True)
+    monkeypatch.setattr(settings, "notification_max_attempts", 3)
+    _no_sleep(monkeypatch)
 
     class FakeProvider:
         is_configured = True
@@ -296,3 +308,42 @@ async def test_send_failure_does_not_log_body(monkeypatch, caplog):
     log_text = "\n".join(r.getMessage() for r in caplog.records)
     assert "Confidential description" not in log_text
     assert "Jane Caller" not in log_text
+
+
+async def test_failed_notification_is_retried_until_sent(monkeypatch):
+    monkeypatch.setattr(settings, "enable_email_notifications", True)
+    monkeypatch.setattr(settings, "notification_max_attempts", 15)
+    delays = _no_sleep(monkeypatch)
+    outcomes = [False, False, True]
+
+    class FakeProvider:
+        is_configured = True
+
+        async def send(self, **kwargs):
+            return outcomes.pop(0)
+
+    monkeypatch.setattr(email_module, "get_email_provider", lambda: FakeProvider())
+
+    await email_module.send_ticket_notification(_make_ticket(), "created")
+
+    assert outcomes == []  # stopped as soon as it was sent
+    assert delays == [5.0, 10.0]
+
+
+async def test_retry_gives_up_after_max_attempts(monkeypatch):
+    monkeypatch.setattr(settings, "enable_email_notifications", True)
+    monkeypatch.setattr(settings, "notification_max_attempts", 4)
+    _no_sleep(monkeypatch)
+    calls = []
+
+    class FakeProvider:
+        is_configured = True
+
+        async def send(self, **kwargs):
+            calls.append(kwargs)
+            return False
+
+    monkeypatch.setattr(email_module, "get_email_provider", lambda: FakeProvider())
+
+    await email_module.send_ticket_notification(_make_ticket(), "created")
+    assert len(calls) == 4
