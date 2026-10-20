@@ -299,7 +299,6 @@ async def test_a_patient_request_says_not_provided_because_no_address_is_asked_o
     await call.start()
     await call.turn("I'm a patient")
     await call.turn("I need to cancel my appointment")
-    await call.turn("the fifteenth")
     call._say(interpret_name=nlu.TurnResult(value="Ann Patient", confidence="high", unable_to_determine=False))
     await call.turn("Ann Patient")
 

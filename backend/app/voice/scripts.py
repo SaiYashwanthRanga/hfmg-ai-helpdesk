@@ -10,7 +10,7 @@ GREETING = (
 )
 
 # --- who is calling: asked first (VOICE_ASK_CALLER_TYPE) --------------------------------------------
-GREETING_IDENTIFY = "Thank you for calling the helpdesk. May I know if you are a patient or an employee?"
+GREETING_IDENTIFY = "Thank you for calling Horizon Family Medical Group. Are you a patient or an employee?"
 IDENTIFY_CLARIFY = "Sorry, I didn't catch that. Are you a patient, or an employee?"
 IDENTIFY_AFTER_HELLO = "Hello. Are you a patient, or an employee?"
 IDENTIFY_FALLBACK = "No problem. Please tell me briefly how I can help you today."
@@ -20,23 +20,13 @@ TYPE_CORRECTED = "Okay, thanks for letting me know."
 # --- patients: what they need. There is no appointment system behind this line: the agent collects
 # the request and passes it to the support team, and says so; it never says anything was booked,
 # changed, cancelled or found.
-PATIENT_INTENT_ASK = "How can I help you today? Are you calling about booking an appointment or an existing appointment?"
-PATIENT_INTENT_CLARIFY = (
-    "Sorry, I want to be sure I help with the right thing. Is it about booking a new appointment, "
-    "changing or cancelling one, or checking an existing appointment?"
-)
-PATIENT_INTENT_ASK_AGAIN = "What else can I help you with? Is it about booking an appointment or an existing appointment?"
-PATIENT_DETAILS_ASK = {
-    "BOOK": "Do you have a preferred day or time, or a particular doctor?",
-    "RESCHEDULE": "Which appointment is it? The date and the doctor would help.",
-    "CANCEL": "Which appointment is it? The date and the doctor would help.",
-    "CHECK": "Which appointment are you asking about? The date and the doctor would help.",
-    "TROUBLE": "What happens when you try to book? For example, an error message, or the page not loading.",
-}
-PATIENT_LIMITATION = (
-    "I can't book, change, or look up appointments myself on this call, "
-    "but I can pass your request to our team so they can call you back."
-)
+# The patient flow is about the problem, not an appointment conversation: what they need, their name and a callback
+# number, then the request goes to the support team. Nothing is asked about dates, doctors or which kind of
+# appointment change, and nothing is promised: there is no appointment system behind this line.
+PATIENT_INTENT_ASK = "How can we help you today? Please tell me briefly what issue you're experiencing."
+PATIENT_INTENT_CLARIFY = "Sorry, I didn't catch that. Could you tell me briefly what you need help with?"
+PATIENT_INTENT_ASK_AGAIN = "What else can I help you with?"
+PATIENT_PROBLEM_NOTED = "I understand. I'll pass your request to our support team so they can assist you."
 
 # Re-prompts are progressively simpler and never repeat the previous wording --
 # a verbatim repeat is the clearest signal to a caller that they are stuck.
@@ -150,10 +140,7 @@ CALLBACK_CONFIRM = (
 )
 # The same question for a patient call (caller_type PATIENT_SUPPORT): a patient is not talking to the IT
 # team and has a request, not a ticket. The read-back of the number is the same.
-PATIENT_CALLBACK_CONFIRM = (
-    "I have your callback number as {number}. If our support team needs to reach you regarding your request, "
-    "they will call this number. Is this the best number to contact you on?"
-)
+PATIENT_CALLBACK_CONFIRM = "I have your callback number as {number}. Is this the best number to reach you?"
 CALLBACK_ASK_OTHER = "What number would you like our IT team to call instead?"
 # The same question for a patient call (caller_type PATIENT_SUPPORT).
 PATIENT_CALLBACK_ASK_OTHER = "What number would you like our support team to call instead?"
@@ -271,7 +258,12 @@ LEAVING_WITH_TICKET = "No problem. I've saved what you told me. Your ticket numb
 LEAVING_NO_TICKET = "No problem. Take care."
 
 ANYTHING_ELSE = "Is there anything else I can help you with?"
-GOODBYE = "Thank you for calling Horizon Family Medical Group. Goodbye."
+# More than yes or no at "anything else?": the same problem (added to the ticket) or a new one (its own ticket)?
+SAME_OR_NEW_ASK = "Is that about the same problem, or a new one?"
+SAME_ISSUE_ADDED = "Thanks, I've added that to ticket {ticket_number}."
+# "The Billing team has the same issue", said later in the call.
+OTHERS_NOTED = "Thanks, I've noted that others are affected too."
+GOODBYE ="Thank you for calling Horizon Family Medical Group. Goodbye."
 
 ESCALATION_CALLER_REQUESTED = (
     "Of course. I'll have a member of our IT team call you back at {phone}."
@@ -329,16 +321,12 @@ CLASSIFY_CALLER_TYPE_ASK = (
 )
 
 # --- patient support flow -----------------------------------------------------------
-PATIENT_ACK_OPTIONS = (
-    "I can help you with that.",
-    "Let me get that noted for you.",
-    "Okay, I'll get that logged for our team.",
-)
+PATIENT_ACK_OPTIONS = (PATIENT_PROBLEM_NOTED,)
 PATIENT_NAME_ASK = "May I have your name, please?"
-PATIENT_CREATING_TICKET = "Let me create a support request for you."
+# Said only after the request was created: never a number for a request that does not exist.
 PATIENT_READ_BACK = (
-    "Your request number is {ticket_number}. I've sent it to our support team "
-    "and someone will follow up with you."
+    "Thank you. I've saved your request. Your reference number is {ticket_number}. "
+    "Our support team will follow up with you."
 )
 PATIENT_GOODBYE = "Thank you for calling Horizon Family Medical Group. Goodbye."
 PATIENT_ANYTHING_ELSE = "Is there anything else I can help you with?"
@@ -359,9 +347,9 @@ PATIENT_ESCALATION_MISUNDERSTOOD = (
 PATIENT_ESCALATION_NO_CALLBACK_NUMBER = (
     "I'm sorry, I'm having trouble understanding. I'll log a request for our support team to follow up."
 )
-PATIENT_ESCALATION_READ_BACK = "Your request number is {ticket_number}."
+PATIENT_ESCALATION_READ_BACK = "Your reference number is {ticket_number}."
 PATIENT_LEAVING_WITH_REQUEST = (
-    "No problem. I've saved what you told me. Your request number is {ticket_number}. Take care."
+    "No problem. I've saved what you told me. Your reference number is {ticket_number}. Take care."
 )
 
 

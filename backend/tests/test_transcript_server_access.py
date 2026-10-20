@@ -92,7 +92,7 @@ async def _to_read_back(call, *, second_address_answer="I'm not sure, I just kno
         return out
 
     await call.start()
-    await say("Thank you for calling the helpdesk. May I know if you are a patient or an employee?")  # 1. echo
+    await say(scripts.GREETING_IDENTIFY)  # 1. echo: the agent's own greeting coming back as the "answer"
     await say("I'm an employee.")
     call.classify_as("INTERNAL_IT", 0.95)
     call._say(interpret_description=nlu.TurnResult(

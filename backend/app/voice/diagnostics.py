@@ -47,6 +47,11 @@ class Question:
     #: (and filler) is asked about once more with `clarify`, then recorded as not identified, never as the answer.
     vague: frozenset[str] = frozenset()
     clarify: str | None = None
+    #: yes_no only: words in what the caller has said that already answer "no" ("nobody else", "just me").
+    prefill_no: tuple[str, ...] = ()
+    #: Asked only when it can change the priority: the caller cannot work, or the system is shared by many
+    #: (a network, a printer, a server). A single-user problem with a workaround is not asked who else has it.
+    impact: bool = False
 
 
 @dataclass(frozen=True)
@@ -57,10 +62,27 @@ class Playbook:
     next_action: Callable[[Values], str]
     #: What the caller's problem is NOT, said back after a correction: "..., not a printer". Blank: not said.
     noun: str = ""
+    #: Used by many people (a network, a printer, a server): who else is affected is always worth asking.
+    shared: bool = False
+    #: True once there is enough for a useful ticket: the remaining questions are not asked. The question budget
+    #: (MAX_QUESTIONS) is a ceiling, never a target.
+    enough: Callable[[Values], bool] | None = None
+    #: The answer that names the device ("printer", "device"), updated when the caller corrects it.
+    device_key: str | None = None
 
 
-_SCOPE = Question("scope", "Others affected", "Is anyone else having the same problem?", "yes_no")
-_ERROR = Question("error", "Error message", "Do you see an error message? If so, what does it say?", "text")
+#: An error the caller already quoted ("it says 'Cannot start Microsoft Outlook'", "error 0x800CCC0E").
+_ERROR_SAID = (r"\b(?:it|the (?:screen|message|error|pop-?up)|outlook|vpn|teams|the app)\s+(?:says|shows|reads|gives me)\b"
+               r"[^.?!]{3,80}|\berror\s+(?:message\s+)?(?:says|is|reads|saying|:)\s*[^.?!]{3,80}|\b0x[0-9a-f]{4,}\b")
+_SCOPE = Question(
+    "scope", "Others affected", "Is anyone else having the same problem?", "yes_no", impact=True,
+    prefill=("everyone", "everybody", "whole team", "the team", "our team", "others", "other people", "colleagues",
+             "coworkers", "co-workers", "whole office", "nobody can", "no one can", "all of us"),
+    prefill_unless=("nobody else", "no one else", "others can", "others are fine", "others are ok", "others are working"),
+    prefill_no=("nobody else", "no one else", "just me", "only me", "only mine", "just mine", "only my", "just my"),
+)
+_ERROR = Question("error", "Error message", "Do you see an error message? If so, what does it say?", "text",
+                  prefill_pattern=_ERROR_SAID)
 _LEAD = re.compile(r"^(?:(?:um|uh|so|well|it'?s|it is|that'?s|that is|the|i think|probably|maybe|about)\b[\s,]*)+",
                    re.IGNORECASE)
 
@@ -98,10 +120,13 @@ OUTLOOK = Playbook(
                              "spin", "hang", "not responding", "stopped working")))),
         _ERROR,
         Question("mail_flow", "Can still send and receive email",
-                 "Are you still able to send and receive email at all?", "yes_no",
-                 when=lambda v: v.get("symptom") != "send_receive"),
+                 "Are you still able to send and receive email at all?", "yes_no", impact=True,
+                 when=lambda v: v.get("symptom") != "send_receive",
+                 prefill=("can still send", "still send", "still receive", "still get email", "still getting email",
+                          "still able to send", "still use email", "email still works", "email works on my phone")),
         _SCOPE,
     ),
+    device_key="device",
     next_action=lambda v: (
         "Check the caller's account sign-in (lockout, password expiry, MFA)." if v.get("symptom") == "sign_in" else
         "Check mail flow for the caller's mailbox (message trace, mailbox size and rules)."
@@ -135,6 +160,7 @@ SERVER_STORAGE = Playbook(
         f"Check free space on {_servers(v)} ({_said(v, 'drive', 'drive not given')}) and extend "
         f"the volume or free up space. Space needed (caller's estimate): {_said(v, 'space_needed', 'not given')}."
     ),
+    shared=True,
 )
 
 SERVER_ACCESS = Playbook(
@@ -161,7 +187,11 @@ SERVER_ACCESS = Playbook(
         Question("db_client", "Application using the database", "Which application or service connects to the database?",
                  "text", when=lambda v: v.get("resource_type") == "database"),
         Question("error", "What happens", "What happens when you try to connect: an error message, or does it just "
-                 "time out?", "text"),
+                 "time out?", "text", when=lambda v: v.get("server_state") != "slow",
+                 prefill_pattern=_ERROR_SAID + r"|\b(?:it )?(?:times|timed|timing) out\b"),
+        # A slow server is a different problem from one that is down: never the same questions.
+        Question("slowness", "When it is slow", "Is it slow for everything on that server, or for one application or "
+                 "at certain times?", "text", when=lambda v: v.get("server_state") == "slow"),
         Question("timeout_kind", "Timeout", "Is the connection timing out, or do you need a timeout setting changed?",
                  "choice",
                  (("setting_change", ("setting", "change", "changed", "increase", "adjust", "configure", "longer",
@@ -175,12 +205,17 @@ SERVER_ACCESS = Playbook(
         _SCOPE,
     ),
     next_action=lambda v: _server_access_next_action(v),
+    shared=True,
 )
 
 
 def _server_access_next_action(v: Values) -> str:
     """What IT should check, from what the caller established -- never a resource, cause or change nobody said."""
-    steps = [f"Verify that {_servers(v)} is reachable and check its status from the caller's location"]
+    if v.get("server_state") == "slow":
+        steps = [f"{_servers(v)} is reachable but slow: check its load and performance"
+                 f" ({_said(v, 'slowness', 'when and for what not established')})"]
+    else:
+        steps = [f"Verify that {_servers(v)} is reachable and check its status from the caller's location"]
     kind = v.get("resource_type")
     if kind == "database":
         steps.append(f"check the database connection from {_said(v, 'db_client', 'the application that uses it')}")
@@ -213,14 +248,24 @@ NETWORK = Playbook(
                   ("slow", ("slow", "lag", "drop", "keeps disconnecting", "intermittent")),
                   ("none", ("nothing", "no connection", "no internet", "not at all", "can't connect", "cannot connect",
                             "offline", "down")))),
+        # "The VPN isn't working" can mean two different faults: asked, never assumed.
+        Question("vpn_kind", "VPN", "Does the VPN connect and then drop, or can't it connect at all?", "choice",
+                 (("drops", ("drop", "disconnect", "cuts out", "kicks me", "keeps", "every few", "after a while",
+                             "then")),
+                  ("no_connect", ("can't connect", "cannot connect", "won't connect", "not at all", "doesn't connect",
+                                  "never connects", "fails", "can't get on"))),
+                 when=lambda v: v.get("symptom") == "vpn"),
         Question("resource", "System it can't reach", "Which site or system can't you reach?", "text",
                  when=lambda v: v.get("symptom") == "specific"),
         _ERROR,
         _SCOPE,
     ),
+    shared=True,
     next_action=lambda v: (
         "Several people are affected: check the network and VPN service for an outage first."
         if v.get("scope") == "yes" else
+        "The VPN connects, then drops: check the caller's VPN client, connection stability and session timeouts."
+        if v.get("vpn_kind") == "drops" else
         "Check the caller's VPN client and VPN account (remote connection)."
         if v.get("location") == "remote" or v.get("symptom") == "vpn" else
         f"Check access to {_said(v, 'resource', 'the system they named')} from the caller's location."
@@ -245,6 +290,7 @@ DEVICE = Playbook(
         Question("recent_change", "Recent change",
                  "Did anything change recently, like an update or new software?", "yes_no"),
     ),
+    device_key="device",
     next_action=lambda v: (
         "The device does not power on: arrange a hands-on check or a swap." if v.get("symptom") == "no_power" else
         "Check the computer remotely or in person; note the recent change the caller mentioned."
@@ -287,9 +333,12 @@ PRINTER = Playbook(
                  "Is it connected by a cable to your computer, or is it a shared network printer?", "choice",
                  (("usb", ("cable", "usb", "plugged", "directly", "my computer")),
                   ("network", ("network", "shared", "wireless", "wifi", "wi-fi", "everyone", "hallway")))),
-        Question("error", "Error shown", "Does it show an error, like a paper jam or offline?", "text"),
+        Question("error", "Error shown", "Does it show an error, like a paper jam or offline?", "text",
+                 prefill_pattern=_ERROR_SAID + r"|\bpaper jam\b|\bjammed\b|\bout of (?:paper|toner)\b|\boffline\b"),
         _SCOPE,
     ),
+    shared=True,
+    device_key="printer",
     next_action=lambda v: (
         f"Check the device ({_said(v, 'printer', 'not named')}): power, error state and print queue"
         + ("; several people can't use it." if v.get("scope") == "yes" else ".")
@@ -332,9 +381,41 @@ PERIPHERAL = Playbook(
                  (("partial", ("some", "few", "certain", "a couple", "sticky", "stuck", "intermittent", "sometimes",
                                "on and off", "only")),
                   ("dead", ("completely", "unresponsive", "nothing", "not at all", "dead", "none of", "at all",
-                            "whole", "entire")))),
+                            "whole", "entire", "stopped working")))),
     ),
     next_action=_peripheral_next_action,
+    device_key="device",
+    # Which device, and either what happens to it, what caused it (a spill) or how they are managing (a spare):
+    # enough for IT to act. "My keyboard stopped working after I spilled water on it" needs no more questions.
+    enough=lambda v: bool(v.get("device")) and bool(v.get("symptom") or v.get("cause") or v.get("workaround")),
+)
+
+#: Asking for something to be set up, not reporting a fault: "Outlook is working, but I need a new mailbox set up".
+_REQUEST = re.compile(
+    r"\b(?:set ?up|setting up|install|new (?:mailbox|account|user|laptop|phone|license|licence)|add (?:me|a user)|"
+    r"give me access|need access|request (?:access|a)|create (?:a|an)|onboard|shared mailbox|distribution list)\b",
+    re.IGNORECASE,
+)
+_FAULT = re.compile(
+    r"\b(?:crash\w*|not working|isn'?t working|stopped working|won'?t|can'?t|cannot|unable|error|down|broken|slow|"
+    r"keeps|fail\w*|locked|freez\w*|not (?:opening|loading|connecting|printing|sending))\b",
+    re.IGNORECASE,
+)
+
+
+def _request_next_action(v: Values) -> str:
+    return (f"Service request: {_said(v, 'request', 'see the description')}. Nothing is broken; arrange it through "
+            "the normal request process.")
+
+
+SERVICE_REQUEST = Playbook(
+    "service_request", "Service request", noun="a fault",
+    questions=(
+        Question("request", "Request", "What exactly do you need set up, and is it for you or for someone else?",
+                 "text", prefill_pattern=r"\b(?:need|want|like)\b[^.?!]{3,120}"),
+    ),
+    next_action=_request_next_action,
+    enough=lambda v: bool(v.get("request")),
 )
 
 OTHER = Playbook(
@@ -348,7 +429,7 @@ OTHER = Playbook(
 )
 
 PLAYBOOKS = {p.name: p for p in (OUTLOOK, SERVER_STORAGE, SERVER_ACCESS, NETWORK, DEVICE, ACCOUNT, PRINTER, PERIPHERAL,
-                                 OTHER)}
+                                 SERVICE_REQUEST, OTHER)}
 
 #: Running out of space: only these words, never "server" alone. A server that "is not connecting" is an access
 #: problem; storage is only asked about when the caller says something about space.
@@ -373,8 +454,17 @@ _DEVICE_WORDS = ("laptop", "computer", "desktop", "pc", "screen", "turn on", "bl
 
 
 def choose(category: str | None, description: str | None) -> Playbook:
-    """The question set for the problem as described. Server and Outlook words win over the broad categories."""
+    """The question set for the problem as described. Server and Outlook words win over the broad categories.
+
+    Context first: a request to set something up is not a fault ("Outlook is working, but I need a new mailbox"),
+    and when several devices are named, the one that is failing decides ("the printer works but my keyboard
+    doesn't" is a keyboard problem)."""
     text = (description or "").lower()
+    if _REQUEST.search(text) and not _FAULT.search(text):
+        return SERVICE_REQUEST
+    target = _fault_target(text)
+    if target is not None:
+        return target
     if any(w in text for w in _STORAGE_WORDS):
         return SERVER_STORAGE
     if any(w in text for w in _SERVER_WORDS) or any(is_ip(n) for n in hostnames(description or "")):
@@ -423,6 +513,11 @@ _DATA_LOSS = ("lost all", "data loss", "files are gone", "files are missing", "m
               "were deleted", "was deleted", "corrupt")
 _EVERYONE = ("everyone", "everybody", "whole office", "whole site", "whole clinic", "all of us", "nobody can",
              "no one can", "the entire")
+#: "Nobody in the clinic can open patient files", "none of us can log in": everyone, with words in between. Never
+#: "nobody else" (that is the caller alone).
+_EVERYONE_RE = re.compile(r"\b(?:nobody|no one|no-one|none of us)(?!\s+else)\b[^.?!]{0,40}?\bcan\b"
+                          r"|\b(?:whole|entire) (?:office|clinic|site|building|practice)\b",  # a team is several, not all
+                          re.IGNORECASE)
 
 URGENT_NOTICE = "This needs our IT team right away, so I'll get it logged now."
 
@@ -554,41 +649,111 @@ def _parse(question: Question, utterance: str) -> str | None:
     return clean(utterance)
 
 
+#: Something already in place that lets the caller carry on ("I have a spare keyboard", "using my phone").
+_WORKAROUND = re.compile(
+    r"\b(?:i have|i've got|using|use|with) (?:a |an |my )?(?:spare|another|backup|second|other|old)\s+\w+"
+    r"|\b(?:a |my )?(?:spare|backup) \w+|\bworkaround\b|\busing my (?:phone|mobile|laptop|desktop|tablet)\b"
+    r"|\b(?:can still|still able to|still)\b[^.?!]{0,40}\b(?:on|from|using|with) my (?:phone|mobile|laptop|desktop|tablet)\b"
+    r"|\bcan (?:still )?(?:continue|keep) (?:working|going)\b",
+    re.IGNORECASE,
+)
+#: What still works ("but I can still send emails from my phone"): never read as what is broken.
+_STILL_WORKS = re.compile(
+    r"\b(?:but |and )?(?:i )?(?:can still|am still able to|still able to|still works?)\b[^.?!]*"
+    r"|\b(?:but|and|though)\s+(?:it\s+)?(?:works|is working|is fine|is ok(?:ay)?)\b[^.?!]*",
+    re.IGNORECASE,
+)
+#: What the caller says caused it ("after I spilled water on it", "I dropped it").
+_CAUSE = re.compile(
+    r"\b(?:spill(?:ed|t)?|dropped|knocked (?:it )?over|got wet|water|coffee|tea|liquid|stepped on|sat on|fell)\b"
+    r"[^.?!,;]{0,40}?(?=\s+(?:and|but|so)\b|[.?!,;]|$)",
+    re.IGNORECASE,
+)
+#: "The server is slow" and "the server is down" are different problems.
+_SLOW = re.compile(r"\b(?:slow|sluggish|laggy|lagging|takes (?:forever|ages|a long time)|taking (?:forever|ages|long))\b",
+                   re.IGNORECASE)
+_DOWN = re.compile(r"\b(?:down|not (?:connecting|responding|working)|can'?t (?:connect|reach|get to)|cannot (?:connect|reach)|"
+                   r"unreachable|offline|won'?t connect|no access)\b", re.IGNORECASE)
+_WORKS_FINE = re.compile(r"^\W*(?:\w+\W+){0,3}?(?:works|is working|are working|works fine|is fine|are fine|is ok(?:ay)?|"
+                         r"is good|is not the problem)\b", re.IGNORECASE)
+_FAILS = re.compile(r"^\W*(?:\w+\W+){0,4}?(?:doesn'?t|does not|isn'?t|is not|won'?t|can'?t|keeps|stopped|not working|"
+                    r"broke|crash\w*|fail\w*|is dead|is broken|died|has a problem)", re.IGNORECASE)
+
+
+def _fault_target(text: str) -> Playbook | None:
+    """When several devices or systems are named, the one that is failing; None when that is not clear (then the
+    usual order decides)."""
+    mentions = []
+    for playbook, words in _MENTION_ORDER:
+        for word in words:
+            match = re.search(rf"\b{re.escape(word)}", text)
+            if match:
+                mentions.append((match.end(), playbook))
+                break
+    if len({p for _, p in mentions}) < 2:
+        return None
+    fine = {p for end, p in mentions if _WORKS_FINE.match(text[end:])}
+    failing = {p for end, p in mentions if p not in fine and _FAILS.match(text[end:])}
+    if len(failing) == 1:
+        return failing.pop()
+    remaining = {p for _, p in mentions if p not in fine}
+    return remaining.pop() if fine and len(remaining) == 1 else None
+
+
 def begin(
-    category: str | None, description: str | None, affected_scope: str | None, playbook: Playbook | None = None
+    category: str | None, description: str | None, affected_scope: str | None, playbook: Playbook | None = None,
+    said: str | None = None,
 ) -> dict:
-    """Pick the question set (or use `playbook`) and fill in what the description (or earlier answers) already say."""
+    """Pick the question set (or use `playbook`) and fill in what is already known: from the description, and from
+    `said` -- the caller's own words about the problem so far, which keep details a summary may drop ("it says
+    'Cannot start Microsoft Outlook'", "nobody else has it", "I can still send from my phone")."""
     playbook = playbook or choose(category, description)
     values: Values = {}
-    text = (description or "").lower()
-    named = hostnames(description or "")
+    source = " ".join(part for part in (description, said) if part)
+    text = source.lower()
+    fault_text = _STILL_WORKS.sub(" ", source)  # what is broken: the device, the symptom
+    named = hostnames(source)
+    if playbook is SERVER_ACCESS and (_SLOW.search(text) or _DOWN.search(text)):
+        values["server_state"] = "slow" if _SLOW.search(text) and not _DOWN.search(text) else "down"
+        values["server_state_said"] = "(from the problem description)"
+    for key, pattern in (("workaround", _WORKAROUND), ("cause", _CAUSE)):
+        match = pattern.search(said or "") or pattern.search(description or "")  # the caller's own words first
+        if match:
+            values[key] = match.group(0).strip()
+            values[f"{key}_said"] = "(from the problem description)"
     for question in playbook.questions:
         if not question.when(values):
             # A question that does not apply is never answered from the description either. Seen on a test call:
             # "not connecting" filled in the timeout question, and the ticket claimed connections were timing out.
             continue
-        found = _parse(question, description or "") if question.kind == "choice" else None
+        found = _parse(question, fault_text) if question.kind == "choice" else None
         if question.key == "server" and named:
             found = named[0]
             if len(named) > 1:
                 values["additional_servers"] = ", ".join(named[1:])
         if question.kind == "text" and question.prefill_pattern:
-            match = re.search(question.prefill_pattern, description or "", re.IGNORECASE)
+            match = re.search(question.prefill_pattern, source, re.IGNORECASE)
             found = match.group(0).strip() if match else found
         if question.kind == "yes_no" and any(w in text for w in question.prefill) and not any(
             w in text for w in question.prefill_unless
         ):
             found = "yes"
+        if question.kind == "yes_no" and any(w in text for w in question.prefill_no):
+            found = "no"
         if found:
             values[question.key] = found
             values[f"{question.key}_said"] = "(from the problem description)"
     if affected_scope in ("one_person", "several_people", "whole_site") and any(q.key == "scope" for q in playbook.questions):
         values["scope"] = "no" if affected_scope == "one_person" else "yes"
         values["scope_said"] = "(from earlier in the call)"
-    if playbook is SERVER_ACCESS and _TIMEOUT_AMBIGUOUS.search(description or ""):
+    if playbook is SERVER_ACCESS and _TIMEOUT_AMBIGUOUS.search(source):
         values["timeout_ambiguous"] = True
+    if playbook is OUTLOOK and "device" not in values and re.search(r"\b(?:phone|mobile)\b", values.get("workaround") or ""):
+        # "I can still work using my phone": the phone works, so the failing Outlook is on the computer. Marked as
+        # inferred, never as something the caller said.
+        values["device"], values["device_said"] = "computer", "(inferred: the caller can still use their phone)"
     state = {"playbook": playbook.name, "values": values, "asked": [], "pending": None, "done": False, "flags": []}
-    _flag(state, description or "")
+    _flag(state, source)
     return state
 
 
@@ -599,7 +764,7 @@ def _flag(state: dict, utterance: str) -> None:
         flags.add("security")
     if any(w in text for w in _DATA_LOSS):
         flags.add("data_loss")
-    if any(w in text for w in _EVERYONE):
+    if any(w in text for w in _EVERYONE) or _EVERYONE_RE.search(text):
         flags.add("everyone")
     state["flags"] = sorted(flags)
 
@@ -617,7 +782,21 @@ def urgent_reason(state: dict | None) -> str | None:
         return "an application is already failing"
     if "everyone" in flags:
         return "it's affecting everyone there"
+    if "patient_care" in flags:
+        return "patient care is affected"
     return None
+
+
+def urgent_notice(state: dict | None) -> str:
+    """What the caller hears when the problem is urgent: why, and that it is being logged for urgent attention."""
+    reason = urgent_reason(state)
+    return f"I understand {reason}, so I'll get this logged for urgent attention." if reason else URGENT_NOTICE
+
+
+def pending_prompt(state: dict) -> str | None:
+    """The open question, as spoken, so it can be asked again after an interruption."""
+    question = next((q for q in PLAYBOOKS[state["playbook"]].questions if q.key == state.get("pending")), None)
+    return _prompt(question, state["values"]) if question is not None else None
 
 
 def priority_floor(state: dict | None) -> tuple[Priority, str] | None:
@@ -625,14 +804,17 @@ def priority_floor(state: dict | None) -> tuple[Priority, str] | None:
     reason = urgent_reason(state)
     if reason is None:
         return None
-    critical = reason in ("it may be a security incident", "it's affecting everyone there")
+    critical = reason in ("it may be a security incident", "it's affecting everyone there", "patient care is affected")
     return (Priority.URGENT if critical else Priority.HIGH), reason
 
 
-def next_prompt(state: dict) -> tuple[str, str] | None:
+def next_prompt(state: dict, *, blocked: bool | None = None) -> tuple[str, str] | None:
     """(question key, what to say) for the next question, or None when the questions are over.
 
-    An urgent problem gets only the essential questions (what IT needs to act)."""
+    Only what is still missing and worth asking: an urgent problem gets only the essential questions (what IT needs
+    to act); a question that only matters for the priority is skipped when the caller can still work (`blocked` is
+    False) and the system is theirs alone; and once the question set has enough for a useful ticket, it stops --
+    the MAX_QUESTIONS budget is a ceiling, never a target."""
     if state.get("done"):
         return None
     urgent = urgent_reason(state) is not None
@@ -640,8 +822,12 @@ def next_prompt(state: dict) -> tuple[str, str] | None:
     values = state["values"]
     if len(state["asked"]) >= MAX_QUESTIONS:
         return None
+    if playbook.enough is not None and playbook.enough(values):
+        return None
     for question in playbook.questions:
         if urgent and not question.essential:
+            continue
+        if question.impact and blocked is False and not playbook.shared:
             continue
         if question.key not in values and question.key not in state["asked"] and question.when(values):
             return question.key, _prompt(question, values)
@@ -761,7 +947,30 @@ def correction(state: dict, utterance: str) -> dict | None:
     if not (_MISUNDERSTOOD.search(text) or rejects_current or (_I_SAID.search(text) and others)):
         return None
     new = others[0] if others else None
+    if new is None and rejects_current and current.device_key:
+        # "It's not the printer, it's the scanner": the same kind of problem, another device. The device is
+        # corrected and the questions carry on -- nothing to start again.
+        rest = _NOT_THIS.sub(" ", text)
+        thing = _device_phrase(rest, current)
+        if thing and not any(thing.split()[-1].startswith(w) or w.startswith(thing.split()[-1])
+                             for w in turned_down if w):
+            return {"playbook": current.name, "thing": thing, "same": True}
     return {"playbook": new.name if new else None, "thing": _device_phrase(text, new) if new else None}
+
+
+def correct_device(state: dict, thing: str) -> dict:
+    """Apply "it's the scanner, not the printer" within the same question set: the device answer becomes what the
+    caller said, the earlier one is kept as "corrected from", and the open question stays open."""
+    playbook = PLAYBOOKS[state["playbook"]]
+    values = dict(state["values"])
+    key = playbook.device_key
+    question = next((q for q in playbook.questions if q.key == key), None)
+    previous = values.get(key)
+    value = (_parse(question, thing) if question is not None and question.kind == "choice" else None) or thing
+    values[key], values[f"{key}_said"] = value, thing
+    if previous and previous != value:
+        values[f"{key}_corrected_from"] = previous
+    return {**state, "values": values, "corrections": (state.get("corrections") or 0) + 1}
 
 
 def restart(state: dict, playbook: Playbook, description: str | None, said: str, affected_scope: str | None) -> dict:
@@ -801,6 +1010,82 @@ def restatement(old: Playbook, new: Playbook, thing: str | None) -> str:
     return f"Sorry about that. I understand now that you're having a problem with your {thing}{not_that}."
 
 
+CORRECTED = "Thanks, I've changed that."
+#: The caller correcting something they said before: "sorry, I meant ...", "actually ...", "not my laptop".
+_EARLIER_CORRECTION = re.compile(r"\b(?:i meant|i mean|actually|sorry|correction|not (?:my|the|a|an)\b)", re.IGNORECASE)
+_NEGATED_PART = re.compile(r"\bnot\s+(?:my|the|a|an)?\s*[\w.-]+", re.IGNORECASE)
+
+
+def sounds_urgent(text: str | None) -> bool:
+    """A possible security incident, lost data or everyone affected, said in so many words."""
+    probe = {"flags": []}
+    _flag(probe, text or "")
+    return bool(probe["flags"])
+
+
+def find_correction(state: dict, utterance: str, *, pending: str | None = None) -> tuple[str, str] | None:
+    """(question key, new value) when the caller explicitly corrects something they already answered -- a choice
+    ("I meant my desktop, not my laptop"), the server ("the server name is actually FS02, not FS01") or a labelled
+    free-text answer ("the drive is actually the S drive"). None otherwise. Never the question that is open
+    (`pending`): that is its answer, not a correction."""
+    if not _EARLIER_CORRECTION.search(utterance or ""):
+        return None
+    text = _NEGATED_PART.sub(" ", utterance)
+    values = state["values"]
+    playbook = PLAYBOOKS[state["playbook"]]
+    for question in playbook.questions:
+        if question.key == pending or question.key not in values:
+            continue
+        if question.kind == "choice":
+            value = next((v for v, words in question.choices if any(w in text.lower() for w in words)), None)
+            if value and value != values[question.key]:
+                return question.key, value
+        elif question.kind == "host":
+            names = hostnames(text)
+            old = str(values[question.key])
+            # Only an explicit correction ("FS02, not FS01", "I meant FS02"): another address said with just
+            # "actually" may be a second server, and that is asked about elsewhere, never assumed.
+            turned_down = re.search(rf"\bnot\s+(?:the\s+)?{re.escape(old)}(?![\w-])(?!\.\d)", utterance, re.IGNORECASE)
+            explicit = turned_down or re.search(r"\b(?:i meant|i mean|wrong|correction|instead)\b", utterance,
+                                                re.IGNORECASE)
+            about_it = turned_down or re.search(r"\b(?:server|name|address|host|ip)\b", text, re.IGNORECASE)
+            if names and names[0].lower() != old.lower() and explicit and about_it:
+                return question.key, names[0]
+        elif question.kind == "text":
+            words = [w for w in re.findall(r"[a-z]+", question.label.lower()) if len(w) > 2 and w not in ("the", "and")]
+            if not words:
+                continue
+            match = re.search(rf"\b(?:{'|'.join(words)})\b(?:\s+name)?\s+(?:is|was|should be|it'?s)\s+(?:actually\s+)?"
+                              rf"(?P<value>[^.?!,]{{2,60}})", text, re.IGNORECASE)
+            if match and match.group("value").strip().lower() != str(values[question.key]).lower():
+                return question.key, match.group("value").strip()
+    return None
+
+
+def apply_correction(state: dict, key: str, value: str, said: str) -> dict:
+    """The corrected answer, with the earlier one kept as "corrected from" for the ticket."""
+    values = dict(state["values"])
+    values[f"{key}_corrected_from"] = values.get(key)
+    values[key], values[f"{key}_said"] = value, clean(said)
+    return {**state, "values": values}
+
+
+def _corrects_earlier_answer(state: dict, pending: Question | None, utterance: str) -> tuple[str, str] | None:
+    """(question key, new value) when the caller corrects a choice they already answered, else None. Only with an
+    explicit correction, and only to a different value; the part they turned down ("not my laptop") is ignored."""
+    if pending is None or not _EARLIER_CORRECTION.search(utterance or ""):
+        return None
+    text = _NEGATED_PART.sub(" ", utterance)
+    values = state["values"]
+    for question in PLAYBOOKS[state["playbook"]].questions:
+        if question.kind != "choice" or question.key == pending.key or question.key not in values:
+            continue
+        value = next((v for v, words in question.choices if any(w in text.lower() for w in words)), None)
+        if value and value != values[question.key]:
+            return question.key, value
+    return None
+
+
 def record(state: dict, utterance: str) -> tuple[dict, dict, str | None]:
     """Apply the caller's answer to the pending question.
 
@@ -815,6 +1100,19 @@ def record(state: dict, utterance: str) -> tuple[dict, dict, str | None]:
     question = next((q for q in PLAYBOOKS[state["playbook"]].questions if q.key == key), None)
     if question is not None and state.get("conflict"):
         return _resolve_conflict(state, utterance, question)
+    earlier = find_correction(state, utterance, pending=key) if question is not None else None
+    if earlier is not None:
+        # "Sorry, I meant my desktop, not my laptop", "the server name is actually FS02": that answer changes; the
+        # open question is asked again.
+        changed, value = earlier
+        previous = state["values"].get(changed)
+        state = apply_correction(state, changed, value, utterance)
+        updates["corrected"] = (changed, previous, value)
+        return state, updates, f"{CORRECTED} {_prompt(question, state['values'])}"
+    for fact, pattern in (("workaround", _WORKAROUND), ("cause", _CAUSE)):
+        found = pattern.search(utterance or "")
+        if found and not state["values"].get(fact):  # mentioned while answering something else: kept
+            state["values"][fact], state["values"][f"{fact}_said"] = found.group(0).strip(), clean(utterance)
     if question is not None and question.kind == "host" and not is_non_answer(utterance):
         conflict = _server_conflict(state["values"], hostnames(utterance))
         if conflict:
@@ -1011,6 +1309,13 @@ def ticket_lines(
         if question.key == "server" and values.get("server_unclarified"):
             lines.append(("Other address given", f"{values['server_unclarified']} (not established whether it is "
                                                   f"another server, a correction, or the same server)"))
+    for key, label in (("server_state", "Server state"), ("workaround", "Workaround"), ("cause", "Likely cause (caller)")):
+        if values.get(key):
+            said = values.get(f"{key}_said") or ""
+            lines.append((label, f"{values[key]} {said}" if said.startswith("(") else f"{values[key]} (caller said: \"{said}\")"))
+    device_key = playbook.device_key
+    if device_key and values.get(f"{device_key}_corrected_from"):
+        lines.append(("Device (corrected)", f"the caller corrected it from \"{values[f'{device_key}_corrected_from']}\""))
     reason = urgent_reason(state)
     if reason:
         lines.append(("Escalation", f"flagged urgent: {reason}"))

@@ -25,10 +25,7 @@ SPOKEN = "8 4 5, 5 5 5, 0 1 4 2"
 OTHER = "+12148859089"
 OTHER_SPOKEN = "2 1 4, 8 8 5, 9 0 8 9"
 
-PATIENT_QUESTION = (
-    f"I have your callback number as {SPOKEN}. If our support team needs to reach you regarding your request, "
-    "they will call this number. Is this the best number to contact you on?"
-)
+PATIENT_QUESTION = f"I have your callback number as {SPOKEN}. Is this the best number to reach you?"
 EMPLOYEE_QUESTION = (
     f"I have your callback number as {SPOKEN}. If our IT team needs to reach you regarding this ticket, "
     "they will call this number. Is this the best number to contact you on?"
@@ -65,7 +62,6 @@ async def _to_callback_question(call, kind):
     if kind == "patient":
         await call.turn("I'm a patient")
         await call.turn("I need to book an appointment")
-        await call.turn("next Tuesday morning")
         call._say(interpret_name=nlu.TurnResult(value="John Smith", confidence="high", unable_to_determine=False))
         return await call.turn("John Smith")
     await call.turn("I'm an employee")
@@ -91,7 +87,7 @@ async def test_a_patient_hears_support_team_and_request(make_call, db_session):
     asked = await _to_callback_question(call, "patient")
 
     assert _text(asked) == PATIENT_QUESTION
-    assert "support team" in _text(asked) and "your request" in _text(asked)
+    assert "IT team" not in _text(asked) and "ticket" not in _text(asked)  # short, and never the employee wording
     session = await _session(db_session, "cbw-patient")
     assert session.state == VoiceCallState.CONFIRM_CALLBACK_NUMBER
     assert asked["ticket_id"] is None  # nothing is filed until the number is confirmed

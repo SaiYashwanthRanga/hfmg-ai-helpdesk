@@ -41,9 +41,9 @@ PATIENT_MISUNDERSTOOD_NO_NUMBER = (
 EMPLOYEE_MISUNDERSTOOD_NO_NUMBER = (
     "I'm sorry, I'm having trouble understanding. I'll log a request for our IT team to follow up."
 )
-PATIENT_READ_BACK = "Your request number is {number}."
+PATIENT_READ_BACK = "Your reference number is {number}."
 EMPLOYEE_READ_BACK = "Your callback request is ticket number {number}. Someone will reach out to you shortly."
-PATIENT_LEAVING = "No problem. I've saved what you told me. Your request number is {number}. Take care."
+PATIENT_LEAVING = "No problem. I've saved what you told me. Your reference number is {number}. Take care."
 EMPLOYEE_LEAVING = "No problem. I've saved what you told me. Your ticket number is {number}. Take care."
 
 #: Stored caller types that are not a known CallerType: the caller is unknown, never a guessed patient.
@@ -189,8 +189,7 @@ async def test_an_employee_without_caller_id_keeps_the_it_wording_throughout(mak
 async def test_a_patient_the_agent_cannot_understand_is_handed_to_the_support_team(make_call, client, db_session):
     call = make_call("esc-patient-mis")
     await _patient_at_request_question(call)
-    await call.turn("I need to book an appointment")
-    await call.turn("next Tuesday morning")  # now at the name question
+    await call.turn("I need to book an appointment")  # now at the name question
     call._say(interpret_name=nlu.TurnResult())
 
     out = None
@@ -468,8 +467,7 @@ async def test_a_patient_who_says_goodbye_after_their_request_is_saved_hears_a_r
 async def test_a_patient_who_leaves_before_giving_a_name_still_gets_a_saved_request(make_call, client, db_session):
     call = make_call("leave-patient-early")
     await _patient_at_request_question(call)
-    await call.turn("I need to book an appointment")
-    await call.turn("next Tuesday morning")  # at the name question
+    await call.turn("I need to book an appointment")  # at the name question
 
     out = await call.turn("Thanks, bye.")
 

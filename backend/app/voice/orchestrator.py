@@ -275,6 +275,13 @@ async def handle_turn(
         renamed = await _maybe_name_change(db, session, utterance)
         if renamed is not None:
             return renamed
+        widened = await _maybe_others_affected(db, session, utterance)
+        if widened is not None:
+            return widened
+        changed, utterance = _maybe_detail_correction(session, utterance)
+        if changed is not None and not utterance:
+            return _reask_open_question(session, diagnostics.CORRECTED)
+        extension_noted = extension_noted or changed
 
     corrected = await _maybe_switch_caller_type(db, session, utterance)
     if corrected is not None:
@@ -446,6 +453,13 @@ def _set_department(session: VoiceCallSession, raw: str | None) -> None:
 # create an IT ticket, and the IT states never run patient handling.
 
 _PATIENT_STATES = (VoiceCallState.PATIENT_INTENT, VoiceCallState.PATIENT_DETAILS)
+#: The shared steps a patient goes through after saying what they need: name, then the callback number.
+_PATIENT_STEPS = (
+    VoiceCallState.COLLECT_NAME,
+    VoiceCallState.COLLECT_PHONE,
+    VoiceCallState.CONFIRM_CALLBACK_NUMBER,
+    VoiceCallState.COLLECT_ALTERNATE_CALLBACK_NUMBER,
+)
 _NO_DETAILS = {"no", "nope", "none", "nothing", "skip", "i don't know", "i dont know", "not sure", "no idea", "don't know"}
 
 
@@ -511,33 +525,29 @@ async def _identify_unclear(db: AsyncSession, session: VoiceCallSession) -> Turn
 
 
 async def _maybe_switch_caller_type(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome | None:
-    """A caller who says "actually, I'm a patient" (or an employee) at the start of the other flow is
-    moved to the right one. Only an explicit "I'm a ..." counts, only before anything was filed, and
-    only while the other flow is still at its first question: a sentence that merely mentions a patient
-    or an appointment never changes who is calling."""
+    """A caller who says "actually, I'm an employee" (or a patient) is moved to the right flow. Only an explicit
+    "I'm a ..." counts -- a sentence that merely mentions a patient or an appointment never changes who is calling --
+    and never once the current request is filed (a request already filed on this call stays as it is).
+
+    From the patient flow: at any of its steps -- what they need, the name, the callback number -- on a first or a
+    later request. The patient request in progress is dropped; the name and number already given are kept. From the
+    employee flow: only at its first question (the problem), as before."""
     c = session.collected
-    if not c.get("identified_by_routing") or c.get("ticket_ids"):
+    if not c.get("identified_by_routing") or issue_filed(session):
         return None
-    first_question = session.state in _PATIENT_STATES or (
-        session.state == VoiceCallState.COLLECT_DESCRIPTION and not c.get("description")
-    )
-    said = caller_routing.identity_statement(utterance) if first_question else None
+    if _is_patient_call(session):
+        open_step = session.state in (*_PATIENT_STATES, *_PATIENT_STEPS)
+    else:
+        open_step = session.state == VoiceCallState.COLLECT_DESCRIPTION and not c.get("description")
+    said = caller_routing.identity_statement(utterance) if open_step else None
     if said is None or said == c.get("caller_type"):
         return None
     update_collected(session, **{key: None for key in (
         "patient_intent", "patient_details", "patient_category", "patient_intent_tries", "patient_limitation_told",
-        "description", "short_issue", "category", "category_confidence", "started", "work_blocked",
+        "description", "short_issue", "category", "category_confidence", "started", "work_blocked", "problem_words",
         "affected_scope", "patient_care_affected", "model_priority", "pending_question",
     )})
     return await _route_caller(db, session, utterance, said, acknowledgement=scripts.TYPE_CORRECTED)
-
-
-def _limitation(session: VoiceCallSession, acknowledgement: str | None) -> str | None:
-    """Say once, before asking more of a patient, what this line cannot do."""
-    if session.collected.get("patient_limitation_told"):
-        return acknowledgement
-    update_collected(session, patient_limitation_told=True)
-    return _with(acknowledgement, scripts.PATIENT_LIMITATION)
 
 
 async def _set_patient_intent(
@@ -554,11 +564,9 @@ async def _set_patient_intent(
         description=description,
         patient_details=None,
     )
-    question = scripts.PATIENT_DETAILS_ASK.get(intent)
-    if question:
-        session.state = VoiceCallState.PATIENT_DETAILS
-        return TurnOutcome(_speak(session, _ask(session, _with(_limitation(session, acknowledgement), question))))
-    return await _next_step(db, session, acknowledgement=_limitation(session, acknowledgement))
+    # Problem-focused: no question about dates, doctors or which kind of change -- straight on to the name. The
+    # kind of request only picks the ticket's category; nothing is promised about the appointment itself.
+    return await _next_step(db, session, acknowledgement=_with(acknowledgement, scripts.PATIENT_PROBLEM_NOTED))
 
 
 async def _handle_patient_intent(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
@@ -567,12 +575,17 @@ async def _handle_patient_intent(db: AsyncSession, session: VoiceCallSession, ut
     intent = caller_routing.patient_intent(utterance)
     if intent:
         return await _set_patient_intent(db, session, intent, utterance)
+    # "Actually, I'm an employee" when the flows can no longer be switched (a request already exists): who is
+    # calling is never taken as what they need -- the question is asked again.
+    if not diagnostics.is_non_answer(utterance) and not caller_routing.identity_statement(utterance):
+        # Whatever the patient needs, in their own words: never asked to pick "book, change, cancel or check".
+        return await _set_patient_intent(db, session, caller_routing.OTHER, utterance)
     tries = session.collected.get("patient_intent_tries", 0) + 1
     update_collected(session, patient_intent_tries=tries)
-    if tries <= 1:
+    if tries <= 1:  # silence or "hello?": asked once more
         session.state = VoiceCallState.PATIENT_INTENT
         return TurnOutcome(_speak(session, _ask(session, scripts.PATIENT_INTENT_CLARIFY)))
-    # Still not clear: keep the request in the caller's own words for the team. Nothing is guessed.
+    # Still nothing: carry on, and the request says the caller did not say what it was about. Nothing is guessed.
     return await _set_patient_intent(db, session, caller_routing.OTHER, utterance)
 
 
@@ -644,6 +657,8 @@ def _acknowledgement(session: VoiceCallSession) -> str | None:
 def _record_description(session: VoiceCallSession, result: nlu.TurnResult) -> None:
     extras = result.extras
     collected = session.collected
+    # Said a turn earlier when a new problem follows "same problem or a new one?"; otherwise the caller's last words.
+    problem_words = collected.pop("problem_words_override", None) or _last_caller_words(session)
     strict_facts = extras.get("facts")
     # Strict extraction records the three impact facts through the facts engine
     # (with evidence and source); the original path writes the plain values.
@@ -659,7 +674,9 @@ def _record_description(session: VoiceCallSession, result: nlu.TurnResult) -> No
         category_confidence=result.confidence,
         model_priority=(result.priority or Priority.MEDIUM).value,
         short_issue=extras.get("short_issue"),
-        started=extras.get("started") or nlu.quick_started(_last_caller_words(session)),
+        started=extras.get("started") or nlu.quick_started(problem_words),
+        # The caller's own words about this problem, kept so later steps never ask for what they already said.
+        problem_words=problem_words[:1000],
         details=None,  # belongs to the previous issue if the caller reports another
         **impact,
     )
@@ -732,6 +749,8 @@ async def _handle_details(db: AsyncSession, session: VoiceCallSession, utterance
         update_collected(session, **{k: v for k, v in values.items() if v is not None})
         _apply_priority_rules(session)
     _started_from_words(session, utterance, answers_when=asked_when)
+    if utterance:
+        update_collected(session, problem_words=f"{session.collected.get('problem_words') or ''} {utterance}".strip()[:2000])
     _work_impact_from_words(session, utterance)
     return await _next_step(db, session)
 
@@ -1720,6 +1739,8 @@ async def _next_step(
 
     # --- steps only for internal IT calls ---
     if not patient:
+        if _urgent_from_the_start(collected) and not _asked(session, "details"):
+            _mark_asked(session, "details")  # urgent: straight to what IT needs to act; when it started can wait
         if (not collected.get("started") or _blocked_needed(collected)) and not _asked(session, "details"):
             _mark_asked(session, "details")
             if settings.voice_strict_extraction and _blocked_needed(collected):
@@ -1756,8 +1777,12 @@ async def _next_step(
         _mark_asked(session, "department")  # asked together with the name
         return ask(VoiceCallState.COLLECT_NAME, scripts.pick(scripts.NAME_ASK_OPTIONS, len(session.turns or [])))
 
+    # An urgent problem: after the essential questions, only the name and the callback number (no department,
+    # extension, email or read-back), so the ticket reaches IT fast.
+    urgent = not patient and diagnostics.urgent_reason(collected.get("diagnostics")) is not None
+
     # --- department (IT only) ---
-    if not patient and not collected.get("department") and not _asked(session, "department"):
+    if not patient and not urgent and not collected.get("department") and not _asked(session, "department"):
         _mark_asked(session, "department")
         first_name = collected["caller_name"].split(" ")[0]
         return ask(VoiceCallState.COLLECT_NAME, scripts.DEPARTMENT_ASK.format(first_name=first_name))
@@ -1778,7 +1803,7 @@ async def _next_step(
         return ask(VoiceCallState.COLLECT_PHONE, scripts.PHONE_ASK)
 
     # --- office extension (IT only): reuse a verified one, else ask once ---
-    if not patient and not collected.get("extension_source"):
+    if not patient and not urgent and not collected.get("extension_source"):
         verified = _verified_extension(session)
         if verified:
             update_collected(session, extension=verified, extension_source="directory")
@@ -1787,7 +1812,7 @@ async def _next_step(
             return ask(VoiceCallState.COLLECT_EXTENSION, scripts.EXTENSION_ASK)
 
     # --- email (IT only) ---
-    if not patient and not collected.get("email") and not _asked(session, "email"):
+    if not patient and not urgent and not collected.get("email") and not _asked(session, "email"):
         _mark_asked(session, "email")
         return _ask_for_email(session, acknowledgement=acknowledgement)
 
@@ -1818,24 +1843,31 @@ def _diagnostics_next(session: VoiceCallSession) -> tuple[str | None, str | None
             # A call already past the problem (in progress when this code was deployed, or one that never had
             # the questions) is not sent back to them in the middle of the paperwork.
             return None, None
-        state = diagnostics.begin(c.get("category"), c.get("description"), c.get("affected_scope"))
+        # The caller's own words about the problem, not only the summary of them: what they already said is not asked.
+        state = diagnostics.begin(c.get("category"), c.get("description"), c.get("affected_scope"),
+                                  said=c.get("problem_words"))
+        if c.get("patient_care_affected"):  # patients held up: urgent, whatever the words
+            state["flags"] = sorted({*state["flags"], "patient_care"})
         if state["playbook"] in ("server_access", "network") and c.get("category") in (None, "Other"):
             # Reaching a server or the network is what the Network category covers; "Other" hid it.
             update_collected(session, category="Network")
     if state.get("done"):
         return None, None
-    found = diagnostics.next_prompt(state)
+    found = diagnostics.next_prompt(state, blocked=c.get("work_blocked"))
+    notice = None
+    if diagnostics.urgent_reason(state) and not state.get("urgent_told"):
+        # Said once, as soon as it is known -- before the essential question, not after the questions.
+        notice = diagnostics.urgent_notice(state)
+        state = {**state, "urgent_told": True}
     if found is None:
-        notice = None
-        if diagnostics.urgent_reason(state) and not state.get("urgent_told"):
-            notice = diagnostics.URGENT_NOTICE
-            state = {**state, "urgent_told": True}
         update_collected(session, diagnostics={**state, "done": True, "pending": None})
         _apply_priority_rules(session)
         return None, notice
     key, prompt = found
     update_collected(session, diagnostics={**state, "pending": key})
-    return prompt, None
+    if notice:
+        _apply_priority_rules(session)
+    return prompt, notice
 
 
 async def _handle_diagnostics(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
@@ -1858,9 +1890,30 @@ async def _handle_diagnostics(db: AsyncSession, session: VoiceCallSession, utter
             update_collected(session, diagnostics=diagnostics.asking_what_it_is(state))
             session.state = VoiceCallState.COLLECT_DIAGNOSTICS
             return TurnOutcome(_speak(session, _ask(session, scripts.ISSUE_WHAT_IS_IT)))
+        if fix.get("same"):
+            # "It's not the printer, it's the scanner": the same kind of problem, so only the device changes and the
+            # question that was open is asked again -- nothing starts over.
+            state = diagnostics.correct_device(state, fix["thing"])
+            device_key = diagnostics.PLAYBOOKS[state["playbook"]].device_key
+            if state.get("pending") == device_key:  # said in answer to "which device?": that question is answered
+                state = {**state, "asked": [*state["asked"], device_key], "pending": None}
+            update_collected(session, diagnostics=state, short_issue=f"the {fix['thing']}")
+            noted = f"Thanks, the {fix['thing']}."
+            again = diagnostics.pending_prompt(state)
+            if again is None:
+                again, notice = _diagnostics_next(session)
+                if notice:
+                    noted = f"{noted} {notice}"
+            if again is None:
+                return await _next_step(db, session, acknowledgement=noted)
+            session.state = VoiceCallState.COLLECT_DIAGNOSTICS
+            return TurnOutcome(_speak(session, _ask(session, f"{noted} {again}")))
         return await _switch_issue(db, session, diagnostics.PLAYBOOKS[fix["playbook"]], fix["thing"], utterance)
     state, updates, reask = diagnostics.record(state, utterance)
+    corrected = updates.pop("corrected", None)
     update_collected(session, diagnostics=state, **updates)
+    if corrected:
+        _note_correction(session, *corrected)
     _started_from_words(session, utterance)  # "Was it working before?" -- "Yes, until yesterday; it expired today."
     _work_impact_from_words(session, utterance)  # "Some keys aren't working, but I can still work."
     if reask:
@@ -2795,6 +2848,9 @@ async def _finish_collection(
         return _ask_callback_confirmation(session, preamble=preamble)
     if _is_patient_call(session):
         return await _create_ticket_and_read_back(db, session, preamble=preamble)
+    if diagnostics.urgent_reason(collected.get("diagnostics")) is not None and not collected.get("summary_confirmed"):
+        update_collected(session, summary_urgent_skip=True)  # urgent: filed straight away, without the read-back
+        return await _create_ticket_and_read_back(db, session, preamble=preamble)
     if settings.voice_confirm_summary and not collected.get("summary_confirmed"):
         session.state = VoiceCallState.CONFIRM_SUMMARY
         text = _summary_text(session, updated=bool(collected.get("summary_rounds")))
@@ -2963,36 +3019,217 @@ async def _handle_category_confirmation(
     return await _create_ticket_and_read_back(db, session)
 
 
+# --- others affected, said later in the call ---------------------------------------------------------------------------
+#
+# "Oh, and the Billing team has the same issue" -- at a diagnostic question, the name, the extension, the email, the
+# read-back. Who is affected changes the priority, so it is recorded at once and the priority decided again; then the
+# question that was open is asked again. Only a group with the same problem counts ("nobody else" never does).
+
+_OTHERS_GROUP = (r"(?:team|department|dept|everyone|everybody|others|other people|colleagues|co-?workers|whole office|"
+                 r"whole clinic|whole site|front desk|staff|nurses|doctors|billing|reception|my coworkers)")
+_OTHERS_TOO = re.compile(
+    rf"\b{_OTHERS_GROUP}\b[^.?!]{{0,40}}\b(?:same (?:issue|problem|thing)|too|as well|also|has it|have it|having it|"
+    rf"affected|can'?t|cannot|is down)\b|\b(?:same (?:issue|problem) (?:for|with|in))\b[^.?!]{{0,30}}\b{_OTHERS_GROUP}\b",
+    re.IGNORECASE,
+)
+_NOBODY_ELSE = re.compile(r"\b(?:nobody|no one|no-one)\s+else\b|\bjust me\b|\bonly me\b", re.IGNORECASE)
+_EVERYONE_WORDS = re.compile(r"\b(?:everyone|everybody|whole (?:office|clinic|site)|entire|all of us|nobody can|no one can)\b",
+                             re.IGNORECASE)
+_OTHERS_STATES = (
+    VoiceCallState.COLLECT_DIAGNOSTICS, VoiceCallState.COLLECT_NAME, VoiceCallState.CONFIRM_NAME,
+    VoiceCallState.COLLECT_PHONE, VoiceCallState.COLLECT_EXTENSION, VoiceCallState.COLLECT_EMAIL,
+    VoiceCallState.CONFIRM_EMAIL, VoiceCallState.CONFIRM_CALLBACK_NUMBER, VoiceCallState.CONFIRM_SUMMARY,
+)
+
+
+async def _maybe_others_affected(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome | None:
+    c = session.collected
+    state = c.get("diagnostics") or {}
+    if (
+        not utterance
+        or session.state not in _OTHERS_STATES
+        or _is_patient_call(session)
+        or issue_filed(session)
+        or (session.state == VoiceCallState.COLLECT_DIAGNOSTICS and state.get("pending") == "scope")  # its own answer
+        or not _OTHERS_TOO.search(utterance)
+        or _NOBODY_ELSE.search(utterance)
+    ):
+        return None
+    scope = "whole_site" if _EVERYONE_WORDS.search(utterance) else "several_people"
+    if c.get("affected_scope") == scope:
+        return None
+    update_collected(session, affected_scope=scope)
+    if state:
+        values = {**(state.get("values") or {}), "scope": "yes", "scope_said": diagnostics.clean(utterance)}
+        flags = sorted(set(state.get("flags") or []) | ({"everyone"} if scope == "whole_site" else set()))
+        update_collected(session, diagnostics={**state, "values": values, "flags": flags})
+    _apply_priority_rules(session)
+    return _reask_open_question(session, scripts.OTHERS_NOTED)
+
+
+def _reask_open_question(session: VoiceCallSession, noted: str) -> TurnOutcome:
+    """Say `noted`, then the question that was open again -- as it stands now (the read-back is read again, since what
+    changed may be in it)."""
+    c = session.collected
+    if session.state == VoiceCallState.COLLECT_DIAGNOSTICS:
+        again = diagnostics.pending_prompt(c["diagnostics"]) or _last_agent_line(session)
+    elif session.state == VoiceCallState.CONFIRM_CALLBACK_NUMBER:
+        return _ask_callback_confirmation(session, preamble=noted)
+    elif session.state == VoiceCallState.CONFIRM_SUMMARY:
+        update_collected(session, summary_rounds=c.get("summary_rounds", 0) + 1, summary_awaiting_change=False)
+        text = _summary_text(session, updated=True)
+        update_collected(session, summary_text=text)
+        return TurnOutcome(_speak(session, _say_then_ask(session, noted, text)))
+    elif session.state in (VoiceCallState.COLLECT_EMAIL, VoiceCallState.CONFIRM_EMAIL):
+        again = _open_question(session)
+    else:
+        again = _last_agent_line(session)
+    return TurnOutcome(_speak(session, _ask(session, f"{noted} {again}".strip())))
+
+
+# --- a detail corrected after the diagnostic questions -------------------------------------------------------------
+#
+# "Actually it's my desktop, not my laptop", "the server name is FS02", "it started yesterday, not this morning" -- at the
+# name, the extension, the email, the callback number or the read-back. The answer is corrected (the old one kept as
+# "corrected from"), said back, and the rest of what the caller said still answers the open question ("... And no
+# extension."); with nothing else said, the open question is asked again.
+
+_CORRECTION_STATES = (
+    VoiceCallState.COLLECT_NAME, VoiceCallState.CONFIRM_NAME, VoiceCallState.COLLECT_PHONE,
+    VoiceCallState.COLLECT_EXTENSION, VoiceCallState.COLLECT_EMAIL, VoiceCallState.CONFIRM_EMAIL,
+    VoiceCallState.CONFIRM_CALLBACK_NUMBER, VoiceCallState.CONFIRM_SUMMARY,
+)
+_SENTENCE = re.compile(r"[^.?!;]+[.?!;]*")
+
+
+def _urgent_from_the_start(collected: dict) -> bool:
+    """Urgent from the caller's first words: everyone affected, a possible security incident, lost data, or patients."""
+    words = f"{collected.get('description') or ''} {collected.get('problem_words') or ''}"
+    return bool(collected.get("patient_care_affected")) or collected.get("affected_scope") == "whole_site" or (
+        diagnostics.sounds_urgent(words))
+
+
+def _note_correction(session: VoiceCallSession, key: str, previous: str | None, value: str) -> None:
+    """Keep what the agent says and files consistent with a corrected answer: the issue phrase, and a line in the
+    description so the ticket never reads as the old answer."""
+    c = session.collected
+    if previous and c.get("short_issue") and str(previous).lower() in c["short_issue"].lower():
+        update_collected(session, short_issue=re.sub(re.escape(str(previous)), value, c["short_issue"], flags=re.IGNORECASE))
+    if previous and c.get("description"):
+        update_collected(session, description=f"{c['description']} (Corrected by the caller: {value}, not {previous}.)")
+    _apply_priority_rules(session)
+
+
+def _maybe_detail_correction(session: VoiceCallSession, utterance: str) -> tuple[str | None, str]:
+    """(an acknowledgement or None, what is left of the utterance for the open question)."""
+    c = session.collected
+    state = c.get("diagnostics")
+    if (not utterance or session.state not in _CORRECTION_STATES or _is_patient_call(session) or issue_filed(session)):
+        return None, utterance
+    found = diagnostics.find_correction(state, utterance) if state else None
+    started = nlu.quick_started(utterance) if diagnostics._EARLIER_CORRECTION.search(utterance) else None
+    if found is None and not (started and started != c.get("started")):
+        return None, utterance
+    if found is not None:
+        key, value = found
+        previous = state["values"].get(key)
+        update_collected(session, diagnostics=diagnostics.apply_correction(state, key, value, utterance))
+        _note_correction(session, key, previous, value)
+    if started and started != c.get("started"):
+        update_collected(session, started=started)
+    # What is left once the sentence carrying the correction is taken out answers the open question.
+    rest = [part.strip() for part in _SENTENCE.findall(utterance)
+            if part.strip() and not diagnostics._EARLIER_CORRECTION.search(part)]
+    leftover = " ".join(rest)
+    leftover = re.sub(r"^\W*(?:and|also|plus)\b\W*", "", leftover, flags=re.IGNORECASE).strip()
+    return diagnostics.CORRECTED, leftover if re.search(r"[a-z0-9]", leftover, re.IGNORECASE) else ""
+
+
+# --- after filing: the same problem, or a new one? ---------------------------------------------------------------------
+#
+# At "Is there anything else?", a caller who says more than yes or no may be adding to the problem just filed ("Oh, it
+# also shows error 0x80") or starting a new one. The agent asks which: the same problem is added to the filed ticket
+# as a note (never a duplicate ticket); a new one gets its own ticket, starting from what they just said.
+
+_SAME = re.compile(r"\b(?:same|that one|the one|it'?s related|related|that problem|that issue|the same)\b", re.IGNORECASE)
+_NEW = re.compile(r"\b(?:new|different|another|separate|something else|other)\b", re.IGNORECASE)
+
+
+async def _same_or_new_issue(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome | None:
+    c = session.collected
+    pending = c.get("same_or_new")
+    if pending:
+        update_collected(session, same_or_new=None)
+        if _SAME.search(utterance) and not _NEW.search(utterance):
+            ticket = await db.get(Ticket, session.ticket_id) if session.ticket_id else None
+            if ticket is not None:
+                ticket.description = f"{ticket.description}\n\nAdded by the caller after filing: {pending}"[:10_000]
+                line = scripts.SAME_ISSUE_ADDED.format(ticket_number=scripts.spoken_ticket_number(ticket.ticket_number))
+                return TurnOutcome(_speak(session, _say_then_ask(session, line, scripts.ANYTHING_ELSE)))
+        # A new problem (or not clear: a separate ticket loses nothing): start it from what they said.
+        return await _start_next_issue(db, session, describe=pending)
+    return None
+
+
+def _ask_same_or_new(session: VoiceCallSession, utterance: str) -> TurnOutcome | None:
+    """More than a yes or a no, and not a request for a person: ask whether it is the same problem or a new one."""
+    words = re.findall(r"[a-z0-9']+", (utterance or "").lower())
+    if len(words) < 3 or nlu.is_goodbye(utterance) or _is_patient_call(session) or not session.ticket_id:
+        return None
+    update_collected(session, same_or_new=" ".join((utterance or "").split())[:500])
+    return TurnOutcome(_speak(session, _ask(session, scripts.SAME_OR_NEW_ASK)))
+
+
+
+async def _start_next_issue(db: AsyncSession, session: VoiceCallSession, *, describe: str | None = None) -> TurnOutcome:
+    """Another issue on the same call: clear the issue slots but keep who the caller is, and don't ask for department
+    or email again. `describe`: the new problem, already said -- taken as its description, not asked for again."""
+    keep = (
+        "caller_name", "name_confidence", "name_confirmed_as", "name_unverified", "department",
+        "department_verified", "phone_number", "phone_spoken", "phone_skipped", "email", "email_confirmed",
+        "callback_confirmed", "callback_number", "callback_fallback",
+        "ticket_ids", "caller_type", "patient_category",
+        "directory", "identity_confirmed", "identity_assurance", "directory_identity", "identity_rounds",
+        "extension", "extension_source", "extension_note",
+        "identified_by_routing", "patient_limitation_told",
+    )
+    session.collected = {k: session.collected.get(k) for k in keep if session.collected.get(k) is not None}
+    session.collected["asked"] = ["department", "email"]
+    session.collected["ticket_filed"] = False  # the next issue gets its own ticket
+    session.email_attempt_count = 0
+    if session.collected.get("identified_by_routing") and _is_patient_call(session):
+        # A second request from a patient starts at "what do you need?", not at the IT question.
+        session.state = VoiceCallState.PATIENT_INTENT
+        if describe:
+            return await _handle_patient_intent(db, session, describe)
+        return TurnOutcome(_speak(session, _ask(session, scripts.PATIENT_INTENT_ASK_AGAIN)))
+    session.state = VoiceCallState.COLLECT_DESCRIPTION
+    if describe:
+        session.collected["problem_words_override"] = describe
+        return await _handle_description(db, session, describe)
+    return TurnOutcome(_speak(session, _ask(session, scripts.DESCRIPTION_ASK)))
+
+
 async def _handle_anything_else(
     db: AsyncSession, session: VoiceCallSession, utterance: str
 ) -> TurnOutcome:
+    same_or_new = await _same_or_new_issue(db, session, utterance)
+    if same_or_new is not None:
+        return same_or_new
     result = await nlu.interpret_yes_no("Is there anything else I can help you with?", utterance)
 
     if _wants_human(utterance, result):
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
 
+    # A sentence with no yes or no in it ("Oh, it also beeps when I plug it in") is more about a problem, whatever the
+    # model made of it -- seen with the real model, it was read as "no" and the call ended with the detail lost.
+    if nlu.quick_yes_no(utterance) is None and len(re.findall(r"[a-z0-9']+", utterance.lower())) >= 4:
+        asked = _ask_same_or_new(session, utterance)
+        if asked is not None:
+            return asked
+
     if result.yes_no is True:
-        # Second ticket on the same call: clear the issue slots but keep who
-        # the caller is, and don't ask for department or email again.
-        keep = (
-            "caller_name", "name_confidence", "name_confirmed_as", "name_unverified", "department",
-            "department_verified", "phone_number", "phone_spoken", "phone_skipped", "email", "email_confirmed",
-            "callback_confirmed", "callback_number", "callback_fallback",
-            "ticket_ids", "caller_type", "patient_category",
-            "directory", "identity_confirmed", "identity_assurance", "directory_identity", "identity_rounds",
-            "extension", "extension_source", "extension_note",
-            "identified_by_routing", "patient_limitation_told",
-        )
-        session.collected = {k: session.collected.get(k) for k in keep if session.collected.get(k) is not None}
-        session.collected["asked"] = ["department", "email"]
-        session.collected["ticket_filed"] = False  # the next issue gets its own ticket
-        session.email_attempt_count = 0
-        if session.collected.get("identified_by_routing") and _is_patient_call(session):
-            # A second request from a patient starts at "what do you need?", not at the IT question.
-            session.state = VoiceCallState.PATIENT_INTENT
-            return TurnOutcome(_speak(session, _ask(session, scripts.PATIENT_INTENT_ASK_AGAIN)))
-        session.state = VoiceCallState.COLLECT_DESCRIPTION
-        return TurnOutcome(_speak(session, _ask(session, scripts.DESCRIPTION_ASK)))
+        return await _start_next_issue(db, session)
 
     session.state = VoiceCallState.COMPLETED
     return TurnOutcome(_speak(session, reply.say_and_hangup(scripts.GOODBYE)))
@@ -3064,11 +3301,10 @@ async def _create_ticket_and_read_back(
     session.state = VoiceCallState.ANYTHING_ELSE
 
     lines = [preamble] if preamble else []
-    if patient:
-        lines.append(scripts.PATIENT_CREATING_TICKET)
-    elif session.collected.get("summary_confirmed"):
+    # A patient hears only the read-back, which says the request was saved: it is reached once the request exists.
+    if not patient and session.collected.get("summary_confirmed"):
         lines.append(scripts.SUMMARY_FILING)
-    else:
+    elif not patient:
         announcement = priority_rules.notice(_assessment(session))
         if announcement:
             lines.append(announcement)
@@ -3096,7 +3332,7 @@ async def _create_ticket(
     Patient tickets get a simplified description (no intake details, no priority
     assessment, no triage note) and always land at MEDIUM priority.
 
-    A ticket carrying an `escalation_note` is a callback request or salvaged
+    An employee ticket carrying an `escalation_note` is a callback request or salvaged
     call, and is raised to at least High so it doesn't wait in a normal queue
     (automation couldn't serve that caller). `raise_priority=False` keeps the
     assessed priority for a caller who simply chose to leave.
@@ -3118,11 +3354,11 @@ async def _create_ticket(
         description = f"{priority_rules.triage_note(_assessment(session))}\n\n{description}".strip()
 
     if patient:
-        priority = Priority.MEDIUM
+        priority = Priority.MEDIUM  # always: a callback request or a dropped call included
     else:
         priority = Priority(collected.get("priority") or Priority.MEDIUM.value)
-    if escalation_note and raise_priority:
-        priority = Priority.URGENT if priority == Priority.URGENT else Priority.HIGH
+        if escalation_note and raise_priority:
+            priority = Priority.URGENT if priority == Priority.URGENT else Priority.HIGH
 
     # The number to call: the one the caller confirmed, else the one we had (caller ID or spoken).
     callback_number = collected.get("callback_number")
@@ -3151,7 +3387,7 @@ async def _create_ticket(
         # because they hung up or asked for a person) is not an address we have: the notification
         # then says "Not provided".
         email=collected.get("email") if collected.get("email_confirmed") else None,
-        category_id=await _category_id(db, category_name),
+        category_id=await _category_id(db, category_name, patient=patient),
         priority=priority,
         description=description[:10_000],
     )
@@ -3208,6 +3444,7 @@ def _intake_details(collected: dict) -> str:
         ("Name", "spelling could not be verified with the caller" if collected.get("name_unverified") else None),
         ("Read-back", "caller said the summary was not fully correct; details unverified" if collected.get("summary_unresolved") else None),
         ("Read-back", "not done: the caller ended the call first" if collected.get("summary_skipped") else None),
+        ("Read-back", "not done: urgent, filed straight away" if collected.get("summary_urgent_skip") else None),
         ("Read-back", "read to the caller, no answer: not confirmed" if collected.get("summary_unanswered") else None),
     ]
     lines += diagnostics.ticket_lines(collected.get("diagnostics"), collected.get("description"), collected.get("category"))
@@ -3225,12 +3462,15 @@ async def salvage_abandoned_call(db: AsyncSession, session: VoiceCallSession) ->
     return ticket
 
 
-async def _category_id(db: AsyncSession, name: str | None) -> uuid.UUID:
-    stmt = select(Category).where(Category.name == (name or "Other"))
-    category = (await db.execute(stmt)).scalar_one_or_none()
-    if category is None:
-        category = (await db.execute(select(Category).where(Category.name == "Other"))).scalar_one()
-    return category.id
+async def _category_id(db: AsyncSession, name: str | None, *, patient: bool = False) -> uuid.UUID:
+    """The category's id. One that does not exist falls back to the catch-all for its kind of caller: a patient
+    request to "Other Patient Support" -- never to the employee IT "Other" while that exists."""
+    fallbacks = [name or "Other", *(["Other Patient Support"] if patient else []), "Other"]
+    for candidate in fallbacks:
+        category = (await db.execute(select(Category).where(Category.name == candidate))).scalar_one_or_none()
+        if category is not None:
+            return category.id
+    return (await db.execute(select(Category).where(Category.name == "Other"))).scalar_one().id
 
 
 # --- failure and escalation ----------------------------------------------

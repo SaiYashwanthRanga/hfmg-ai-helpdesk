@@ -70,8 +70,8 @@ async def _say_name(call, name):
     return await call.turn(name)
 
 
-async def _patient_request(call, *, wants="I need to book an appointment", details="next Tuesday morning", name="John Smith"):
-    """Start, say patient, say what is needed, answer the optional question, give a name."""
+async def _patient_request(call, *, wants="I need to book an appointment", details=None, name="John Smith"):
+    """Start, say patient, say what is needed, give a name (no other questions are asked)."""
     await call.start()
     await call.turn("I'm a patient")
     await call.turn(wants)
@@ -162,7 +162,7 @@ async def test_a_new_call_asks_whether_the_caller_is_a_patient_or_an_employee(ma
 
     started = await call.start()
 
-    assert started["lines"] == ["Thank you for calling the helpdesk. May I know if you are a patient or an employee?"]
+    assert started["lines"] == ["Thank you for calling Horizon Family Medical Group. Are you a patient or an employee?"]
     assert started["expect_reply"] is True
     assert (await _session(db_session, "route-greeting")).state == VoiceCallState.IDENTIFY_CALLER
 
@@ -221,24 +221,33 @@ async def test_a_patient_who_says_what_they_need_in_the_same_breath_is_not_asked
     asked = await call.turn("I need to cancel my appointment")
 
     session = await _session(db_session, "route-patient-direct")
-    assert session.collected["patient_intent"] == routing.CANCEL and session.state == VoiceCallState.PATIENT_DETAILS
-    assert scripts.PATIENT_DETAILS_ASK[routing.CANCEL] in _said(asked) and scripts.PATIENT_INTENT_ASK not in _said(asked)
+    assert session.collected["patient_intent"] == routing.CANCEL
+    assert _said(asked) == f"{scripts.PATIENT_PROBLEM_NOTED} {scripts.PATIENT_NAME_ASK}"  # straight to the name
 
 
-async def test_the_patient_is_told_what_this_line_cannot_do_once_and_nothing_is_claimed(make_call, client, db_session, sent_emails, it_model_off_limits):
+async def test_the_patient_flow_asks_only_for_the_problem_name_and_number_and_claims_nothing(
+    make_call, client, db_session, sent_emails, it_model_off_limits
+):
     call = make_call("route-patient-honest")
     await call.start()
-    spoken = [(await call.turn("I'm a patient"))["lines"], (await call.turn("I want to book an appointment"))["lines"]]
-    spoken.append((await call.turn("next Tuesday morning"))["lines"])
-    call._say(interpret_name=nlu.TurnResult(value="John Smith", confidence="high", unable_to_determine=False))
-    spoken.append((await call.turn("John Smith"))["lines"])
-    spoken.append((await call.turn("yes"))["lines"])  # the callback number, which files the request
+    spoken = [(await call.turn("I'm a patient"))["lines"], (await call.turn("I need to change my appointment"))["lines"]]
+    call._say(interpret_name=nlu.TurnResult(value="Maria Lopez", confidence="high", unable_to_determine=False))
+    spoken.append((await call.turn("Maria Lopez"))["lines"])
+    filed = await call.turn("yes")  # the callback number, which files the request
+    spoken.append(filed["lines"])
 
+    assert spoken[0] == [scripts.PATIENT_INTENT_ASK]
+    assert " ".join(spoken[1]) == f"{scripts.PATIENT_PROBLEM_NOTED} {scripts.PATIENT_NAME_ASK}"
+    assert " ".join(spoken[2]).startswith("I have your callback number as")
+    assert "best number to reach you" in " ".join(spoken[2])
     heard = " ".join(line for lines in spoken for line in lines)
-    assert heard.count(scripts.PATIENT_LIMITATION) == 1  # said once, with the first question about the request
-    assert scripts.PATIENT_LIMITATION in " ".join(spoken[1])
+    for never in ("doctor", "preferred day", "which appointment", "book a new appointment", "reschedule", "cancel",
+                  "department", "extension", "email", "stopping you", "let me make sure"):
+        assert never not in heard.lower(), never
     assert not CLAIMS.search(heard)
-    assert "Your request number is" in heard and "someone will follow up" in heard
+    ticket = await _ticket(client, filed["ticket_id"])
+    assert f"Your reference number is {scripts.spoken_ticket_number(ticket['ticket_number'])}" in " ".join(spoken[3])
+    assert "I've saved your request" in " ".join(spoken[3]) and "support team will follow up" in " ".join(spoken[3])
 
 
 async def test_a_patient_request_becomes_a_patient_support_request_with_no_it_content(
@@ -252,8 +261,8 @@ async def test_a_patient_request_becomes_a_patient_support_request_with_no_it_co
     ticket = await _ticket(client, filed["ticket_id"])
     assert (ticket["caller_type"], ticket["caller_name"], ticket["priority"]) == ("PATIENT_SUPPORT", "John Smith", "MEDIUM")
     assert ticket["category"]["name"] == "Appointment Booking" and ticket["phone_number"] == CALLER
-    assert "Patient request: book an appointment." in ticket["description"] and "Details: next Tuesday morning" in ticket["description"]
-    for it_only in ("--- Intake details ---", "Department:", "Work blocked:", "Started:", "Priority:"):
+    assert 'Patient request: book an appointment. Caller said: "I need to book an appointment"' in ticket["description"]
+    for it_only in ("--- Intake details ---", "Department:", "Work blocked:", "Started:", "Priority:", "Details:"):
         assert it_only not in ticket["description"]
     assert len(await _tickets(db_session)) == 1
 
@@ -265,7 +274,7 @@ async def test_a_patient_request_becomes_a_patient_support_request_with_no_it_co
     ("what time is my appointment", routing.CHECK, "Appointment Booking"),
     ("I can't book an appointment on the website", routing.TROUBLE, "Appointment Booking"),
 ])
-async def test_each_appointment_request_is_collected_with_its_own_question(
+async def test_no_appointment_request_gets_an_appointment_question(
     make_call, client, db_session, sent_emails, it_model_off_limits, wants, intent, category
 ):
     call = make_call(f"route-intent-{intent}")
@@ -274,8 +283,7 @@ async def test_each_appointment_request_is_collected_with_its_own_question(
 
     asked = await call.turn(wants)
 
-    assert scripts.PATIENT_DETAILS_ASK[intent] in _said(asked)
-    await call.turn("the fifteenth, with Dr Lee")
+    assert _said(asked) == f"{scripts.PATIENT_PROBLEM_NOTED} {scripts.PATIENT_NAME_ASK}"
     await _say_name(call, "Ann Patient")
     filed = await call.turn("yes")
     ticket = await _ticket(client, filed["ticket_id"])
@@ -287,36 +295,22 @@ async def test_a_request_that_is_not_about_an_appointment_still_reaches_the_team
 ):
     call = make_call("route-patient-other")
 
-    filed = await _patient_request(call, wants="I need a prescription refill", details=None)
+    filed = await _patient_request(call, wants="I need a prescription refill")
 
     ticket = await _ticket(client, filed["ticket_id"])
     assert ticket["category"]["name"] == "Prescription Refill Portal" and ticket["caller_type"] == "PATIENT_SUPPORT"
 
 
-async def test_a_patient_who_says_no_to_the_optional_question_is_not_pressed(make_call, client, db_session, sent_emails, it_model_off_limits):
-    call = make_call("route-patient-nodetails")
-    await call.start()
-    await call.turn("I'm a patient")
-    await call.turn("I need to cancel my appointment")
-
-    asked_name = await call.turn("I don't know")
-
-    assert scripts.PATIENT_NAME_ASK in _said(asked_name)
-    assert (await _session(db_session, "route-patient-nodetails")).collected.get("patient_details") is None
-
-
-async def test_an_unclear_request_gets_one_clarifying_question_then_is_kept_in_the_callers_words(
+async def test_any_problem_is_taken_in_the_callers_own_words_never_asked_to_pick_a_kind_of_appointment(
     make_call, client, db_session, sent_emails, it_model_off_limits
 ):
     call = make_call("route-patient-vague")
     await call.start()
     await call.turn("I'm a patient")
 
-    clarify = await call.turn("an existing one")
-    assert scripts.PATIENT_INTENT_CLARIFY in _said(clarify)
     asked_name = await call.turn("it's complicated, I'll explain to the nurse")
 
-    assert scripts.PATIENT_NAME_ASK in _said(asked_name)
+    assert _said(asked_name) == f"{scripts.PATIENT_PROBLEM_NOTED} {scripts.PATIENT_NAME_ASK}"
     session = await _session(db_session, "route-patient-vague")
     assert session.collected["patient_intent"] == routing.OTHER and "complicated" in session.collected["description"]
     await _say_name(call, "Ann Patient")
@@ -325,19 +319,31 @@ async def test_an_unclear_request_gets_one_clarifying_question_then_is_kept_in_t
     assert ticket["category"]["name"] == "Other Patient Support"  # nothing was guessed
 
 
+async def test_only_a_non_answer_is_asked_about_again(make_call, db_session, it_model_off_limits):
+    call = make_call("route-patient-hello")
+    await call.start()
+    await call.turn("I'm a patient")
+
+    again = await call.turn("hello?")
+    asked_name = await call.turn("I have a question about my bill")
+
+    assert _said(again) == scripts.PATIENT_INTENT_CLARIFY
+    assert _said(asked_name) == f"{scripts.PATIENT_PROBLEM_NOTED} {scripts.PATIENT_NAME_ASK}"
+
+
 async def test_a_second_request_from_a_patient_starts_at_what_do_you_need(make_call, client, db_session, sent_emails, it_model_off_limits):
     call = make_call("route-patient-two")
     first = await _patient_request(call)
 
     asked = await call.turn("yes")  # "anything else?"
     second = await call.turn("I need to cancel my appointment")
-    await call.turn("the fifteenth")
 
-    assert scripts.PATIENT_INTENT_ASK_AGAIN in _said(asked) and first["ticket_id"]
+    assert _said(asked) == scripts.PATIENT_INTENT_ASK_AGAIN and first["ticket_id"]
     session = await _session(db_session, "route-patient-two")
     assert session.collected["patient_intent"] == routing.CANCEL
-    assert scripts.PATIENT_LIMITATION not in _said(second)  # already said on this call
-    assert scripts.PATIENT_NAME_ASK not in _said(second)  # the name is already known
+    # The name and the confirmed callback number are already known: the second request is saved straight away.
+    assert scripts.PATIENT_NAME_ASK not in _said(second) and "callback number" not in _said(second).lower()
+    assert second["ticket_id"] and "I've saved your request" in _said(second)
     assert len(await _tickets(db_session)) == 2 and all(t.caller_type.value == "PATIENT_SUPPORT" for t in await _tickets(db_session))
 
 
@@ -517,15 +523,20 @@ async def test_a_sentence_that_only_mentions_a_patient_never_changes_who_is_call
     assert session.collected["caller_type"] == EMPLOYEE and session.collected["description"] == "A patient cannot check in."
 
 
-async def test_a_caller_cannot_switch_flows_after_a_ticket_exists(make_call, client, db_session, sent_emails, it_model_off_limits):
+async def test_at_a_second_request_an_employee_is_moved_and_the_filed_patient_request_stays(
+    make_call, client, db_session, sent_emails, it_model_off_limits
+):
     call = make_call("route-late-switch")
-    await _patient_request(call)
+    first = await _patient_request(call)
 
     await call.turn("yes")  # anything else
-    await call.turn("Actually I'm an employee")  # at the patient's first question again: still a patient request
+    moved = await call.turn("Actually I'm an employee")  # the next issue is an employee's
 
+    assert _said(moved) == f"{scripts.TYPE_CORRECTED} {scripts.EMPLOYEE_ASK}"
     session = await _session(db_session, "route-late-switch")
-    assert session.collected["caller_type"] == PATIENT and len(session.collected["ticket_ids"]) == 1
+    assert session.collected["caller_type"] == EMPLOYEE and session.state == VoiceCallState.COLLECT_DESCRIPTION
+    assert len(session.collected["ticket_ids"]) == 1  # nothing new filed by the switch itself
+    assert (await _ticket(client, first["ticket_id"]))["caller_type"] == "PATIENT_SUPPORT"  # never changed after filing
 
 
 # --- 6. simultaneous calls, retries ---------------------------------------------------------------------------------------------------------
@@ -552,9 +563,9 @@ async def test_simultaneous_calls_keep_their_own_caller_type_and_details(make_ca
 
     patients, employees = calls[0::2], calls[1::2]
     await asyncio.gather(*(c.turn("I need to book an appointment") for c in patients), *(c.turn("my printer is jammed") for c in employees))
-    await asyncio.gather(*(c.turn("tomorrow morning") for c in patients), *(c.turn(f"Emp {i}, Billing") for i, c in enumerate(employees)))
-    await asyncio.gather(*(c.turn(f"Pat {i}") for i, c in enumerate(patients)), *(c.turn("skip") for c in employees))
-    filed = await asyncio.gather(*(c.turn("yes") for c in patients))  # the callback number: files each patient request
+    await asyncio.gather(*(c.turn(f"Pat {i}") for i, c in enumerate(patients)), *(c.turn(f"Emp {i}, Billing") for i, c in enumerate(employees)))
+    answers = await asyncio.gather(*(c.turn("yes") for c in patients), *(c.turn("skip") for c in employees))
+    filed = answers[:3]  # the callback number: files each patient request
 
     tickets = {n: await _ticket(client, (await _session(db_session, f"route-par-{n}")).ticket_id) for n in range(6)}
     for n in (0, 2, 4):

@@ -15,7 +15,7 @@ from app.ai import summarizer
 from app.core.config import get_settings
 from app.db.models import Category, EscalationReason, Priority, Ticket, VoiceCallState
 from app.voice import diagnostics as dx
-from app.voice import nlu
+from app.voice import nlu, scripts
 from tests.test_directory_identity import AUTH, SIP, DirCall
 from tests.test_multi_issue_calls import _session, _ticket
 from tests.test_multi_issue_calls import call as _call_fixture  # noqa: F401  (seeds categories, token)
@@ -220,21 +220,21 @@ async def test_an_outlook_problem_is_asked_about_and_never_troubleshot(make_call
     first = await _describe(call, "Outlook crashes on my laptop every time I open it.", "Microsoft 365", short="your Outlook")
     no_model()
 
-    heard = [_text(first)]
-    for said in ("It says Microsoft Outlook has stopped working.", "Yes, email works on my phone.", "No, just me."):
-        heard.append(_text(await call.turn(said)))
+    heard = [_text(first), _text(await call.turn("It says Microsoft Outlook has stopped working."))]
 
     assert "error message" in heard[0].lower()  # device and symptom came from the description
-    assert "send and receive email" in heard[1]
-    assert "anyone else" in heard[2]  # who is affected is asked, never assumed from the model's reading
-    assert all(not SELF_HELP.search(h) for h in heard[:3])
+    # The caller can still work and Outlook is theirs alone: whether mail still flows and who else has it would not
+    # change the priority, so neither is asked -- the question budget is a ceiling, not a target.
+    assert any(option in heard[1] for option in scripts.NAME_ASK_OPTIONS)
+    assert "send and receive email" not in " ".join(heard) and "anyone else" not in " ".join(heard)
+    assert all(not SELF_HELP.search(h) for h in heard)
     assert (await _session(db_session, "dx-outlook")).state == VoiceCallState.COLLECT_NAME  # paperwork only now
     filed = await _finish(call)
     description = (await _ticket(client, filed["ticket_id"]))["description"]
     for expected in ("Issue type: Outlook / email", "Device: computer (from the problem description)",
                      "Symptom: crash (from the problem description)",
                      "Error message: It says Microsoft Outlook has stopped working.",
-                     "Can still send and receive email: yes", "Started: this morning",
+                     "Started: this morning",
                      "Suggested next step: Check the Outlook app on the caller's computer"):
         assert expected in description, expected
     assert "Step tried" not in description
@@ -249,8 +249,10 @@ async def test_a_full_server_disk_with_a_failing_application_is_flagged_with_wha
     drive = await call.turn("It's FS01.")
     paperwork = await call.turn("The E drive.")
 
+    # Urgent from the first words: said straight away, before the essential questions -- not after them.
+    assert _text(first).startswith("Sorry") and dx.urgent_notice({"values": {"app_impact": "yes"}}) in _text(first)
     assert "Which server" in _text(first) and "Which drive" in _text(drive)
-    assert _text(paperwork).startswith(dx.URGENT_NOTICE)
+    assert "urgent attention" not in _text(paperwork)  # said once
     session = await _session(db_session, "dx-server")
     assert session.collected["priority"] in ("HIGH", "URGENT")
     assert "department" not in session.collected or session.collected["department"] is None  # not "Billing"
@@ -284,7 +286,8 @@ async def test_a_possible_security_incident_is_flagged_without_any_instructions(
     first = await _describe(call, "I clicked a link in a phishing email and now my account is acting strange.", "Other")
 
     heard = _text(first)
-    assert dx.URGENT_NOTICE in heard and not SELF_HELP.search(heard.replace("Who am I speaking with", ""))
+    assert "I understand it may be a security incident, so I'll get this logged for urgent attention." in heard
+    assert not SELF_HELP.search(heard.replace("Who am I speaking with", ""))
     session = await _session(db_session, "dx-security")
     assert session.state == VoiceCallState.COLLECT_NAME
     assert (session.collected["priority"], session.collected["priority_reason"]) == ("URGENT", "it may be a security incident")
