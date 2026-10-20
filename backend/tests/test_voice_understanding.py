@@ -430,7 +430,7 @@ async def test_volunteered_name_and_department_are_not_asked_again(db_session, m
         nlu, "interpret_description",
         _async(_described(caller_name="James Carter", department="Front desk", started="8:30", work_blocked=True)),
     )
-    out = await orchestrator.handle_turn(db_session, session, utterance="this is James from the front desk ...")
+    out = await orchestrator.handle_turn(db_session, session, utterance="this is James from the front desk")
     # Everything volunteered and caller ID present: straight to email.
     assert session.state == VoiceCallState.COLLECT_EMAIL
     assert "Thanks, James" in out.text

@@ -27,6 +27,8 @@ PATIENT_INTENT_ASK = "How can we help you today? Please tell me briefly what iss
 PATIENT_INTENT_CLARIFY = "Sorry, I didn't catch that. Could you tell me briefly what you need help with?"
 PATIENT_INTENT_ASK_AGAIN = "What else can I help you with?"
 PATIENT_PROBLEM_NOTED = "I understand. I'll pass your request to our support team so they can assist you."
+# The caller stopped mid-sentence while describing the problem (patient or employee): let them finish.
+PROBLEM_GO_ON = "Go on, I'm listening."
 
 # Re-prompts are progressively simpler and never repeat the previous wording --
 # a verbatim repeat is the clearest signal to a caller that they are stuck.

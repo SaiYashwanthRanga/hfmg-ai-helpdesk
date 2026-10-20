@@ -445,6 +445,36 @@ _CANNOT_WORK = re.compile(
 )
 
 
+#: Words a sentence never ends on, even with a full stop after it: an answer that stops on one was cut off
+#: mid-thought ("My appointment is on Tuesday and", "I can't log in because").
+_DANGLING = frozenset({
+    "and", "but", "because", "so", "or", "my", "the", "a", "an", "to", "with", "of", "for", "about", "from", "if",
+    "our", "your", "their", "into", "since", "until", "cause", "'cause",
+})
+#: Words a sentence rarely ends on: they count only when no full stop was heard ("I need", "Outlook keeps").
+_TRAILING = frozenset({
+    "when", "that", "which", "i", "we", "like", "also", "need", "want", "have", "has", "keeps", "can't", "cannot",
+    "won't", "don't", "doesn't", "isn't", "it's", "then", "after", "before",
+})
+_FILLERS = frozenset({"um", "uh", "umm", "uhm", "er", "erm", "hmm", "mm", "ah", "oh", "like", "so", "well"})
+
+
+def sounds_unfinished(utterance: str) -> bool:
+    """Did the caller stop mid-sentence? An answer that trails off ("...", a comma) or ends on a word a sentence
+    does not end on. Seen on live calls: the speech gateway ends a turn at a short pause, so a caller explaining a
+    problem is cut off half way. Rules only; a complete sentence ("My printer is jammed.", "I can't turn it on") is
+    never unfinished, and a lone "um" is no answer at all rather than half of one."""
+    text = (utterance or "").strip()
+    words = re.findall(r"[a-z']+", text.lower())
+    if len([w for w in words if w not in _FILLERS]) < 2:
+        return False
+    if re.search(r"(?:\.\.\.|…|,|-)\s*$", text):
+        return True
+    if words[-1] in _DANGLING:
+        return True
+    return words[-1] in (_TRAILING | _FILLERS) and not re.search(r"[.!?]\s*$", text)
+
+
 def quick_work_impact(utterance: str) -> bool | None:
     """True when the caller says plainly that they cannot work, False when they say they can still work ("Some keys
     aren't working, but I can still work."), None otherwise -- including when they say both. Only what the caller

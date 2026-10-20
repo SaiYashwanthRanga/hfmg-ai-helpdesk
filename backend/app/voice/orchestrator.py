@@ -254,6 +254,8 @@ async def handle_turn(
             return await _handle_extension(db, session, "", directory)  # optional: never a misunderstanding
         if session.state == VoiceCallState.COLLECT_DIAGNOSTICS:
             return await _handle_diagnostics(db, session, "")  # unanswered, not a misunderstanding
+        if session.state == VoiceCallState.COLLECT_DESCRIPTION and session.collected.get("problem_partial"):
+            return await _handle_description(db, session, "")  # silence after "go on": take what was said
         return await _handle_failure(db, session)
 
     if session.state in _GOODBYE_STATES and nlu.is_goodbye(utterance):
@@ -553,7 +555,7 @@ async def _maybe_switch_caller_type(db: AsyncSession, session: VoiceCallSession,
 async def _set_patient_intent(
     db: AsyncSession, session: VoiceCallSession, intent: str, utterance: str, *, acknowledgement: str | None = None
 ) -> TurnOutcome:
-    words = " ".join((utterance or "").split())[:300]
+    words = " ".join((utterance or "").split())[:1000]
     description = f"Patient request: {caller_routing.INTENT_LABELS[intent]}."
     if words:
         description = f'{description} Caller said: "{words}"'
@@ -569,7 +571,39 @@ async def _set_patient_intent(
     return await _next_step(db, session, acknowledgement=_with(acknowledgement, scripts.PATIENT_PROBLEM_NOTED))
 
 
+_MAX_PROBLEM_CONTINUATIONS = 2
+# About 20 seconds of speech: an answer this long was most likely cut off by the gateway's utterance limit.
+_CUT_OFF_WORDS = 48
+_DONE_TALKING = re.compile(
+    r"^\s*(?:no|nope|nothing(?: else| more)?|that'?s (?:it|all)|that is (?:it|all)|done|i'?m done)\b[\s.!,]*(?:thanks?|thank you)?[\s.!]*$",
+    re.IGNORECASE,
+)
+
+
+def _continue_problem(session: VoiceCallSession, utterance: str) -> tuple[str, TurnOutcome | None]:
+    """The problem as the caller has said it so far, joined across turns. A pause mid-sentence ("My
+    appointment was moved and...") ends the caller's turn at the gateway; instead of taking half a problem, the
+    agent says "Go on" and joins what follows. Bounded, and silence after "go on" takes what was said."""
+    collected = session.collected
+    partial = collected.get("problem_partial")
+    if partial and (not utterance or _DONE_TALKING.match(utterance)):
+        update_collected(session, problem_partial=None, problem_continuations=0)
+        return partial, None
+    text = " ".join(f"{partial or ''} {utterance or ''}".split())
+    asked = collected.get("problem_continuations") or 0
+    cut_off = nlu.sounds_unfinished(text) or len((utterance or "").split()) >= _CUT_OFF_WORDS
+    if text and asked < _MAX_PROBLEM_CONTINUATIONS and cut_off and not nlu.mentions_escalation(text):
+        update_collected(session, problem_partial=text, problem_continuations=asked + 1)
+        return text, TurnOutcome(_speak(session, _ask(session, scripts.PROBLEM_GO_ON)))
+    update_collected(session, problem_partial=None, problem_continuations=0)
+    return text, None
+
+
 async def _handle_patient_intent(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
+    utterance, go_on = _continue_problem(session, utterance)
+    if go_on is not None:
+        session.state = VoiceCallState.PATIENT_INTENT
+        return go_on
     if nlu.mentions_escalation(utterance):
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
     intent = caller_routing.patient_intent(utterance)
@@ -604,7 +638,15 @@ async def _handle_patient_details(db: AsyncSession, session: VoiceCallSession, u
 
 
 async def _handle_description(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
-    if nlu.is_greeting(utterance) and not session.collected.get("greeted"):
+    joined = bool(session.collected.get("problem_partial"))
+    utterance, go_on = _continue_problem(session, utterance)
+    if go_on is not None:
+        session.state = VoiceCallState.COLLECT_DESCRIPTION
+        return go_on
+    if joined:
+        # The problem was said over several turns: the whole of it is what the caller said.
+        update_collected(session, problem_words_override=utterance)
+    elif nlu.is_greeting(utterance) and not session.collected.get("greeted"):
         # "Hi." / "Hello, is this IT?" is a greeting, not a failed answer:
         # invite the problem without counting a misunderstanding.
         update_collected(session, greeted=True)
@@ -619,6 +661,7 @@ async def _handle_description(db: AsyncSession, session: VoiceCallSession, utter
             _record_description(session, result)
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
     if result.failed:
+        update_collected(session, problem_words_override=None)
         return await _handle_failure(db, session)
 
     _record_description(session, result)
