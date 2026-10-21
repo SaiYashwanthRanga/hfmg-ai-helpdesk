@@ -428,8 +428,185 @@ OTHER = Playbook(
     next_action=lambda v: "Call the caller back to diagnose; see what they described.",
 )
 
+# --- provider playbooks (CALL_FLOW.md 2.5) ---------------------------------------------------------------------
+#
+# Chosen only on a provider call, for the clinical systems a provider uses to see patients. Intake only, as above.
+# No question asks which patient: "every patient or one chart?" is answered without naming anyone.
+
+_EVERY_PATIENT = Question(
+    "every_patient", "Every patient or one chart",
+    "Is it happening on every patient, or only on one chart? You don't need to tell me which patient.", "choice",
+    (("every", ("every", "all patients", "all of them", "all the patients", "all my patients", "all charts",
+                "any patient", "any chart", "everyone", "all of my")),
+     ("one", ("one patient", "one chart", "just one", "only one", "single", "this patient", "that patient",
+              "a patient", "one of them", "just that", "only that"))),
+    impact=True,
+)
+_PROVIDER_ERROR = Question("error", "Error message", "Do you see an error message? If so, what does it say?", "text",
+                           prefill_pattern=_ERROR_SAID + r"|\b(?:ecw|eclinicalworks|dragon|healow|it)\s+(?:says|shows)\b[^.?!]{3,80}")
+
+
+def _ehr_next_action(v: Values) -> str:
+    part = _said(v, "part", "")
+    where = f" ({part})" if part else ""
+    if v.get("part") == "whole" or v.get("every_patient") == "every" or v.get("scope") == "yes":
+        return (f"Check the eClinicalWorks service and servers for the site{where}: more than one chart or user is "
+                "affected.")
+    if v.get("every_patient") == "one":
+        return (f"Check the one chart{where} with the provider when calling back; the patient was not identified on "
+                "this call.")
+    return f"Check eClinicalWorks{where} on the provider's workstation and session."
+
+
+PROVIDER_EHR = Playbook(
+    "provider_ehr", "eClinicalWorks (provider)", noun="eClinicalWorks", shared=True,
+    questions=(
+        Question("part", "Part of eClinicalWorks",
+                 "Which part of eClinicalWorks is it: charting or progress notes, orders and labs, scheduling or "
+                 "check-in, documents, or all of eCW?", "choice",
+                 (("whole", ("all of ecw", "all of it", "whole", "everything", "entire", "the whole thing",
+                             "can't log in", "cant log in", "can't get in", "won't let me in")),
+                  ("orders", ("order", "labs", "lab order", "lab test", "lab result", "referral", "requisition")),
+                  ("scheduling", ("schedul", "check in", "check-in", "checkin", "appointment", "resource", "front desk")),
+                  ("documents", ("document", "scanned", "attachment", "upload")),
+                  ("charting", ("chart", "progress note", "note", "template", "encounter", "soap", "vitals",
+                                "medication list", "problem list")))),
+        Question("symptom", "What happens",
+                 "What happens: does it freeze or run slowly, show an error, not open at all, or is something "
+                 "missing?", "choice",
+                 (("missing", ("missing", "gone", "disappear", "not showing", "blank", "empty", "lost")),
+                  ("not_open", ("won't open", "wont open", "not open", "doesn't open", "can't open", "cannot open",
+                                "not loading", "won't load", "can't get in", "can't log in")),
+                  ("slow", ("slow", "freez", "frozen", "hang", "spin", "not responding", "lag", "stuck", "crash")),
+                  ("error", ("error", "message", "pop up", "popup", "says")))),
+        _PROVIDER_ERROR,
+        _EVERY_PATIENT,
+        _SCOPE,
+    ),
+    next_action=_ehr_next_action,
+)
+
+PROVIDER_ERX = Playbook(
+    "provider_erx", "E-prescribing (provider)", noun="e-prescribing",
+    questions=(
+        Question("rx_scope", "Which prescriptions", "Is it all prescriptions, or only controlled substances?", "choice",
+                 (("controlled", ("controlled", "epcs", "schedule 2", "schedule two", "schedule ii", "narcotic",
+                                  "opioid")),
+                  ("all", ("all prescriptions", "all of them", "all of", "all my", "every", "any", "everything",
+                           "regular", "normal")))),
+        Question("rx_problem", "What happens",
+                 "Is it a sign-in or token problem, or does the prescription fail to send? Please don't tell me "
+                 "any codes.", "choice",
+                 (("token", ("token", "two factor", "two-factor", "2fa", "authenticat", "id me", "id.me", "idme",
+                             "exostar", "sign in", "sign-in", "log in", "login", "code", "verify")),
+                  ("send", ("send", "transmit", "pharmacy", "fail", "pending", "not going", "reject", "queue",
+                            "error", "won't go", "stuck")))),
+        _PROVIDER_ERROR,
+        _SCOPE,
+    ),
+    next_action=lambda v: (
+        "Check the provider's EPCS credentials and two-factor token." if v.get("rx_problem") == "token"
+        or v.get("rx_scope") == "controlled" else
+        "Check e-prescription transmission (Surescripts status, the pharmacy, the outbound queue)."
+        if v.get("rx_problem") == "send" else
+        "Check the provider's e-prescribing setup in eClinicalWorks."
+    ),
+)
+
+PROVIDER_DICTATION = Playbook(
+    "provider_dictation", "Dictation (provider)", noun="dictation", device_key="dictation_part",
+    questions=(
+        Question("dictation_part", "Microphone or software", "Is it the microphone, or the Dragon software itself?",
+                 "choice",
+                 (("microphone", ("mic", "microphone", "headset", "powermic", "power mic", "speechmike")),
+                  ("software", ("dragon", "software", "program", "profile", "app")))),
+        Question("symptom", "What happens",
+                 "What happens: it doesn't recognise what you say, it won't open, or the text doesn't go into the "
+                 "note?", "choice",
+                 (("not_open", ("won't open", "wont open", "not open", "doesn't open", "crash", "won't start",
+                                "not loading", "won't load")),
+                  ("not_into_note", ("note", "not going", "doesn't go", "won't go", "not transferring", "ecw",
+                                     "eclinical", "chart")),
+                  ("recognition", ("recogni", "wrong words", "accuracy", "understand", "garbage", "mishear",
+                                   "typing nonsense")))),
+        _PROVIDER_ERROR,
+    ),
+    next_action=lambda v: (
+        "Check the provider's dictation microphone (drivers, USB, the device itself)."
+        if v.get("dictation_part") == "microphone" else
+        "Check the Dragon integration with eClinicalWorks on the provider's workstation."
+        if v.get("symptom") == "not_into_note" else
+        "Check the provider's Dragon profile and installation."
+    ),
+)
+
+PROVIDER_RESULTS = Playbook(
+    "provider_results", "Results / interfaces (provider)", noun="results", shared=True,
+    questions=(
+        Question("results_kind", "Lab or imaging", "Is it lab results, or imaging?", "choice",
+                 # Imaging first: "lab" is also inside "available".
+                 (("imaging", ("imaging", "x-ray", "xray", "x ray", "mri", "ct scan", "cat scan", "ultrasound",
+                               "radiolog", "mammo")),
+                  ("lab", ("lab", "blood", "quest", "patholog", "urine", "culture")))),
+        Question("results_symptom", "What happens", "Are the results missing, late, or showing up in the wrong chart?",
+                 "choice",
+                 (("wrong_chart", ("wrong chart", "wrong patient", "another patient", "different patient",
+                                   "wrong person", "someone else's")),
+                  ("missing", ("missing", "not coming", "not showing", "never came", "haven't come", "not getting",
+                               "not received", "nothing")),
+                  ("late", ("late", "delay", "slow", "taking long", "behind")))),
+        _EVERY_PATIENT,
+        _SCOPE,
+    ),
+    next_action=lambda v: (
+        "Patient safety: check the results interface for results filed to the wrong chart before anything else."
+        if v.get("results_symptom") == "wrong_chart" else
+        f"Check the {'imaging' if v.get('results_kind') == 'imaging' else 'lab'} results interface into eClinicalWorks."
+    ),
+)
+
+PROVIDER_TELEHEALTH = Playbook(
+    "provider_telehealth", "Telehealth (provider)", noun="telehealth",
+    questions=(
+        Question("visit_waiting", "Patient waiting now", "Is a patient waiting on a visit right now?", "yes_no",
+                 prefill=("patient is waiting", "patients waiting", "patient waiting", "waiting room", "waiting on me",
+                          "waiting for me"),
+                 prefill_unless=("not waiting", "no one waiting", "nobody waiting", "no one is waiting",
+                                 "nobody is waiting")),
+        Question("side", "Whose side", "Is the problem on your side, or on the patient's side?", "choice",
+                 (("patient", ("patient", "their side", "their end", "they can't", "they cannot", "he can't",
+                               "she can't")),
+                  ("provider", ("my side", "my end", "on my", "i can't", "my camera", "my computer", "my mic",
+                                "my laptop", "mine")))),
+        Question("symptom", "What happens", "Is it no video, no sound, or you can't start the visit?", "choice",
+                 (("video", ("video", "camera", "can't see", "black screen", "picture")),
+                  ("audio", ("audio", "sound", "hear", "mute", "microphone", "mic")),
+                  ("start", ("start", "join", "launch", "open", "connect", "link", "load")))),
+    ),
+    next_action=lambda v: (
+        "Call the patient with the provider to get the visit going (patient-side connection)."
+        if v.get("side") == "patient" else
+        "Check healow / telehealth on the provider's workstation (camera, microphone, browser)."
+    ),
+)
+
+PROVIDER_FAX = Playbook(
+    "provider_fax", "Fax / referrals (provider)", noun="fax or referrals", shared=True,
+    questions=(
+        Question("fax_direction", "Sending or receiving", "Is it sending, or receiving?", "choice",
+                 (("receiving", ("receiv", "incoming", "not getting", "not coming in", "inbound", "coming in")),
+                  ("sending", ("send", "outgoing", "outbound", "won't go", "not going", "going out")))),
+        Question("fax_queue", "Fax line or queue", "Which fax line or referral queue is it?", "text"),
+        _PROVIDER_ERROR,
+    ),
+    next_action=lambda v: f"Check the {_said(v, 'fax_queue', 'fax / referral')} service in eClinicalWorks "
+                          f"({'inbound' if v.get('fax_direction') == 'receiving' else 'outbound'}).",
+)
+
+PROVIDER_PLAYBOOKS = (PROVIDER_ERX, PROVIDER_DICTATION, PROVIDER_TELEHEALTH, PROVIDER_RESULTS, PROVIDER_FAX, PROVIDER_EHR)
+
 PLAYBOOKS = {p.name: p for p in (OUTLOOK, SERVER_STORAGE, SERVER_ACCESS, NETWORK, DEVICE, ACCOUNT, PRINTER, PERIPHERAL,
-                                 SERVICE_REQUEST, OTHER)}
+                                 SERVICE_REQUEST, OTHER, *PROVIDER_PLAYBOOKS)}
 
 #: Running out of space: only these words, never "server" alone. A server that "is not connecting" is an access
 #: problem; storage is only asked about when the caller says something about space.
@@ -453,15 +630,49 @@ _ACCOUNT_WORDS = ("password", "locked out", "lock out", "log in", "login", "sign
 _DEVICE_WORDS = ("laptop", "computer", "desktop", "pc", "screen", "turn on", "blue screen", "slow", "freez")
 
 
-def choose(category: str | None, description: str | None) -> Playbook:
+#: What names each provider system, in the order they are chosen in: the specific system before eClinicalWorks itself
+#: ("Dragon won't put text into eCW" is dictation; "results aren't showing in eCW" is results).
+_ERX_WORDS = ("e-prescrib", "eprescrib", "e prescrib", "epcs", "erx", "e-rx", "surescripts", "controlled substance",
+              "prescription", "prescrib", "pharmacy")
+_DICTATION_WORDS = ("dragon", "dictat", "powermic", "power mic", "speechmike", "speech recognition", "voice recognition")
+_TELEHEALTH_WORDS = ("telehealth", "tele-health", "telemedicine", "healow", "video visit", "virtual visit", "televisit",
+                     "tele visit")
+_RESULTS_WORDS = ("result", "imaging", "radiolog", "x-ray", "xray", "interface", "labcorp")
+_FAX_WORDS = ("fax", "referral")
+_EHR_WORDS = ("ecw", "eclinical", "e clinical", "chart", "progress note", "emr", "ehr", "template", "encounter", "order")
+_PROVIDER_MENTIONS = (
+    (PROVIDER_ERX, _ERX_WORDS), (PROVIDER_DICTATION, _DICTATION_WORDS), (PROVIDER_TELEHEALTH, _TELEHEALTH_WORDS),
+    (PROVIDER_RESULTS, _RESULTS_WORDS), (PROVIDER_FAX, _FAX_WORDS), (PROVIDER_EHR, _EHR_WORDS),
+)
+#: A lockout or password problem is the account questions even for a provider: that is who fixes it.
+_LOCKOUT_WORDS = ("locked out", "lock out", "lockout", "password", "reset my")
+
+
+def _provider_playbook(category: str | None, text: str) -> Playbook | None:
+    if category == "Password" or _says(text, _LOCKOUT_WORDS):
+        return None
+    for playbook, words in _PROVIDER_MENTIONS:
+        if _says(text, words):
+            return playbook
+    return PROVIDER_EHR if category == "eClinicalWorks" else None
+
+
+def choose(category: str | None, description: str | None, *, provider: bool = False) -> Playbook:
     """The question set for the problem as described. Server and Outlook words win over the broad categories.
 
     Context first: a request to set something up is not a fault ("Outlook is working, but I need a new mailbox"),
     and when several devices are named, the one that is failing decides ("the printer works but my keyboard
-    doesn't" is a keyboard problem)."""
+    doesn't" is a keyboard problem).
+
+    On a provider call the provider question sets come first, for the clinical system named; anything else (a
+    printer, Outlook, the network) gets the same questions an employee would."""
     text = (description or "").lower()
     if _REQUEST.search(text) and not _FAULT.search(text):
         return SERVICE_REQUEST
+    if provider:
+        found = _provider_playbook(category, text)
+        if found is not None:
+            return found
     target = _fault_target(text)
     if target is not None:
         return target
@@ -702,12 +913,14 @@ def _fault_target(text: str) -> Playbook | None:
 
 def begin(
     category: str | None, description: str | None, affected_scope: str | None, playbook: Playbook | None = None,
-    said: str | None = None,
+    said: str | None = None, provider: bool = False,
 ) -> dict:
     """Pick the question set (or use `playbook`) and fill in what is already known: from the description, and from
     `said` -- the caller's own words about the problem so far, which keep details a summary may drop ("it says
-    'Cannot start Microsoft Outlook'", "nobody else has it", "I can still send from my phone")."""
-    playbook = playbook or choose(category, description)
+    'Cannot start Microsoft Outlook'", "nobody else has it", "I can still send from my phone").
+
+    `provider`: a provider call -- the provider question sets are chosen first, and corrections can name them."""
+    playbook = playbook or choose(category, description, provider=provider)
     values: Values = {}
     source = " ".join(part for part in (description, said) if part)
     text = source.lower()
@@ -753,6 +966,8 @@ def begin(
         # inferred, never as something the caller said.
         values["device"], values["device_said"] = "computer", "(inferred: the caller can still use their phone)"
     state = {"playbook": playbook.name, "values": values, "asked": [], "pending": None, "done": False, "flags": []}
+    if provider:
+        state["provider"] = True
     _flag(state, source)
     return state
 
@@ -784,6 +999,11 @@ def urgent_reason(state: dict | None) -> str | None:
         return "it's affecting everyone there"
     if "patient_care" in flags:
         return "patient care is affected"
+    # Provider calls: a patient-safety risk, and a patient left waiting on a visit.
+    if values.get("results_symptom") == "wrong_chart":
+        return "results may be going into the wrong patient's chart"
+    if values.get("visit_waiting") == "yes":
+        return "a patient is waiting for their visit"
     return None
 
 
@@ -804,7 +1024,8 @@ def priority_floor(state: dict | None) -> tuple[Priority, str] | None:
     reason = urgent_reason(state)
     if reason is None:
         return None
-    critical = reason in ("it may be a security incident", "it's affecting everyone there", "patient care is affected")
+    critical = reason in ("it may be a security incident", "it's affecting everyone there", "patient care is affected",
+                          "results may be going into the wrong patient's chart", "a patient is waiting for their visit")
     return (Priority.URGENT if critical else Priority.HIGH), reason
 
 
@@ -915,14 +1136,16 @@ def _echoes(prompt: str, utterance: str) -> bool:
     return as_question and len(said) >= 3 and sum(w in asked for w in said) / len(said) >= 0.8
 
 
-def _mentioned(text: str) -> list[Playbook]:
+def _mentioned(text: str, provider: bool = False) -> list[Playbook]:
+    """The question sets for what the text names. On a provider call the provider systems are named first."""
     lowered = (text or "").lower()
-    return [playbook for playbook, words in _MENTION_ORDER if _says(lowered, words)]
+    order = (*_PROVIDER_MENTIONS, *_MENTION_ORDER) if provider else _MENTION_ORDER
+    return [playbook for playbook, words in order if _says(lowered, words)]
 
 
 def _device_phrase(text: str, playbook: Playbook) -> str | None:
     """How the caller named the device ("the wired keyboard" -> "wired keyboard")."""
-    words = dict(_MENTION_ORDER).get(playbook) or ()
+    words = dict((*_PROVIDER_MENTIONS, *_MENTION_ORDER)).get(playbook) or ()
     lowered = (text or "").lower()
     for word in sorted(words, key=len, reverse=True):
         match = re.search(rf"\b{_DEVICE_ADJECTIVE}{re.escape(word.strip())}\w*", lowered)
@@ -941,9 +1164,9 @@ def correction(state: dict, utterance: str) -> dict | None:
         return None
     text = utterance or ""
     current = PLAYBOOKS[state["playbook"]]
-    others = [p for p in _mentioned(text) if p is not current]
+    others = [p for p in _mentioned(text, bool(state.get("provider"))) if p is not current]
     turned_down = [m.group("what") or m.group("other") for m in _NOT_THIS.finditer(text)]
-    rejects_current = any(current in _mentioned(word) for word in turned_down if word)
+    rejects_current = any(current in _mentioned(word, bool(state.get("provider"))) for word in turned_down if word)
     if not (_MISUNDERSTOOD.search(text) or rejects_current or (_I_SAID.search(text) and others)):
         return None
     new = others[0] if others else None
@@ -976,7 +1199,8 @@ def correct_device(state: dict, thing: str) -> dict:
 def restart(state: dict, playbook: Playbook, description: str | None, said: str, affected_scope: str | None) -> dict:
     """Start the right question set after a correction. What was recorded under the wrong one is dropped (it
     answered the wrong questions); the correction itself is kept for the ticket."""
-    fresh = begin(None, f"{description or ''} {said}", affected_scope, playbook=playbook)
+    provider = bool(state.get("provider"))
+    fresh = begin(None, f"{description or ''} {said}", affected_scope, playbook=playbook, provider=provider)
     from_description = begin(None, description, affected_scope, playbook=playbook)["values"]
     for key in [k for k in fresh["values"] if k.endswith("_said")]:
         if fresh["values"][key] == "(from the problem description)" and key not in from_description:
@@ -997,7 +1221,7 @@ def asking_what_it_is(state: dict) -> dict:
 def named_in_answer(state: dict, utterance: str) -> tuple[Playbook, str | None]:
     """The answer to "what is giving you trouble?": the question set for what they named, else Other."""
     current = PLAYBOOKS[state["playbook"]]
-    others = [p for p in _mentioned(utterance) if p is not current]
+    others = [p for p in _mentioned(utterance, bool(state.get("provider"))) if p is not current]
     new = others[0] if others else OTHER
     return new, (_device_phrase(utterance, new) if new is not OTHER else None)
 
@@ -1269,7 +1493,7 @@ def ticket_lines(
         lines.append(("Issue corrected", f"the caller said the first questions ({values.get('issue_corrected_from')}) "
                                          f"were wrong: \"{values['issue_corrected']}\""))
     elif description:
-        expected = choose(category, description)
+        expected = choose(category, description, provider=bool(state.get("provider")))
         if expected is not playbook:
             lines.append(("Issue type check", f"the questions asked were for {playbook.label}, but the description "
                                               f"reads as {expected.label}; review before acting"))

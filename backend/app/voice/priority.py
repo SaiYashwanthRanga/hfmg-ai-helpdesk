@@ -115,6 +115,14 @@ def assess(
     return result(model, None, "model_only")
 
 
+def provider_floor(assessment: Assessment, scope: str | None) -> Assessment:
+    """Provider calls (CALL_FLOW.md 2.5): when others have the same problem, at least High -- several providers held
+    up means several clinics' worth of patients. Only ever raises the priority, and says why."""
+    if scope not in ("several_people", "whole_site") or _order(assessment.priority) >= _order(Priority.HIGH):
+        return assessment
+    return replace(assessment, priority=Priority.HIGH, reason="others have the same problem", rule="provider_others")
+
+
 def _order(priority: Priority) -> int:
     return _ORDER.index(priority)
 

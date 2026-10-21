@@ -18,6 +18,8 @@ DEFAULT_CATEGORIES: list[tuple[str, str, Priority]] = [
     ("Phones", "Desk phones, voicemail, softphone issues", Priority.MEDIUM),
     ("Account & Access", "Password resets, account lockouts, permissions", Priority.MEDIUM),
     ("Other", "Anything that doesn't fit another category", Priority.MEDIUM),
+    # Every provider call (CALL_FLOW.md 2.5) is filed here; the system involved is in the intake details.
+    ("Providers", "Problems reported by providers: eClinicalWorks, e-prescribing, dictation, results, telehealth, fax and referrals.", Priority.HIGH),
 ]
 
 # Phase 2 renamed the printer category to the singular form the voice agent

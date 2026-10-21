@@ -50,6 +50,9 @@ class AISummaryStatus(str, enum.Enum):
 class CallerType(str, enum.Enum):
     INTERNAL_IT = "INTERNAL_IT"
     PATIENT_SUPPORT = "PATIENT_SUPPORT"
+    # A doctor, nurse practitioner or physician assistant (VOICE_PROVIDER_FLOW): the employee IT flow with
+    # provider questions, filed under the Providers category.
+    PROVIDER = "PROVIDER"
 
 
 class TicketSource(str, enum.Enum):

@@ -106,6 +106,20 @@ def _is_patient_call(session: VoiceCallSession) -> bool:
     return (session.collected or {}).get("caller_type") == "PATIENT_SUPPORT"
 
 
+def _is_provider_call(session: VoiceCallSession) -> bool:
+    """A provider (CALL_FLOW.md 2.5): the employee IT flow -- every `not patient` step applies, on purpose -- with
+    provider questions and wording, filed under the Providers category."""
+    return (session.collected or {}).get("caller_type") == CallerType.PROVIDER.value
+
+
+#: Every provider ticket is filed here; the system involved is in the intake details.
+PROVIDERS_CATEGORY = "Providers"
+
+
+def _offers_provider() -> bool:
+    return settings.voice_provider_flow
+
+
 async def start_call(
     session: VoiceCallSession,
     *,
@@ -126,8 +140,9 @@ async def start_call(
         update_collected(session, directory=directory_identity.compact_lookup(directory_lookup))
     if settings.voice_ask_caller_type if identify_caller is None else identify_caller:
         session.state = VoiceCallState.IDENTIFY_CALLER
-        record_turn(session, role="agent", text=scripts.GREETING_IDENTIFY)
-        return TurnOutcome(_ask(session, scripts.GREETING_IDENTIFY))
+        greeting = scripts.GREETING_IDENTIFY_PROVIDER if _offers_provider() else scripts.GREETING_IDENTIFY
+        record_turn(session, role="agent", text=greeting)
+        return TurnOutcome(_ask(session, greeting))
     session.state = VoiceCallState.COLLECT_DESCRIPTION
     record_turn(session, role="agent", text=scripts.GREETING)
     return TurnOutcome(_ask(session, scripts.GREETING))
@@ -486,7 +501,8 @@ async def _route_caller(
     session.state = VoiceCallState.COLLECT_DESCRIPTION
     if caller_routing.states_it_problem(utterance):
         return await _handle_description(db, session, utterance)
-    return TurnOutcome(_speak(session, _ask(session, _with(acknowledgement, scripts.EMPLOYEE_ASK))))
+    ask = scripts.PROVIDER_ASK if caller_type == caller_routing.PROVIDER else scripts.EMPLOYEE_ASK
+    return TurnOutcome(_speak(session, _ask(session, _with(acknowledgement, ask))))
 
 
 #: "Hello?" answers to the opening question that are just asked again; more count as unclear (bounded).
@@ -496,15 +512,18 @@ MAX_IDENTIFY_HELLOS = 2
 async def _handle_identify_caller(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
     if nlu.mentions_escalation(utterance):
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
-    caller_type = caller_routing.identify_caller(utterance)
+    caller_type = caller_routing.identify_caller(utterance, providers=_offers_provider())
     if caller_type:
         return await _route_caller(db, session, utterance, caller_type)
     if nlu.is_greeting(utterance):  # "Hello?": ask again, without counting it as an unclear answer -- twice
         hellos = session.collected.get("identify_hellos", 0) + 1
         update_collected(session, identify_hellos=hellos)
         if hellos <= MAX_IDENTIFY_HELLOS:
-            return TurnOutcome(_speak(session, _ask(session, scripts.IDENTIFY_AFTER_HELLO)))
-    if not caller_routing.has_any_cue(utterance) and len(utterance.split()) >= 2:
+            again = scripts.IDENTIFY_AFTER_HELLO_PROVIDER if _offers_provider() else scripts.IDENTIFY_AFTER_HELLO
+            return TurnOutcome(_speak(session, _ask(session, again)))
+    # The language model only tells patients from employees: a provider is recognised by the rules alone, and one
+    # they cannot read is an employee -- the same IT flow, only the category differs.
+    if not caller_routing.has_any_cue(utterance, providers=_offers_provider()) and len(utterance.split()) >= 2:
         # Nothing the rules can read ("I'm Dr. Patel's nurse"): the language model may know. Cues for both
         # sides are never sent here: that is a question for the caller, not a guess.
         classification = await nlu.classify_caller_type(utterance)
@@ -523,7 +542,8 @@ async def _identify_unclear(db: AsyncSession, session: VoiceCallSession) -> Turn
         session.state = VoiceCallState.COLLECT_DESCRIPTION
         return TurnOutcome(_speak(session, _ask(session, scripts.IDENTIFY_FALLBACK)))
     session.state = VoiceCallState.IDENTIFY_CALLER
-    return TurnOutcome(_speak(session, _ask(session, scripts.IDENTIFY_CLARIFY)))
+    clarify = scripts.IDENTIFY_CLARIFY_PROVIDER if _offers_provider() else scripts.IDENTIFY_CLARIFY
+    return TurnOutcome(_speak(session, _ask(session, clarify)))
 
 
 async def _maybe_switch_caller_type(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome | None:
@@ -541,7 +561,7 @@ async def _maybe_switch_caller_type(db: AsyncSession, session: VoiceCallSession,
         open_step = session.state in (*_PATIENT_STATES, *_PATIENT_STEPS)
     else:
         open_step = session.state == VoiceCallState.COLLECT_DESCRIPTION and not c.get("description")
-    said = caller_routing.identity_statement(utterance) if open_step else None
+    said = caller_routing.identity_statement(utterance, providers=_offers_provider()) if open_step else None
     if said is None or said == c.get("caller_type"):
         return None
     update_collected(session, **{key: None for key in (
@@ -1653,12 +1673,16 @@ def _next_clarification(session: VoiceCallSession) -> str | None:
     if not patient.is_known and patient_matters and asks.get("patient_care", 0) < MAX_ASKS_PER_FACT:
         return "patient_care"
     scope_matters = blocked.value is True or c.get("category") in _SHARED_CATEGORIES
+    if _is_provider_call(session) and patient.value is True:
+        scope_matters = False  # a provider who can't see patients is already Critical: straight to the ticket
     if not scope.is_known and scope_matters and asks.get("scope", 0) < MAX_ASKS_PER_FACT:
         return "scope"
     return None
 
 
 def _clarification_prompt(session: VoiceCallSession, kind: str) -> str:
+    if kind == "blocked" and _is_provider_call(session):
+        return scripts.PROVIDER_DETAILS_ASK_BLOCKED
     options = scripts.CLARIFY_OPTIONS[kind]
     attempt = (session.collected.get("clarify_asks") or {}).get(kind, 1) - 1
     return options[min(attempt, len(options) - 1)]
@@ -1709,6 +1733,11 @@ async def _handle_clarification(db: AsyncSession, session: VoiceCallSession, utt
 def _details_question(session: VoiceCallSession) -> str:
     need_started = not session.collected.get("started")
     need_blocked = _blocked_needed(session.collected)
+    if _is_provider_call(session):
+        # For a provider, "can you work" means "can you see patients": that is what IT needs to know.
+        if need_started and need_blocked:
+            return scripts.PROVIDER_DETAILS_ASK_STRICT if settings.voice_strict_extraction else scripts.PROVIDER_DETAILS_ASK
+        return scripts.DETAILS_ASK_STARTED if need_started else scripts.PROVIDER_DETAILS_ASK_BLOCKED
     if need_started and need_blocked:
         options = scripts.DETAILS_ASK_STRICT_OPTIONS if settings.voice_strict_extraction else scripts.DETAILS_ASK_OPTIONS
         return scripts.pick(options, len(session.turns or []))
@@ -1717,6 +1746,8 @@ def _details_question(session: VoiceCallSession) -> str:
 
 def _apply_priority_rules(session: VoiceCallSession) -> None:
     """Decide the priority *and* why, from one rule (app/voice/priority.py)."""
+    if _is_provider_call(session):
+        _provider_patient_care(session)
     assessment = _assessment(session)
     # What the diagnostic questions found (a possible security incident, data loss, a failing service,
     # everyone affected) can only raise the priority, never lower it.
@@ -1739,23 +1770,41 @@ def _apply_priority_rules(session: VoiceCallSession) -> None:
         )
 
 
+def _provider_patient_care(session: VoiceCallSession) -> None:
+    """A provider who can't work can't see patients: that is patient care affected, recorded as a fact (with the
+    provider's own words as evidence) so every later step -- the priority, the urgent notice, the questions not
+    asked -- sees the same thing. Never overrides what the provider said about patient care themselves."""
+    work = facts_mod.get_fact(session.collected, facts_mod.WORK_BLOCKED)
+    patient = facts_mod.get_fact(session.collected, facts_mod.PATIENT_CARE)
+    if work.value is not True or patient.is_known:
+        return
+    session.collected = facts_mod.apply_fact(session.collected, facts_mod.Fact.known(
+        facts_mod.PATIENT_CARE, True, source=work.source, confidence=work.confidence, evidence=work.evidence,
+    ))
+
+
 def _assessment(session: VoiceCallSession) -> priority_rules.Assessment:
     c = session.collected
     model = Priority(c.get("model_priority") or c.get("priority") or Priority.MEDIUM.value)
     if settings.voice_strict_extraction:
         # True boosts, false caps, unknown does neither -- and is reported as unverified.
-        return priority_rules.assess_facts(
+        assessment = priority_rules.assess_facts(
             model_priority=model,
             facts=facts_mod.all_facts(c),
             category=c.get("category"),
             patient_context=bool(c.get("patient_context_mentioned")),
         )
-    return priority_rules.assess(
-        model_priority=model,
-        work_blocked=c.get("work_blocked"),
-        scope=c.get("affected_scope"),
-        patient_care=c.get("patient_care_affected"),
-    )
+    else:
+        assessment = priority_rules.assess(
+            model_priority=model,
+            work_blocked=c.get("work_blocked"),
+            scope=c.get("affected_scope"),
+            patient_care=c.get("patient_care_affected"),
+        )
+    if _is_provider_call(session):
+        # Here, not only where the priority is stored: the read-back and the spoken notice must say the same level.
+        assessment = priority_rules.provider_floor(assessment, c.get("affected_scope"))
+    return assessment
 
 
 async def _next_step(
@@ -1888,7 +1937,7 @@ def _diagnostics_next(session: VoiceCallSession) -> tuple[str | None, str | None
             return None, None
         # The caller's own words about the problem, not only the summary of them: what they already said is not asked.
         state = diagnostics.begin(c.get("category"), c.get("description"), c.get("affected_scope"),
-                                  said=c.get("problem_words"))
+                                  said=c.get("problem_words"), provider=_is_provider_call(session))
         if c.get("patient_care_affected"):  # patients held up: urgent, whatever the words
             state["flags"] = sorted({*state["flags"], "patient_care"})
         if state["playbook"] in ("server_access", "network") and c.get("category") in (None, "Other"):
@@ -3412,9 +3461,13 @@ async def _create_ticket(
     inbound = (session.from_number or "").strip()
     caller_number = None if inbound in ("", "unknown") else inbound[:32]
 
-    category_name = (
-        collected.get("patient_category") or "Other Patient Support"
-    ) if patient else collected.get("category")
+    if patient:
+        category_name = collected.get("patient_category") or "Other Patient Support"
+    elif _is_provider_call(session):
+        # One category for every provider ticket; the IT category the problem reads as stays in the intake details.
+        category_name = PROVIDERS_CATEGORY
+    else:
+        category_name = collected.get("category")
 
     # Stored as given only when it is a real CallerType. Anything else (a value written by older code, or a
     # corrupted session) is saved as unknown (NULL) rather than crashing the call before its ticket exists;
@@ -3468,7 +3521,12 @@ def _intake_details(collected: dict) -> str:
 
     who = collected.get("directory_identity") or {}
     confirmed = bool(collected.get("identity_confirmed"))
+    provider = collected.get("caller_type") == CallerType.PROVIDER.value
     lines = [
+        # Said by the caller ("I'm a provider", "this is Dr. ..."), never checked.
+        ("Caller", "provider (said by the caller)" if provider else None),
+        # The IT category the problem reads as: the ticket's own category is Providers.
+        ("System", collected.get("category") if provider else None),
         ("Department", department),
         # The caller said yes to a directory entry. That is all it is: not authentication.
         ("Identity", "directory entry confirmed by the caller; not authenticated" if confirmed else None),
@@ -3646,6 +3704,8 @@ def _known_caller_type(value) -> CallerType | None:
 
 def _escalation_lines(session: VoiceCallSession) -> dict[str, str]:
     known = _known_caller_type((session.collected or {}).get("caller_type"))
+    if known is CallerType.PROVIDER:
+        known = CallerType.INTERNAL_IT  # a provider is told about the IT team and a ticket, like an employee
     return _ESCALATION_LINES[known.value if known else None]
 
 

@@ -17,6 +17,19 @@ IDENTIFY_FALLBACK = "No problem. Please tell me briefly how I can help you today
 EMPLOYEE_ASK = "Thanks. Please briefly tell me what IT problem you're having."
 TYPE_CORRECTED = "Okay, thanks for letting me know."
 
+# The same opening when providers are offered too (VOICE_PROVIDER_FLOW). A provider is asked an open question and
+# given time: the whole problem, in their words, is what IT needs.
+GREETING_IDENTIFY_PROVIDER = (
+    "Thank you for calling Horizon Family Medical Group. Are you a patient, an employee, or a provider?"
+)
+IDENTIFY_CLARIFY_PROVIDER = "Sorry, I didn't catch that. Are you a patient, an employee, or a provider?"
+IDENTIFY_AFTER_HELLO_PROVIDER = "Hello. Are you a patient, an employee, or a provider?"
+PROVIDER_ASK = "Thanks. Please tell me what's going on, and take your time."
+# When it started / impact, for a provider: whether they can see patients is what decides the priority.
+PROVIDER_DETAILS_ASK = "When did this start, and is it stopping you from seeing patients?"
+PROVIDER_DETAILS_ASK_STRICT = "When did this start, and can you keep seeing patients, or is it stopping you?"
+PROVIDER_DETAILS_ASK_BLOCKED = "Is this stopping you from seeing patients right now?"
+
 # --- patients: what they need. There is no appointment system behind this line: the agent collects
 # the request and passes it to the support team, and says so; it never says anything was booked,
 # changed, cancelled or found.

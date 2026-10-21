@@ -5,13 +5,16 @@ deterministically. Only an answer with no cue at all goes to the language model 
 orchestrator), and an answer with cues for both sides is never guessed at: the caller is asked.
 
 Caller types use the values already stored on tickets and sessions: PATIENT_SUPPORT is a patient,
-INTERNAL_IT is an employee.
+INTERNAL_IT is an employee, PROVIDER is a doctor, nurse practitioner or physician assistant. Providers are only
+recognised when the caller is offered that choice (`providers=True`, VOICE_PROVIDER_FLOW); otherwise every rule
+here behaves as it did before providers existed.
 """
 
 import re
 
 PATIENT = "PATIENT_SUPPORT"
 EMPLOYEE = "INTERNAL_IT"
+PROVIDER = "PROVIDER"
 
 # What a patient asked for. Stored on the call as `patient_intent`.
 BOOK, RESCHEDULE, CANCEL, CHECK, TROUBLE, OTHER = "BOOK", "RESCHEDULE", "CANCEL", "CHECK", "TROUBLE", "OTHER"
@@ -58,55 +61,85 @@ _TOPIC_EMPLOYEE = re.compile(
 )
 
 
-def identify_caller(utterance: str) -> str | None:
-    """PATIENT_SUPPORT, INTERNAL_IT, or None when it is not clear (no cue, or cues for both sides).
+# A provider says who they are: "I'm a provider", "I'm a doctor", "this is Dr. Patel", "I'm an NP". Never a
+# possessive ("I'm Dr. Patel's nurse", "this is the doctor's office"): that is someone working for the provider.
+_PROVIDER_TITLE = (r"(?:providers?|doctor|physician|nurse practitioner|np|pa|physician'?s? assistant|attending|md"
+                   r"|hospitalist|surgeon|pediatrician|psychiatrist|dentist|optometrist)")
+_SAYS_PROVIDER = re.compile(
+    r"\b(?:i am|i'm|im|this is|calling as) (?:a |an |the |one of the )?" + _PROVIDER_TITLE
+    + r"\b(?!'s)(?! [a-z]+'s)"
+    r"|\b(?:i am|i'm|im|this is|it's|its) (?:dr|doctor) [a-z]+\b(?!'s)"
+)
+_NOT_PROVIDER = re.compile(r"\bnot (?:a |an |the )?(?:provider|doctor|physician)\b")
+# The bare word as an answer ("provider."). "My provider", "the provider" is someone else: a patient or a colleague
+# talking about one.
+_WORD_PROVIDER = re.compile(r"(?<!my )(?<!your )(?<!our )(?<!the )(?<!a )\bproviders?\b")
 
-    Order of evidence: what the caller said they are, then the bare words patient/employee, then
-    what the call is about. At each step one side decides; both sides at once is "not clear"."""
+
+def _sides_said(text: str, providers: bool) -> set[str]:
+    """Who the caller says they are, from an explicit statement. A provider also works here, so "I'm a doctor,
+    I work at the Newburgh office" is a provider, not two answers."""
+    sides = set()
+    if _SAYS_PATIENT.search(text) or _NOT_EMPLOYEE.search(text):
+        sides.add(PATIENT)
+    if _SAYS_EMPLOYEE.search(text) or _NOT_PATIENT.search(text):
+        sides.add(EMPLOYEE)
+    if providers and _SAYS_PROVIDER.search(text) and not _NOT_PROVIDER.search(text):
+        sides.add(PROVIDER)
+        sides.discard(EMPLOYEE)
+    return sides
+
+
+def identify_caller(utterance: str, *, providers: bool = False) -> str | None:
+    """PATIENT_SUPPORT, INTERNAL_IT, PROVIDER (only with `providers`), or None when it is not clear (no cue, or
+    cues for more than one side).
+
+    Order of evidence: what the caller said they are, then the bare words patient/employee/provider, then
+    what the call is about. At each step one side decides; more than one side at once is "not clear"."""
     text = _norm(utterance)
     if not text:
         return None
-    patient = bool(_SAYS_PATIENT.search(text)) or bool(_NOT_EMPLOYEE.search(text))
-    employee = bool(_SAYS_EMPLOYEE.search(text)) or bool(_NOT_PATIENT.search(text))
-    if patient != employee:
-        return PATIENT if patient else EMPLOYEE
-    if patient and employee:
+    said = _sides_said(text, providers)
+    if len(said) == 1:
+        return next(iter(said))
+    if said:
         return None
     patient_word = bool(_WORD_PATIENT.search(text))
     employee_word = bool(_WORD_EMPLOYEE.search(text))
+    provider_word = providers and bool(_WORD_PROVIDER.search(text))
     patient_topic = bool(_TOPIC_PATIENT.search(text))
     employee_topic = bool(_TOPIC_EMPLOYEE.search(text))
-    if patient_word != employee_word:
-        # "patient" alone is a patient; "a patient can't check in because the computer is down" is not.
+    words = [side for side, found in ((PATIENT, patient_word), (EMPLOYEE, employee_word), (PROVIDER, provider_word))
+             if found]
+    if len(words) == 1:
+        # "patient" alone is a patient; "a patient can't check in because the computer is down" is not. A provider
+        # talks about prescriptions, results and appointments as part of the job, so no topic overrules "provider".
         if (patient_word and employee_topic) or (employee_word and patient_topic):
             return None
-        return PATIENT if patient_word else EMPLOYEE
-    if patient_word and employee_word:
+        return words[0]
+    if words:
         return None
     if patient_topic != employee_topic:
         return PATIENT if patient_topic else EMPLOYEE
     return None
 
 
-def has_any_cue(utterance: str) -> bool:
+def has_any_cue(utterance: str, *, providers: bool = False) -> bool:
     """Did the caller say anything this module can read? If not, the language model may be asked."""
     text = _norm(utterance)
-    return any(
-        pattern.search(text)
-        for pattern in (_SAYS_PATIENT, _SAYS_EMPLOYEE, _NOT_PATIENT, _NOT_EMPLOYEE, _WORD_PATIENT, _WORD_EMPLOYEE, _TOPIC_PATIENT, _TOPIC_EMPLOYEE)
-    )
+    patterns = [_SAYS_PATIENT, _SAYS_EMPLOYEE, _NOT_PATIENT, _NOT_EMPLOYEE, _WORD_PATIENT, _WORD_EMPLOYEE, _TOPIC_PATIENT,
+                _TOPIC_EMPLOYEE]
+    if providers:
+        patterns += [_SAYS_PROVIDER, _NOT_PROVIDER, _WORD_PROVIDER]
+    return any(pattern.search(text) for pattern in patterns)
 
 
-def identity_statement(utterance: str) -> str | None:
-    """Only an explicit "I'm a patient" / "I'm an employee" / "I work here" (never a topic or a bare
-    word): used to notice a caller correcting themselves later in the call without mistaking a
+def identity_statement(utterance: str, *, providers: bool = False) -> str | None:
+    """Only an explicit "I'm a patient" / "I'm an employee" / "I work here" / "I'm a provider" (never a topic or a
+    bare word): used to notice a caller correcting themselves later in the call without mistaking a
     sentence about a patient, or about an appointment, for a change of who is calling."""
-    text = _norm(utterance)
-    patient = bool(_SAYS_PATIENT.search(text)) or bool(_NOT_EMPLOYEE.search(text))
-    employee = bool(_SAYS_EMPLOYEE.search(text)) or bool(_NOT_PATIENT.search(text))
-    if patient == employee:
-        return None
-    return PATIENT if patient else EMPLOYEE
+    said = _sides_said(_norm(utterance), providers)
+    return next(iter(said)) if len(said) == 1 else None
 
 
 _PROBLEM = re.compile(
@@ -116,7 +149,7 @@ _PROBLEM = re.compile(
 
 
 def states_it_problem(utterance: str) -> bool:
-    """Did an employee also start on their IT problem ("I'm an employee, my printer is jammed")? Then that
+    """Did an employee (or a provider) also start on their IT problem ("I'm an employee, my printer is jammed")? Then that
     sentence is the description and they are not asked for it again. A sentence that only says more about
     who they are ("I'm Dr. Patel's nurse") is not."""
     text = _norm(utterance)

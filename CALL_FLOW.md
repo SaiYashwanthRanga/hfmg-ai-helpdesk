@@ -137,6 +137,7 @@ never asked again, and cannot be shared between calls.
 |---|---|
 | **Employee** | Straight into the existing IT flow, unchanged: problem, when it started, name and department, directory confirmation, email, ticket, summary, notification. If the answer already holds the problem ("I'm an employee, my printer is jammed") it is used, not asked for again |
 | **Patient** | `PATIENT_INTENT` → one optional `PATIENT_DETAILS` question → name → callback number (confirmed) → a **patient support request** in the patient categories. No IT questions, no IT language model, no IT intake details, no IT ticket |
+| **Provider** (only with `VOICE_PROVIDER_FLOW=true`, which adds "or a provider" to the question) | The employee IT flow with provider questions for the clinical systems; "can you see patients?" decides the priority; filed under **Providers**, sent to the same IT inbox. See 2.5 |
 
 **What the patient flow can and cannot do.** There is no appointment or scheduling system behind this line. The
 agent collects the request and passes it to the support team for a call back, says so once ("I can't book,
@@ -456,6 +457,143 @@ that, only the answer hint and vocabulary. And an answer that is plainly not the
 (its own audio leaking back) -- is treated as silence: kept on the transcript marked "[not used: ...]", never
 stored as an answer. Anything else the caller says, however short or odd, is used as said. "Hello?" at the
 opening question is asked again at most twice, then treated as unclear, so the call never loops on it.
+
+### 2.5 Provider calls (`VOICE_PROVIDER_FLOW`)
+
+**Status:** Approved 2026-10-21.
+
+A third kind of caller: a **provider** (a doctor, nurse practitioner or physician assistant) reporting a problem
+with the clinical systems they use to see patients -- eClinicalWorks, e-prescribing, dictation, results, telehealth,
+fax and referrals -- or any other IT problem. The aim is the same as the employee flow, with more weight on it:
+**hear the whole problem, in the provider's own words, and get it to IT complete.** A provider is usually between
+patients, so the call asks only what IT needs and nothing it already heard.
+
+**What is the same as an employee call.** The provider flow *is* the employee IT flow -- every rule in 2.1-2.4
+applies -- with the differences listed below. In particular:
+
+- "Go on, I'm listening." when an answer is cut off mid-sentence, and the next words are joined onto it.
+- Questions are filled from everything already said; a question is never asked twice.
+- Corrections at any step; a server or detail remembered late is added, never a restart.
+- Directory identity proposal, name and department, callback number, extension, email, read-back, ticket.
+- The ticket is a normal IT ticket and the notification goes to the **same IT inbox** (`HELPDESK_EMAIL`) in the
+  same format, extension line included. No separate inbox, no separate format.
+
+**What is different.**
+
+| | Provider call |
+|---|---|
+| Opening question | "Are you a patient, an employee, or a provider?" (only when `VOICE_PROVIDER_FLOW=true`; otherwise unchanged) |
+| Stored caller type | `PROVIDER` (new `caller_type_enum` value), on the call and the ticket |
+| Category | Always **Providers** (one new category). The system involved is recorded in the intake details, not as a category |
+| Problem question | "Please tell me what's going on, and take your time." -- an open question, then the listening rules above |
+| When / impact question | "When did this start, and is it stopping you from seeing patients?" (instead of "...from working") |
+| Issue questions | The provider question sets below (not the employee ones), at most 4, skipping what is known |
+| Priority | The provider can't see patients right now (can't chart, prescribe, see results or check patients in) → **Critical**. Still seeing patients but others have the same problem → at least **High**. Otherwise as the existing rules assess. Never lower than the existing rules give |
+| Wording | "our IT team", "your ticket" -- the employee wording |
+
+**Who is a provider.** Read by rules first, like 2.3: "I'm a provider", "I'm a doctor / physician", "this is Dr.
+Patel", "I'm a nurse practitioner / NP", "I'm a PA / physician assistant". Not a provider: "I'm Dr. Patel's
+nurse", "I work for Dr. Patel", "I'm calling about Dr. Patel" (a possessive or "for/about" is someone else) --
+those are employees. "My provider" / "the provider" is someone else too (a patient or a colleague talking about
+one). A provider who also says they work here ("I'm a doctor, I work at the clinic") is a provider, and "provider"
+outranks a patient topic ("Provider, I can't send prescriptions"). Cues for two sides are never guessed at; the
+caller is asked. **The language model never decides "provider"**: it is only consulted when the answer has no cue
+at all, as today, and it still only tells patients from employees -- a provider it hears is an employee, which is
+the same IT flow and the same inbox, only the category differs. A correction needs an explicit "I'm a provider" /
+"I'm an employee", with the same limits as 2.3 (never once a ticket exists). Nurses and medical assistants are
+**employees**.
+
+**Provider question sets** (`app/voice/diagnostics.py`, new playbooks chosen when the caller type is `PROVIDER`).
+Intake only: nothing is tried, fixed or looked up on the call, and no password or code is asked for.
+
+| Problem with | Asks about (only what is not already known, at most 4) |
+|---|---|
+| eClinicalWorks | which part (charting / progress notes, orders and labs, scheduling or check-in, documents, the whole of eCW); what happens (won't open, slow, error, missing data); the error message; every patient or one chart; others affected |
+| E-prescribing | all prescriptions or controlled substances only (EPCS); sign-in or token / two-factor problem, or the prescription won't send ("please don't tell me any codes"); the error message; others affected |
+| Dictation (Dragon, microphone) | the microphone or the software; what happens (not recognising, not opening, text not going into the note); the error message |
+| Results / interfaces (lab, imaging) | lab or imaging; results missing, late or in the wrong chart; every patient or one chart; others affected |
+| Telehealth (healow, video visits) | is a patient waiting on a visit right now; the provider's side or the patient's side; no video, no audio, or can't start the visit |
+| Fax / referrals | sending or receiving; which fax line or referral queue; the error message |
+| Anything else | the employee question sets (Outlook, network, printer, computer, ...) unchanged. A lockout or password problem is the account questions even when the system is eCW, because that is who fixes it |
+
+The set is chosen from the problem as described, the specific system before eClinicalWorks itself ("Dragon won't
+put text into eCW" is dictation, "results aren't showing in eCW" is results). A request to set something up is
+still a service request. "No, it's not the eCW, it's the Dragon software" moves to the right set, as in 2.4.
+
+**Patient information.** The agent never asks for a patient's name, date of birth, MRN or any detail of their
+care. "Every patient or one chart?" is asked without asking which patient. If the provider says a patient's name
+anyway, it stays in the transcript as said (as it would on an employee call today); it is not repeated back,
+not put in the issue line, and not asked for again.
+
+**Urgent.** The urgent rules of 2.4 apply unchanged, plus three for providers, each filed **Critical**:
+
+- The provider can't see patients ("yes" to "is it stopping you from seeing patients?", or "I can't work"). This is
+  recorded as *patient care affected*, with the provider's own words as the evidence. The urgent notice comes first
+  ("I understand patient care is affected, so I'll get this logged for urgent attention."), then only name and
+  callback number, and the ticket is filed without the read-back. Who else is affected is not asked: it can't
+  change the priority.
+- Results showing up in the wrong patient's chart (a patient-safety risk).
+- A patient waiting on a telehealth visit that won't start.
+
+What a provider says about patient care themselves is never overridden.
+
+**Not changing.** Patient flow, employee flow, the SIP gateway contract, the call simulator (it still tests the
+employee flow), notification recipients and format. With `VOICE_PROVIDER_FLOW=false` (the default until approved
+in production), calls behave exactly as today.
+
+##### Example: provider with an eClinicalWorks problem
+
+*(The agent lines are the scripts as the agent says them, from a test call with the language model stubbed; caller
+lines are invented. No directory entry matched this caller ID, so the name is asked.)*
+
+> **Agent:** Thank you for calling Horizon Family Medical Group. Are you a patient, an employee, or a provider?
+> **Caller (example):** This is Dr. Rivera, I'm a provider.
+> **Agent:** Thanks. Please tell me what's going on, and take your time.
+> **Caller (example):** eCW keeps freezing when I open the orders tab, and
+> **Agent:** Go on, I'm listening.
+> **Caller (example):** it happens on every patient since about nine.
+> **Agent:** Got it, eClinicalWorks. Is this stopping you from seeing patients right now?
+> **Caller (example):** I can still see them, I'm writing orders on paper.
+> **Agent:** Do you see an error message? If so, what does it say?
+> **Caller (example):** It just says not responding.
+> **Agent:** Is anyone else having the same problem?
+> **Caller (example):** Yes, Dr. Shah next door has it too.
+> **Agent:** Who am I speaking with, and which department are you in?
+> **Caller (example):** Ana Rivera, Family Medicine.
+> *(extension and email as in the employee flow)*
+> **Agent:** Okay Ana, let me make sure I have this right. You're in Family Medicine, and you're having trouble
+> with eClinicalWorks. It's been going on since about nine. Since others have the same problem, I'll mark this
+> high priority. Is that all correct?
+> **Caller (example):** Yes.
+> **Agent:** Great, I'm filing that now. Your ticket number is *(read out digit by digit)*. I've sent it to our IT
+> team and they'll follow up with you. Is there anything else I can help you with?
+
+Which part of eCW, what happens, and "every patient" were in the description, so they were not asked.
+
+*On the ticket:* category **Providers**, caller type `PROVIDER`, priority High, and in the intake details:
+
+```
+Caller: provider (said by the caller)
+System: eClinicalWorks
+Work blocked: no
+Priority: High: others have the same problem
+Issue type: eClinicalWorks (provider)
+Part of eClinicalWorks: orders (from the problem description)
+What happens: slow (from the problem description)
+Error message: It just says not responding.
+Every patient or one chart: every (from the problem description)
+Others affected: yes (caller: "Yes, Dr. Shah next door has it too.")
+Suggested next step: Check the eClinicalWorks service and servers for the site (orders): more than one chart or user is affected.
+```
+
+`System` is the IT category the problem reads as (the ticket's own category is Providers). The notification goes to
+`HELPDESK_EMAIL` in the usual format, subject `New ticket HFMG-... — Providers`.
+
+**Where it lives.** `CallerType.PROVIDER` and migration `d8f3b6a2c415` (adds the enum value and seeds the
+Providers category; downgrade turns provider tickets into `INTERNAL_IT` and removes the category if unused);
+`caller_routing.py` (who is a provider, behind `providers=`); `orchestrator.py` (`_is_provider_call`, wording,
+category, the patient-care fact); `diagnostics.py` (the provider question sets); `priority.py` (`provider_floor`);
+tests in `tests/test_provider_intake.py` and `tests/test_voice_state_migrations.py`.
 
 ### 2.2 Employee directory (`USER_DIRECTORY_CSV_PATH`)
 

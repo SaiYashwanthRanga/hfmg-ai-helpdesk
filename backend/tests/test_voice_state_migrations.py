@@ -23,7 +23,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.core.config import get_settings
-from app.db.models import VoiceCallSession, VoiceCallState
+from app.db.models import CallerType, VoiceCallSession, VoiceCallState
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")  # the suite's shared loop (see conftest.py)
 
@@ -124,3 +124,44 @@ async def test_every_call_state_can_be_stored_and_read_back():
             rows = (await db.execute(select(VoiceCallSession).where(VoiceCallSession.call_id.in_(expected)))).scalars().all()
             stored = {row.call_id: row.state for row in rows}
     assert stored == expected
+
+
+async def _caller_types(db) -> set[str]:
+    rows = await db.execute(text(
+        "SELECT e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid WHERE t.typname = 'caller_type_enum'"
+    ))
+    return {label for (label,) in rows}
+
+
+async def _has_providers_category(db) -> bool:
+    return (await db.execute(text("SELECT count(*) FROM categories WHERE name = 'Providers'"))).scalar_one() == 1
+
+
+async def _alembic(url, *args) -> None:
+    result = await asyncio.to_thread(
+        subprocess.run, [sys.executable, "-m", "alembic", *args], cwd=BACKEND_DIR,
+        env={**os.environ, "DATABASE_URL": url.render_as_string(hide_password=False)},
+        capture_output=True, text=True, timeout=180,
+    )
+    assert result.returncode == 0, f"alembic {' '.join(args)} failed: {result.stderr[-2000:]}"
+
+
+async def test_migrated_caller_types_match_the_model_and_providers_are_seeded():
+    async with _migrated_database() as url, _session_on(url) as db:
+        in_database = await _caller_types(db)
+        seeded = await _has_providers_category(db)
+    assert in_database == {caller_type.value for caller_type in CallerType}
+    assert seeded
+
+
+async def test_the_provider_migration_downgrades_and_upgrades_cleanly():
+    """Downgrade keeps provider tickets (as INTERNAL_IT IT tickets) and removes the value; upgrade puts it back."""
+    async with _migrated_database() as url:
+        await _alembic(url, "downgrade", "-1")
+        async with _session_on(url) as db:
+            assert "PROVIDER" not in await _caller_types(db)
+            assert not await _has_providers_category(db)  # unused: removed
+        await _alembic(url, "upgrade", "head")
+        async with _session_on(url) as db:
+            assert "PROVIDER" in await _caller_types(db)
+            assert await _has_providers_category(db)
