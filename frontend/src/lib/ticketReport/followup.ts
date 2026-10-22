@@ -20,15 +20,15 @@ export function daysOpenLabel(days: number | null): string {
 }
 
 /**
- * Something to tell the user when the vendor / provider pass did not fully work, so an empty group is never read as
+ * Something to tell the user when the vendor / OM/user pass did not fully work, so an empty group is never read as
  * "nothing is waiting on a vendor". Undefined when the groups are complete (or there was nothing to classify).
  */
 export function followupNote(followup: Followup): string | undefined {
   if (followup.status === "unavailable") {
-    return "The vendor and provider groups could not be determined this time, so they are empty. The priority issues below are not affected.";
+    return "The vendor and OM/user groups could not be determined this time, so they are empty. The priority issues below are not affected.";
   }
   if (followup.status === "partial") {
-    return `The vendor and provider groups cover ${followup.classified} tickets; the rest could not be classified, so these groups may be incomplete.`;
+    return `The vendor and OM/user groups cover ${followup.classified} tickets; the rest could not be classified, so these groups may be incomplete.`;
   }
   return undefined;
 }

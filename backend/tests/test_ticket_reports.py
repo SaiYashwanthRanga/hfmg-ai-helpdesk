@@ -1421,7 +1421,7 @@ async def test_without_an_assignee_column_the_email_says_so_and_keeps_both_secti
 
     assert "Unassigned Tickets | Not available" in text and "Open Tickets | 2" in text
     assert "Not available: the file has no Assigned-to column." in text and "Employee | Unresolved" not in text
-    assert _cells(markup, "h2") == ["Team Summary", "Employee Workload", "Waiting on Vendor", "Provider Issues"] and markup.count("<table") == 1
+    assert _cells(markup, "h2") == ["Team Summary", "Employee Workload", "Waiting on Vendor", "OM/User Issues"] and markup.count("<table") == 1
     assert "Not available: the file has no Assigned-to column." in markup
 
 
@@ -1701,10 +1701,10 @@ async def test_a_phone_number_that_ends_a_sentence_is_masked_and_an_ip_address_i
     assert ticket_report_parser.redact(text_) == expected
 
 
-# --- the email's weekly follow-up sections: Waiting on Vendor and Provider Issues ---------------------------------------------
+# --- the email's weekly follow-up sections: Waiting on Vendor and OM/User Issues ---------------------------------------------
 
 VENDOR_HEADER = "Ticket ID | Issue | Assigned To | Days Open | Status | Evidence"
-PROVIDER_HEADER = "Ticket ID | Provider-Related Issue | Assigned To | Days Open | Business Impact"
+PROVIDER_HEADER = "Ticket ID | OM/User Issue | Assigned To | Days Open | Business Impact"
 
 
 def _text_rows(text: str, header: str) -> list[list[str]]:
@@ -1720,14 +1720,14 @@ def _text_rows(text: str, header: str) -> list[list[str]]:
 
 
 async def test_the_email_has_four_sections_in_order_and_says_when_a_group_is_empty(client, llm, mail):
-    report = await analyzed(client, SAMPLE)  # no ticket here is a vendor or provider ticket
+    report = await analyzed(client, SAMPLE)  # no ticket here is a vendor or OM/user ticket
     await client.post(f"/api/v1/reports/{report['id']}/send")
     text, markup = mail.sent[0]["body"], mail.sent[0]["html_body"]
 
     assert [h for h in text.splitlines() if h.isupper() and h != "HFMG IT TICKET PRIORITIES AND WORKLOAD REPORT"] == [
-        "TEAM SUMMARY", "EMPLOYEE WORKLOAD", "WAITING ON VENDOR", "PROVIDER ISSUES"]
-    assert _cells(markup, "h2") == ["Team Summary", "Employee Workload", "Waiting on Vendor", "Provider Issues"]
-    assert "No ticket shows evidence of waiting on a vendor." in text and "No provider-related issue was found." in markup
+        "TEAM SUMMARY", "EMPLOYEE WORKLOAD", "WAITING ON VENDOR", "OM/USER ISSUES"]
+    assert _cells(markup, "h2") == ["Team Summary", "Employee Workload", "Waiting on Vendor", "OM/User Issues"]
+    assert "No ticket shows evidence of waiting on a vendor." in text and "No OM/user issue was found." in markup
     assert markup.count("<table") == 2  # an empty group is a sentence, not an empty table
     assert VENDOR_HEADER not in text and PROVIDER_HEADER not in text
 
@@ -1759,7 +1759,7 @@ async def test_provider_issues_in_the_email_have_the_required_fields_and_the_das
     assert [r[0] for r in rows] == ["#4", "#5"] == [f"#{p['ticket_id']}" for p in provider]
     assert rows[0] == ["#4", "Provider issue 4", "Dana", str(provider[0]["days_open"]), "Impact 4"]
     assert rows[1] == ["#5", "Provider issue 5", "Sam", str(provider[1]["days_open"]), "Impact 5"]
-    assert "Business Impact</th>" in markup and "Provider-Related Issue</th>" in markup and "Impact 4" in markup
+    assert "Business Impact</th>" in markup and "OM/User Issue</th>" in markup and "Impact 4" in markup
 
 
 async def test_the_original_sections_and_the_dashboard_only_content_are_as_before(client, llm, mail):
@@ -1770,7 +1770,7 @@ async def test_the_original_sections_and_the_dashboard_only_content_are_as_befor
 
     assert "Metric | Count" in text and "Employee | Unresolved | Critical/High | Overdue | Observation" in text.splitlines()
     assert "AI Critical | 1" in text and "AI High | 1" in text and "Open Tickets | 6" in text
-    assert _cells(markup, "h2") == ["Team Summary", "Employee Workload", "Waiting on Vendor", "Provider Issues"] and markup.count("<table") == 4
+    assert _cells(markup, "h2") == ["Team Summary", "Employee Workload", "Waiting on Vendor", "OM/User Issues"] and markup.count("<table") == 4
     visible = _cells_free(markup)
     for fragment in ("Priority issues", "daily work", "Reason for", "Action for", "Recommended Priority", "Freshworks priority", "Recurring", "Data limitations",
                      "Assumptions", "Executive", "imited information", "in the dashboard"):
@@ -1795,8 +1795,8 @@ async def test_when_the_follow_up_check_failed_the_email_says_so_instead_of_look
 
     text = mail.sent[0]["body"]
 
-    assert text.count("Not available: the vendor and provider check did not complete.") == 2
-    assert "No ticket shows evidence" not in text and "No provider-related issue" not in text
+    assert text.count("Not available: the vendor and OM/user check did not complete.") == 2
+    assert "No ticket shows evidence" not in text and "No OM/user issue" not in text
     assert "Dana | 3 |" in text and "Sam | 3 |" in text  # the workload section is intact
 
 
@@ -1821,7 +1821,7 @@ async def test_a_report_saved_before_the_groups_existed_says_so_in_the_email(cli
     sent = await client.post(f"/api/v1/reports/{report['id']}/send")
 
     assert sent.status_code == 200
-    assert mail.sent[0]["body"].count("Not available: this report was made before the vendor and provider groups existed.") == 2
+    assert mail.sent[0]["body"].count("Not available: this report was made before the vendor and OM/user groups existed.") == 2
 
 
 async def test_a_long_follow_up_list_is_capped_with_a_pointer_to_the_dashboard():
@@ -1887,7 +1887,7 @@ async def test_the_email_columns_are_exactly_the_issue_columns(client, llm, mail
         "Metric", "Count",
         "Employee", "Unresolved", "Critical/High", "Overdue", "Observation",
         "Ticket ID", "Issue", "Assigned To", "Days Open", "Status", "Evidence",
-        "Ticket ID", "Provider-Related Issue", "Assigned To", "Days Open", "Business Impact",
+        "Ticket ID", "OM/User Issue", "Assigned To", "Days Open", "Business Impact",
     ]
 
 
@@ -1913,9 +1913,9 @@ async def test_the_email_is_signed_as_the_help_desk_agent_after_the_last_section
     text, markup = mail.sent[0]["body"], mail.sent[0]["html_body"]
 
     assert text.splitlines()[-4:] == ["", *SIGNATURE_LINES]  # a blank line, then the sign-off, at the very end
-    assert text.index("PROVIDER ISSUES") < text.index("Regards,") and text.count("Regards,") == 1
+    assert text.index("OM/USER ISSUES") < text.index("Regards,") and text.count("Regards,") == 1
     assert markup.endswith("<br>".join(SIGNATURE_LINES) + "</p></div>")  # the sign-off is the last thing in the HTML
-    assert markup.count("HFMG AI Help Desk Agent") == 1 and markup.rindex("Provider Issues") < markup.index("Regards,")
+    assert markup.count("HFMG AI Help Desk Agent") == 1 and markup.rindex("OM/User Issues") < markup.index("Regards,")
 
 
 async def test_the_signature_is_a_sign_off_not_a_section_and_adds_no_next_steps(client, llm, mail):
@@ -1923,9 +1923,9 @@ async def test_the_signature_is_a_sign_off_not_a_section_and_adds_no_next_steps(
     await client.post(f"/api/v1/reports/{report['id']}/send")
     text, markup = mail.sent[0]["body"], mail.sent[0]["html_body"]
 
-    assert _cells(markup, "h2") == ["Team Summary", "Employee Workload", "Waiting on Vendor", "Provider Issues"] and markup.count("<table") == 4
+    assert _cells(markup, "h2") == ["Team Summary", "Employee Workload", "Waiting on Vendor", "OM/User Issues"] and markup.count("<table") == 4
     assert [h for h in text.splitlines() if h.isupper() and h != "HFMG IT TICKET PRIORITIES AND WORKLOAD REPORT"] == [
-        "TEAM SUMMARY", "EMPLOYEE WORKLOAD", "WAITING ON VENDOR", "PROVIDER ISSUES"]
+        "TEAM SUMMARY", "EMPLOYEE WORKLOAD", "WAITING ON VENDOR", "OM/USER ISSUES"]
     for fragment in ("Next Action", "Follow-up", "Follow up", "should", "please"):
         assert fragment not in text, fragment
 

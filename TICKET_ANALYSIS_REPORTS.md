@@ -95,26 +95,26 @@ possibility. **Data limitations** (collapsed) — what the file could not tell u
 ### Weekly follow-up
 
 Right after the summary, the dashboard groups the open tickets for the IT team's weekly follow-up. **The email carries
-*Waiting on vendor* and *Provider issues*** (see below); the *Priority issues* group is dashboard-only. A ticket can appear
+*Waiting on vendor* and *OM/User issues*** (see below); the *Priority issues* group is dashboard-only. A ticket can appear
 in more than one group.
 
 | Group | What it holds | Columns |
 |---|---|---|
 | **Waiting on vendor** | Tickets that *show* they are blocked on an outside organization: a vendor was contacted and a reply is pending, an external support case or RMA is open, a replacement / repair / vendor action is pending, or the next step depends on an outside party. A status such as "Waiting on Third Party" counts as evidence | Ticket, Assigned to, Issue, Days open, Status, Evidence, Next action |
-| **Provider issues** | Issues affecting a healthcare provider's ability to work: cannot reach eClinicalWorks or another clinical system, login / authentication / permissions, a clinical workstation or application, patient visits or documentation | Ticket, Assigned to, Provider-related issue, Days open, Business impact, AI priority, Next action |
+| **OM/User issues** | Issues affecting a healthcare provider's ability to work: cannot reach eClinicalWorks or another clinical system, login / authentication / permissions, a clinical workstation or application, patient visits or documentation | Ticket, Assigned to, OM/User issue, Days open, Business impact, AI priority, Next action |
 | **Priority issues affecting daily work** | The tickets the AI recommended as Critical or High, overdue first, then the oldest | Ticket, Assigned to, Issue, Days open, AI priority, Freshworks priority, Why, Next action |
 
 - **Evidence is required.** A ticket that only *mentions* a vendor is **Needs review**, not Waiting on vendor; if the AI says
   "waiting" without giving evidence, the report downgrades it to Needs review. Mentioning a doctor does not make a ticket a
-  provider issue, or urgent: the impact the ticket describes is what counts, and "Impact not stated" is shown when it says none.
+  OM/user issue, or urgent: the impact the ticket describes is what counts, and "Impact not stated" is shown when it says none.
 - **How it is found.** A second AI pass reads each open ticket (the same set as the priorities, up to
   `TICKET_REPORT_MAX_AI_TICKETS`) with a longer excerpt of its description: up to about 2,200 characters, **the start and the
   end** of a long text, since a pasted email thread says where things stand at the end. It also sees the Status and the Tags
   column. It is separate from the priority pass, so the priorities are unchanged, and if it fails the rest of the report is
-  intact: the vendor and provider groups say so instead of looking empty. It makes extra AI requests (five tickets each;
+  intact: the vendor and OM/user groups say so instead of looking empty. It makes extra AI requests (five tickets each;
   `TICKET_REPORT_FOLLOWUP_BATCH_SIZE`).
 - **Days open** is counted from the Created time to the time of the analysis; "Not available" without one.
-- **Sorted:** Waiting on vendor before Needs review, then longest open first; provider issues by AI priority, then longest open.
+- **Sorted:** Waiting on vendor before Needs review, then longest open first; OM/user issues by AI priority, then longest open.
 - The export has no conversation or notes column, so evidence comes from the Description, Status and Tags. A file with little
   of that will show few or no vendor tickets; that is the rule working, not a fault.
 
@@ -153,10 +153,10 @@ ticket-by-ticket analysis, priority issues, recurring issues, summary statements
   calls it "Unassigned").
 - **Waiting on Vendor** — Ticket ID | Issue | Assigned To | Days Open | Status | Evidence. *Status* is Waiting on Vendor, or
   Needs Review for a ticket that only hints at a vendor.
-- **Provider Issues** — Ticket ID | Provider-Related Issue | Assigned To | Days Open | Business Impact.
+- **OM/User Issues** — Ticket ID | OM/User Issue | Assigned To | Days Open | Business Impact.
 
 The two issue sections list the same tickets, in the same order, as the dashboard (a ticket with no agent shows "No Agent").
-An empty group says so in a sentence ("No ticket shows evidence of waiting on a vendor."). If the vendor/provider check
+An empty group says so in a sentence ("No ticket shows evidence of waiting on a vendor."). If the vendor/OM-user check
 failed, or the report was saved before it existed, the sections say "Not available" rather than looking empty; a partial
 check says how many tickets it covered. At most 25 rows are listed per section, with a pointer to the dashboard.
 

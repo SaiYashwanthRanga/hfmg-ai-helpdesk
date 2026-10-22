@@ -387,9 +387,9 @@ async def _analyze(report_id, rows, fields, validation, filename, file_type, sou
 
 
 async def _followup(report_id, tickets: list[dict[str, Any]], to_analyze: list[dict[str, Any]]) -> dict[str, Any]:
-    """The weekly follow-up groups: waiting on a vendor, provider issues, and the priority issues affecting daily work.
+    """The weekly follow-up groups: waiting on a vendor, OM/user issues, and the priority issues affecting daily work.
 
-    The vendor and provider groups come from a second AI pass that reads a longer excerpt of each description. If that
+    The vendor and OM/user groups come from a second AI pass that reads a longer excerpt of each description. If that
     pass fails, the groups are simply unavailable ("unavailable" / "partial"): the priorities and the rest of the
     report are unaffected. The daily-work group is the AI's existing Critical and High recommendations."""
     answers: dict[str, dict[str, Any]] = {}
@@ -397,10 +397,10 @@ async def _followup(report_id, tickets: list[dict[str, Any]], to_analyze: list[d
     status = "skipped"
     if to_analyze:
         batches = -(-len(to_analyze) // max(settings.ticket_report_followup_batch_size, 1))
-        await _progress(report_id, "followup", 0, batches, "Checking for vendor and provider issues…")
+        await _progress(report_id, "followup", 0, batches, "Checking for vendor and OM/user issues…")
 
         async def on_batch(done: int, total: int) -> None:
-            await _progress(report_id, "followup", done, total, f"Checked {done} of {total} steps for vendor and provider issues…")
+            await _progress(report_id, "followup", done, total, f"Checked {done} of {total} steps for vendor and OM/user issues…")
 
         outcome = await ai.classify_followup(to_analyze, on_batch)
         answers = outcome["answers"]
@@ -513,10 +513,10 @@ def _data_quality(validation, summary, fields, counts, outcome, synthesis_state,
             "is listed as Needs Review. A ticket can appear in more than one group."
         )
     if followup["status"] == "unavailable":
-        limitations.append("The weekly follow-up pass returned nothing usable, so the vendor and provider groups are empty.")
+        limitations.append("The weekly follow-up pass returned nothing usable, so the vendor and OM/user groups are empty.")
     elif followup["status"] == "partial":
         limitations.append(
-            f"The weekly follow-up pass covered {followup['classified']} tickets; the rest have no vendor or provider classification."
+            f"The weekly follow-up pass covered {followup['classified']} tickets; the rest have no vendor or OM/user classification."
         )
     return {
         "warnings": [w["message"] for w in validation.get("warnings", [])],

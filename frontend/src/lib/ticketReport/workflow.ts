@@ -62,7 +62,7 @@ export function sendAvailability(report: TicketReportRecord | null, config: Repo
   return yes;
 }
 
-/** The facts shown in the "send this report?" dialog: what the email will contain (team summary, employee table, vendor and provider lists). */
+/** The facts shown in the "send this report?" dialog: what the email will contain (team summary, employee table, vendor and OM/user lists). */
 export function confirmationSummary(report: TicketReportRecord): string[] {
   const analysis = report.analysis;
   if (!analysis) return [];
@@ -77,10 +77,10 @@ export function confirmationSummary(report: TicketReportRecord): string[] {
   }
   lines.push(`${plural(employees.length, "row")} in the employee workload table`);
   if (!followup || followup.status === "unavailable") {
-    lines.push("Waiting on vendor and provider issues: not available for this report");
+    lines.push("Waiting on vendor and OM/user issues: not available for this report");
   } else {
     lines.push(`${plural(followup.vendor.length, "ticket")} waiting on a vendor or needing review`);
-    lines.push(plural(followup.provider.length, "provider issue"));
+    lines.push(plural(followup.provider.length, "OM/user issue"));
   }
   return lines;
 }
