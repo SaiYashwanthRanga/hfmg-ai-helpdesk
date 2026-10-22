@@ -171,7 +171,7 @@ describe("confirmationSummary", () => {
       "4 open; 1 overdue",
       "1 Critical and 2 High, as recommended by the AI",
       "2 rows in the employee workload table",
-      "Waiting on vendor and OM or user issues: not available for this report",
+      "Waiting on vendor and provider issues: not available for this report",
     ]);
     // The email lists no priority action items, so however many open tickets there are, the dialog does not mention any.
     const many = completed({ analysis: analysis({ tickets: [ticket("1"), ticket("2"), ticket("3")], action_ids: ["1"] }) });
@@ -179,10 +179,10 @@ describe("confirmationSummary", () => {
     const sparse = completed({ analysis: analysis({ summary: { ...analysis().summary, overdue: null, ai_critical: null, ai_high: null }, employees: [] }) });
     assert.deepEqual(confirmationSummary(sparse), [
       "6 tickets in export.csv", "4 open; overdue count not available", "0 rows in the employee workload table",
-      "Waiting on vendor and OM or user issues: not available for this report",
+      "Waiting on vendor and provider issues: not available for this report",
     ]);
   });
-  it("says how many vendor and OM or user rows the email will carry", () => {
+  it("says how many vendor and provider rows the email will carry", () => {
     const item = { ticket_id: "1", subject: "s", assignee: "Dana", days_open: 3 };
     const followup = {
       vendor: [{ ...item, status: "waiting_on_vendor" as const, evidence: "e", next_action: "n" }],
@@ -193,9 +193,9 @@ describe("confirmationSummary", () => {
       daily_work: [], status: "complete" as const, classified: 6, failed_batches: 0, dropped_answers: 0,
     };
     const lines = confirmationSummary(completed({ analysis: analysis({ followup }) }));
-    assert.deepEqual(lines.slice(-2), ["1 ticket waiting on a vendor or needing review", "2 OM or user issues"]);
+    assert.deepEqual(lines.slice(-2), ["1 ticket waiting on a vendor or needing review", "2 provider issues"]);
     const failed = confirmationSummary(completed({ analysis: analysis({ followup: { ...followup, status: "unavailable" as const } }) }));
-    assert.equal(failed.at(-1), "Waiting on vendor and OM or user issues: not available for this report");
+    assert.equal(failed.at(-1), "Waiting on vendor and provider issues: not available for this report");
   });
   it("is empty without an analysis", () => assert.deepEqual(confirmationSummary(report()), []));
 });
@@ -350,7 +350,7 @@ describe("weekly follow-up", () => {
     assert.equal(daysOpenLabel(21), "21 days");
   });
 
-  it("explains an empty or partial vendor/OM-or-user result instead of leaving it to look like 'none'", () => {
+  it("explains an empty or partial vendor/provider result instead of leaving it to look like 'none'", () => {
     assert.equal(followupNote(followup()), undefined);
     assert.equal(followupNote(followup({ status: "skipped", classified: 0 })), undefined);
     assert.match(followupNote(followup({ status: "unavailable", classified: 0 })) ?? "", /could not be determined.*priority issues below are not affected/);

@@ -5,13 +5,13 @@ Pure functions of the stored analysis -- no model call, no database. The email h
     Team Summary       Metric | Count            Open, Overdue, Unassigned, AI Critical, AI High
     Employee Workload  Employee | Unresolved | Critical/High | Overdue | Observation
     Waiting on Vendor  Ticket ID | Issue | Assigned To | Days Open | Status | Evidence
-    OM or User Issues  Ticket ID | OM or User Issue | Assigned To | Days Open | Business Impact
+    Provider Issues    Ticket ID | Provider-Related Issue | Assigned To | Days Open | Business Impact
 
 The email says what the issues are and never what to do about them: the IT team knows the next steps, so there is no
 next-action or follow-up column anywhere (the dashboard keeps them). It is signed as the help desk agent that sends it.
 
 One workload row per employee; the tickets nobody is assigned to are the "No Agent" row (also the owner shown for such a
-ticket). The vendor and OM-or-user lists are the weekly follow-up groups from the saved analysis. The ticket-by-ticket
+ticket). The vendor and provider lists are the weekly follow-up groups from the saved analysis. The ticket-by-ticket
 analysis, the priority issues, recurring issues, summary statements and data limitations stay in the dashboard.
 Everything that came from the uploaded export or from the model is HTML-escaped. The layout is plain nested tables with
 inline styles, which Outlook and other mail clients render.
@@ -35,11 +35,11 @@ NO_WORKLOAD = "Not available: the file has no Assigned-to column."
 MAX_FOLLOWUP_ROWS = 25  # per section; more are in the dashboard
 MAX_ISSUE_CHARS = 120
 VENDOR_HEADERS = ["Ticket ID", "Issue", "Assigned To", "Days Open", "Status", "Evidence"]
-OM_USER_HEADERS = ["Ticket ID", "OM or User Issue", "Assigned To", "Days Open", "Business Impact"]
+PROVIDER_HEADERS = ["Ticket ID", "Provider-Related Issue", "Assigned To", "Days Open", "Business Impact"]
 NO_VENDOR = "No ticket shows evidence of waiting on a vendor."
-NO_OM_USER = "No OM or user issue was found."
-NO_FOLLOWUP = "Not available: this report was made before the vendor and OM or user groups existed."
-FOLLOWUP_FAILED = "Not available: the vendor and OM or user check did not complete."
+NO_PROVIDER = "No provider-related issue was found."
+NO_FOLLOWUP = "Not available: this report was made before the vendor and provider groups existed."
+FOLLOWUP_FAILED = "Not available: the vendor and provider check did not complete."
 _VENDOR_STATUS = {"waiting_on_vendor": "Waiting on Vendor", "needs_review": "Needs Review"}
 
 
@@ -108,8 +108,8 @@ def _followup_blocks(analysis: dict[str, Any]) -> list[dict[str, Any]]:
          "items": (followup or {}).get("vendor", []), "none": NO_VENDOR,
          "row": lambda v: [f"#{v['ticket_id']}", _short(v["subject"]) or "(no subject)", v["assignee"] or NO_AGENT, _days(v["days_open"]),
                            _VENDOR_STATUS.get(v["status"], v["status"]), v["evidence"] or NO_VALUE]},
-        {"title": "OM or User Issues", "headers": OM_USER_HEADERS, "aligns": ["left", "left", "left", "right", "left"],
-         "items": (followup or {}).get("provider", []), "none": NO_OM_USER,
+        {"title": "Provider Issues", "headers": PROVIDER_HEADERS, "aligns": ["left", "left", "left", "right", "left"],
+         "items": (followup or {}).get("provider", []), "none": NO_PROVIDER,
          "row": lambda p: [f"#{p['ticket_id']}", p["issue"], p["assignee"] or NO_AGENT, _days(p["days_open"]), p["impact"] or NO_VALUE]},
     ]
     out = []

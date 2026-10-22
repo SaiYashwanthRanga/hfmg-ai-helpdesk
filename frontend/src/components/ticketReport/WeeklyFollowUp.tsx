@@ -77,7 +77,7 @@ const VENDOR_COLUMNS: Column<VendorItem>[] = [
 const PROVIDER_COLUMNS: Column<ProviderItem>[] = [
   { header: "Ticket", cell: ticketCell },
   { header: "Assigned to", cell: (r) => owner(r.assignee) },
-  { header: "OM or user issue", cell: (r) => r.issue, className: "max-w-xs" },
+  { header: "Provider-related issue", cell: (r) => r.issue, className: "max-w-xs" },
   { header: "Days open", cell: daysCell },
   { header: "Business impact", cell: (r) => text(r.impact), className: "max-w-xs" },
   { header: "AI priority", cell: (r) => <AiPriorityBadge priority={r.priority} /> },
@@ -127,10 +127,10 @@ export function WeeklyFollowUp({ analysis }: { analysis: Analysis }) {
         rows={followup.vendor} columns={VENDOR_COLUMNS}
         empty="No ticket shows evidence of waiting on a vendor." />
       <Group
-        title="OM or user issues"
+        title="Provider issues"
         explanation="Issues that affect a provider's ability to work. Mentioning a doctor does not make a ticket urgent: the impact described is what counts."
         rows={followup.provider} columns={PROVIDER_COLUMNS}
-        empty="No OM or user issue was found." />
+        empty="No provider-related issue was found." />
       <Group
         title="Priority issues affecting daily work"
         explanation="Tickets the AI recommended as Critical or High, in the order to work them: overdue first, then the oldest."
