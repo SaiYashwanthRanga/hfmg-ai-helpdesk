@@ -9,6 +9,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { LiveCallMonitor } from "./pages/LiveCallMonitor";
 import { NewTicketPage } from "./pages/NewTicketPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { TicketAnalysisPage } from "./pages/TicketAnalysisPage";
 import { TicketDetailRedirect } from "./pages/TicketDetailRedirect";
 import { TicketsPage } from "./pages/TicketsPage";
 import { LoadingState } from "./components/ui/LoadingState";
@@ -46,6 +47,8 @@ function App() {
 
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/ai-insights" element={<AIInsightsPage />} />
+          {/* A sub-page of AI Insights, like /calls/live: the six-item nav (DESIGN.md §4) is unchanged. */}
+          <Route path="/ai-insights/ticket-analysis" element={<TicketAnalysisPage />} />
           <Route path="/settings" element={<SettingsPage />} />
 
           {/* Internal-only, not linked from navigation — see DevComponentsPage. */}

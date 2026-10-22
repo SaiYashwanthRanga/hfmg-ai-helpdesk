@@ -29,8 +29,12 @@ class IEmailProvider(Protocol):
         body: str,
         timeout: float | None = None,
         max_retries: int | None = None,
+        html_body: str | None = None,  # an HTML version of `body`; without it the plain text is all that is sent
     ) -> bool:
         """Send one email. Returns True on success, False otherwise.
+
+        `html_body` is trusted HTML: the caller has escaped anything that came from outside (a report built from
+        an uploaded export). Ticket notifications do not pass it and are sent exactly as before.
 
         Never raises -- this is called from a FastAPI BackgroundTask, where an
         unhandled exception is only logged by the ASGI server and would

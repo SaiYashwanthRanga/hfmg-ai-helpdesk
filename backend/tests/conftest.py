@@ -168,7 +168,7 @@ async def _truncate_tables():
     async with engine.begin() as conn:
         await conn.exec_driver_sql(
             "TRUNCATE TABLE voice_simulator_turns, voice_simulator_sessions, voice_call_sessions, "
-            "tickets, ticket_number_counters, categories RESTART IDENTITY CASCADE"
+            "tickets, ticket_number_counters, categories, ticket_reports RESTART IDENTITY CASCADE"
         )
 
 

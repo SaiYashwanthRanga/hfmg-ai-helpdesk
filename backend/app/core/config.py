@@ -185,6 +185,36 @@ class Settings(BaseSettings):
     # fixed questions repeat across calls). 0 disables.
     speech_tts_cache_entries: int = 256
 
+    # --- IT ticket analysis reports (Freshworks export -> AI report -> email to the IT team) ---
+    # Off by default. The API has no authentication, so when on, anyone who can reach it can spend
+    # OpenAI credit and email the IT distribution list (one email per report). Keep it on a trusted network.
+    enable_ticket_reports: bool = False
+    # Where a finished report is sent: normally the one address of the IT team's distribution list; several
+    # addresses separated by commas (for testing) get one email addressed to all of them. Backend-only: the
+    # dashboard shows it in the confirmation, it can never be chosen from the browser.
+    it_report_distribution_email: str = ""
+    ticket_report_max_upload_bytes: int = 5_000_000
+    ticket_report_max_rows: int = 2000
+    # Tickets per model request, and how many requests run at once. Small batches keep each answer well
+    # inside OPENAI_MAX_OUTPUT_TOKENS.
+    ticket_report_batch_size: int = 8
+    ticket_report_ai_concurrency: int = 3
+    # The weekly follow-up pass (vendor / provider) reads a longer excerpt of each description, so it sends fewer per request.
+    ticket_report_followup_batch_size: int = 5
+    # At most this many open tickets are sent to the model; the rest are counted but not analyzed.
+    ticket_report_max_ai_tickets: int = 120
+    ticket_report_ai_timeout_seconds: float = 45.0
+    # The dashboard's short list of action items holds every AI Critical and High ticket plus this many of the
+    # highest-priority Medium ones; the rest are behind "Show all". (The email lists no tickets.)
+    ticket_report_email_medium_items: int = 5
+    # An analysis still running after this long (the server restarted mid-run) is reported as failed.
+    ticket_report_analysis_timeout_seconds: int = 900
+    # A send still "sending" after this long (the server stopped mid-send) may be retried; the earlier
+    # attempt may or may not have been delivered.
+    ticket_report_send_stale_seconds: int = 600
+    # Uploaded data is deleted this many days after it was uploaded (checked on each upload).
+    ticket_report_retention_days: int = 30
+
     # LLM_PROVIDER=fake only (load tests, demos): simulated model latency.
     fake_llm_latency_ms: int = 300
 

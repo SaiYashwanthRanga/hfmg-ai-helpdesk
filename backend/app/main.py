@@ -8,6 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
+from app.api.v1.reports import UploadSizeLimitMiddleware
 from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.services.user_directory import UserDirectoryService
@@ -51,6 +52,7 @@ app = FastAPI(title="HFMG AI Help Desk API", version="0.1.0", lifespan=lifespan)
 # Refuses an oversized simulator audio upload before any body parsing.
 # Registered before CORS so CORS wraps it and the 413 stays readable in a browser.
 app.add_middleware(AudioSizeLimitMiddleware)
+app.add_middleware(UploadSizeLimitMiddleware)  # same, for a ticket report upload
 
 app.add_middleware(
     CORSMiddleware,

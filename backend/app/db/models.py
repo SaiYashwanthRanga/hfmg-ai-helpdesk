@@ -357,3 +357,49 @@ class VoiceSimulatorTurn(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class TicketReport(Base):
+    """An uploaded Freshworks ticket export and its AI analysis (see
+    app/services/ticket_report_service.py).
+
+    Holds only what the report needs. The normalized rows (`dataset`) exist from upload until the analysis
+    finishes, then are deleted: the finished report keeps the per-ticket results for open tickets, never the
+    full export. Rows older than TICKET_REPORT_RETENTION_DAYS are deleted on upload.
+
+    `status` is UPLOADED | ANALYZING | COMPLETED | FAILED; `email_status` is NOT_SENT | SENDING | SENT | FAILED.
+    Both are moved with conditional UPDATEs, so a repeated click or a retried request cannot start the same
+    analysis, or send the same report, twice.
+    """
+
+    __tablename__ = "ticket_reports"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_type: Mapped[str] = mapped_column(String(8), nullable=False)
+    source_row_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    detected_columns: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    validation: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    dataset: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="UPLOADED")
+    progress: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    analysis: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    analysis_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    analysis_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    email_status: Mapped[str] = mapped_column(String(16), nullable=False, default="NOT_SENT")
+    email_recipient: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    email_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    email_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    email_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    email_error: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # One entry per attempt: {"at", "outcome", "recipient"}. No addresses beyond the recipient, no content.
+    email_log: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

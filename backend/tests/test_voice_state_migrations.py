@@ -157,7 +157,7 @@ async def test_migrated_caller_types_match_the_model_and_providers_are_seeded():
 async def test_the_provider_migration_downgrades_and_upgrades_cleanly():
     """Downgrade keeps provider tickets (as INTERNAL_IT IT tickets) and removes the value; upgrade puts it back."""
     async with _migrated_database() as url:
-        await _alembic(url, "downgrade", "-1")
+        await _alembic(url, "downgrade", "c3e9a1f7d208")  # the revision before the provider migration
         async with _session_on(url) as db:
             assert "PROVIDER" not in await _caller_types(db)
             assert not await _has_providers_category(db)  # unused: removed
@@ -165,3 +165,25 @@ async def test_the_provider_migration_downgrades_and_upgrades_cleanly():
         async with _session_on(url) as db:
             assert "PROVIDER" in await _caller_types(db)
             assert await _has_providers_category(db)
+
+
+async def test_the_ticket_reports_table_built_by_the_migrations_matches_the_model():
+    from app.db.models import TicketReport
+
+    async with _migrated_database() as url, _session_on(url) as db:
+        rows = await db.execute(text(
+            "SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name = 'ticket_reports'"
+        ))
+        in_database = {name: nullable == "YES" for name, nullable in rows}
+    in_code = {column.name: column.nullable for column in TicketReport.__table__.columns}
+    assert in_database == in_code, "ticket_reports differs between the migrations and the model"
+
+
+async def test_the_ticket_reports_migration_downgrades_and_upgrades_cleanly():
+    async with _migrated_database() as url:
+        await _alembic(url, "downgrade", "d8f3b6a2c415")
+        async with _session_on(url) as db:
+            assert (await db.execute(text("SELECT to_regclass('ticket_reports')"))).scalar_one() is None
+        await _alembic(url, "upgrade", "head")
+        async with _session_on(url) as db:
+            assert (await db.execute(text("SELECT to_regclass('ticket_reports')"))).scalar_one() == "ticket_reports"

@@ -1,3 +1,5 @@
+import { ArrowRight, FileUp } from "lucide-react";
+import { Link } from "react-router-dom";
 import { useAiInsightsQuery } from "../api/aiInsights";
 import { ApiError } from "../api/client";
 import { CategoryBreakdownCard } from "../components/aiInsights/CategoryBreakdownCard";
@@ -20,6 +22,20 @@ export function AIInsightsPage() {
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-2xl font-bold text-foreground">AI Insights</h1>
+
+      <Link
+        to="/ai-insights/ticket-analysis"
+        className="flex items-center justify-between gap-4 rounded-xl border border-stone-200/80 bg-white p-5 shadow-sm transition-colors hover:border-stone-300 hover:bg-stone-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-800"
+      >
+        <span className="flex items-start gap-3">
+          <FileUp className="mt-0.5 size-5 shrink-0 text-emerald-800" aria-hidden="true" />
+          <span>
+            <span className="block text-base font-semibold text-stone-900">Analyze Freshworks tickets</span>
+            <span className="block text-sm text-stone-600">Upload a ticket export, get an AI-prioritized report, and send it to the IT team.</span>
+          </span>
+        </span>
+        <ArrowRight className="size-4 shrink-0 text-stone-500" aria-hidden="true" />
+      </Link>
 
       {isLoading ? (
         <LoadingState variant="page" />

@@ -50,6 +50,7 @@ class SendGridProvider:
         body: str,
         timeout: float | None = None,
         max_retries: int | None = None,
+        html_body: str | None = None,
     ) -> bool:
         if not self.is_configured:
             logger.warning("SENDGRID_API_KEY is not set; cannot send email")
@@ -63,7 +64,9 @@ class SendGridProvider:
             "personalizations": [{"to": [{"email": address} for address in ([to] if isinstance(to, str) else to)]}],
             "from": {"email": from_email},
             "subject": subject,
-            "content": [{"type": "text/plain", "value": body}],
+            # text/plain first, then text/html: SendGrid requires that order, and a client picks the richer one.
+            "content": [{"type": "text/plain", "value": body}]
+            + ([{"type": "text/html", "value": html_body}] if html_body is not None else []),
         }
         headers = {
             "Authorization": f"Bearer {settings.sendgrid_api_key}",

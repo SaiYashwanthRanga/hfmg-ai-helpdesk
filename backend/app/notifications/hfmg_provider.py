@@ -39,6 +39,7 @@ class HfmgInternalMailProvider:
         body: str,
         timeout: float | None = None,
         max_retries: int | None = None,
+        html_body: str | None = None,
     ) -> bool:
         # DEFAULT_FROM_EMAIL is the mailbox the internal API is authorized to
         # send as; EMAIL_FROM is a SendGrid-era default, so it loses to it.
@@ -46,7 +47,8 @@ class HfmgInternalMailProvider:
         return await hfmg_mail_service.send_email(
             to=to,  # one address or a list; the service sends one To part per address
             subject=_single_line(subject),
-            body_html=_plain_to_html(body),
+            # The internal API takes one HTML body: the caller's own HTML if it sent one, else the escaped text.
+            body_html=html_body if html_body is not None else _plain_to_html(body),
             from_email=sender,
             timeout=timeout,
             max_retries=max_retries,
