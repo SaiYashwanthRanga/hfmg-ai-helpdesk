@@ -114,6 +114,9 @@ def _is_provider_call(session: VoiceCallSession) -> bool:
 
 #: Every provider ticket is filed here; the system involved is in the intake details.
 PROVIDERS_CATEGORY = "Providers"
+#: Every provider ticket is filed at this priority (and saved with it), and the notification says the same.
+PROVIDER_PRIORITY = Priority.HIGH
+PROVIDER_PRIORITY_REASON = "provider callback request"
 
 
 def _offers_provider() -> bool:
@@ -786,6 +789,12 @@ def _patient_ack(session: VoiceCallSession) -> str | None:
 
 async def _handle_details(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
     """When it started / whether the caller can work. Optional: never retried."""
+    if _is_provider_call(session) and session.collected.get("provider_system_pending"):
+        # A provider is asked only which application or system it is, and only when the description did not say.
+        if nlu.mentions_escalation(utterance):
+            return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
+        _handle_provider_system(session, utterance)
+        return await _next_step(db, session)
     if session.collected.get("pending_question"):
         return await _handle_clarification(db, session, utterance)
     asked = _details_question(session)
@@ -1426,6 +1435,9 @@ async def _phone_not_understood(db: AsyncSession, session: VoiceCallSession, utt
     update_collected(session, phone_attempts=attempts)
     if attempts >= settings.voice_max_phone_attempts:
         update_collected(session, phone_skipped=True)
+        if _is_provider_call(session) and session.collected.get("phone_number"):
+            # The caller-ID number is still on the call: it is read back for the provider to confirm.
+            return await _next_step(db, session, acknowledgement=scripts.PROVIDER_PHONE_FALLBACK)
         return await _next_step(db, session, acknowledgement=scripts.PHONE_GIVE_UP)
     session.state = VoiceCallState.COLLECT_PHONE
     prompt = scripts.phone_retry(nlu.count_digits(utterance), attempts)
@@ -1445,7 +1457,8 @@ async def _phone_not_understood(db: AsyncSession, session: VoiceCallSession, utt
 
 def _callback_number_pending(session: VoiceCallSession) -> bool:
     collected = session.collected
-    confirm_on = settings.voice_confirm_callback or _is_patient_call(session)
+    # A provider's number is always confirmed: the IT team calls it back, and nobody else is on the line.
+    confirm_on = settings.voice_confirm_callback or _is_patient_call(session) or _is_provider_call(session)
     return bool(
         confirm_on
         and collected.get("phone_number")
@@ -1464,7 +1477,12 @@ def _ask_callback_confirmation(session: VoiceCallSession, *, preamble: str | Non
     else:
         # The caller type was settled earlier and is only read here. Anything but a confirmed patient
         # (including a call with no type) gets the employee wording, as every other step does.
-        template = scripts.PATIENT_CALLBACK_CONFIRM if _is_patient_call(session) else scripts.CALLBACK_CONFIRM
+        if _is_patient_call(session):
+            template = scripts.PATIENT_CALLBACK_CONFIRM
+        elif _is_provider_call(session):
+            template = scripts.PROVIDER_CALLBACK_CONFIRM
+        else:
+            template = scripts.CALLBACK_CONFIRM
         prompt = template.format(number=scripts.spoken_phone_number(collected["phone_number"]))
     body = _say_then_ask(session, preamble, prompt) if preamble else _ask(session, prompt)
     return TurnOutcome(_speak(session, body))
@@ -1473,7 +1491,12 @@ def _ask_callback_confirmation(session: VoiceCallSession, *, preamble: str | Non
 def _ask_alternate_callback(session: VoiceCallSession) -> TurnOutcome:
     session.state = VoiceCallState.COLLECT_ALTERNATE_CALLBACK_NUMBER
     # Worded like the confirmation that led here: the caller type is only read, never set.
-    prompt = scripts.PATIENT_CALLBACK_ASK_OTHER if _is_patient_call(session) else scripts.CALLBACK_ASK_OTHER
+    if _is_patient_call(session):
+        prompt = scripts.PATIENT_CALLBACK_ASK_OTHER
+    elif _is_provider_call(session):
+        prompt = scripts.PROVIDER_CALLBACK_ASK_OTHER
+    else:
+        prompt = scripts.CALLBACK_ASK_OTHER
     return TurnOutcome(_speak(session, _ask(session, prompt)))
 
 
@@ -1747,7 +1770,12 @@ def _details_question(session: VoiceCallSession) -> str:
 def _apply_priority_rules(session: VoiceCallSession) -> None:
     """Decide the priority *and* why, from one rule (app/voice/priority.py)."""
     if _is_provider_call(session):
-        _provider_patient_care(session)
+        # A provider's call is a callback request for the IT team: always High, whatever the problem reads as.
+        update_collected(
+            session, priority=PROVIDER_PRIORITY.value, priority_reason=PROVIDER_PRIORITY_REASON,
+            priority_rule="provider_callback",
+        )
+        return
     assessment = _assessment(session)
     # What the diagnostic questions found (a possible security incident, data loss, a failing service,
     # everyone affected) can only raise the priority, never lower it.
@@ -1770,19 +1798,6 @@ def _apply_priority_rules(session: VoiceCallSession) -> None:
         )
 
 
-def _provider_patient_care(session: VoiceCallSession) -> None:
-    """A provider who can't work can't see patients: that is patient care affected, recorded as a fact (with the
-    provider's own words as evidence) so every later step -- the priority, the urgent notice, the questions not
-    asked -- sees the same thing. Never overrides what the provider said about patient care themselves."""
-    work = facts_mod.get_fact(session.collected, facts_mod.WORK_BLOCKED)
-    patient = facts_mod.get_fact(session.collected, facts_mod.PATIENT_CARE)
-    if work.value is not True or patient.is_known:
-        return
-    session.collected = facts_mod.apply_fact(session.collected, facts_mod.Fact.known(
-        facts_mod.PATIENT_CARE, True, source=work.source, confidence=work.confidence, evidence=work.evidence,
-    ))
-
-
 def _assessment(session: VoiceCallSession) -> priority_rules.Assessment:
     c = session.collected
     model = Priority(c.get("model_priority") or c.get("priority") or Priority.MEDIUM.value)
@@ -1801,9 +1816,6 @@ def _assessment(session: VoiceCallSession) -> priority_rules.Assessment:
             scope=c.get("affected_scope"),
             patient_care=c.get("patient_care_affected"),
         )
-    if _is_provider_call(session):
-        # Here, not only where the priority is stored: the read-back and the spoken notice must say the same level.
-        assessment = priority_rules.provider_floor(assessment, c.get("affected_scope"))
     return assessment
 
 
@@ -1819,7 +1831,11 @@ async def _next_step(
     volunteered) -> name and department (department asked once) -> read back a
     doubtful name -> callback number (skipped when caller ID gave one) ->
     email (asked once) -> read the ticket back -> create it.
+
+    A provider's callback request has its own, shorter order (`_next_provider_step`).
     """
+    if _is_provider_call(session):
+        return await _next_provider_step(db, session, acknowledgement=acknowledgement)
     collected = session.collected
     patient = _is_patient_call(session)
 
@@ -1880,15 +1896,10 @@ async def _next_step(
         return ask(VoiceCallState.COLLECT_NAME, scripts.DEPARTMENT_ASK.format(first_name=first_name))
 
     # --- name confirmation (IT only; patient flow keeps it simple) ---
-    if not patient and settings.voice_confirm_name and collected.get("name_confirm_pending"):
-        if collected.get("name_spell_first"):
-            update_collected(session, name_spell_first=False, name_spell_step="first", name_reconfirm=False)
-            session.state = VoiceCallState.CONFIRM_NAME
-            prompt = f"{scripts.NAME_SPELL_LEAD} {scripts.NAME_SPELL_FIRST_ASK}"
-            return TurnOutcome(_speak(session, _ask(session, f"{acknowledgement} {prompt}" if acknowledgement else prompt)))
-        spelled = scripts.spelled_name(collected["caller_name"])
-        prompt = scripts.pick(scripts.NAME_CONFIRM_OPTIONS, len(session.turns or [])).format(spelled=spelled)
-        return ask(VoiceCallState.CONFIRM_NAME, prompt)
+    if not patient:
+        confirming = _name_confirmation(session, acknowledgement)
+        if confirming is not None:
+            return confirming
 
     # --- phone (both flows) ---
     if not collected.get("phone_number") and not collected.get("phone_skipped"):
@@ -1907,6 +1918,97 @@ async def _next_step(
     if not patient and not urgent and not collected.get("email") and not _asked(session, "email"):
         _mark_asked(session, "email")
         return _ask_for_email(session, acknowledgement=acknowledgement)
+
+    return await _finish_collection(db, session, preamble=acknowledgement)
+
+
+def _name_confirmation(session: VoiceCallSession, acknowledgement: str | None = None) -> TurnOutcome | None:
+    """Read a doubtful name back (spelled), or start the spelling. None when the name needs no confirming."""
+    collected = session.collected
+    if not (settings.voice_confirm_name and collected.get("name_confirm_pending")):
+        return None
+    if collected.get("name_spell_first"):
+        update_collected(session, name_spell_first=False, name_spell_step="first", name_reconfirm=False)
+        session.state = VoiceCallState.CONFIRM_NAME
+        prompt = f"{scripts.NAME_SPELL_LEAD} {scripts.NAME_SPELL_FIRST_ASK}"
+        return TurnOutcome(_speak(session, _ask(session, f"{acknowledgement} {prompt}" if acknowledgement else prompt)))
+    spelled = scripts.spelled_name(collected["caller_name"])
+    prompt = scripts.pick(scripts.NAME_CONFIRM_OPTIONS, len(session.turns or [])).format(spelled=spelled)
+    session.state = VoiceCallState.CONFIRM_NAME
+    return TurnOutcome(_speak(session, _ask(session, f"{acknowledgement} {prompt}" if acknowledgement else prompt)))
+
+
+# --- provider callback requests (CALL_FLOW.md 2.5) ------------------------------------------------
+#
+# A provider calls when no human IT representative is free. The agent never transfers or dials anyone: it takes the
+# problem, the provider's name, the system (only if the description does not name it) and a callback number the
+# provider confirms, files a High ticket under Providers, and says the IT team will use that number. No diagnostic
+# questions, department, extension, email or read-back.
+
+#: A provider saying they do not know which system it is, or that they would rather not say.
+_NO_SYSTEM = re.compile(r"^\W*(?:no|nope|none|nothing|skip|not sure|i don'?t know|dunno|no idea|don'?t know)\W*$", re.IGNORECASE)
+
+
+def _provider_system(session: VoiceCallSession) -> str | None:
+    """The application or system the problem is about, from what the provider already said. None when it does not
+    say (the category is the catch-all and no clinical system is named): then the provider is asked once."""
+    c = session.collected
+    said = " ".join(part for part in (c.get("description"), c.get("problem_words")) if part)
+    playbook = diagnostics.choose(c.get("category"), said, provider=True)
+    if playbook in diagnostics.PROVIDER_PLAYBOOKS:
+        return playbook.noun
+    category = c.get("category")
+    return category if category and category not in ("Other", PROVIDERS_CATEGORY) else None
+
+
+def _handle_provider_system(session: VoiceCallSession, utterance: str) -> None:
+    """The answer to "Which application or system is it?" -- kept as said. "I don't know" keeps nothing."""
+    text = " ".join((utterance or "").split())
+    if text and not _NO_SYSTEM.match(text):
+        update_collected(session, provider_system=text[:120])
+
+
+async def _next_provider_step(
+    db: AsyncSession, session: VoiceCallSession, *, acknowledgement: str | None = None
+) -> TurnOutcome:
+    """problem (already heard) -> system, only if unknown -> name -> callback number -> confirm it -> ticket."""
+    collected = session.collected
+
+    def ask(state: VoiceCallState, prompt: str) -> TurnOutcome:
+        session.state = state
+        if acknowledgement:
+            prompt = f"{acknowledgement} {prompt}"
+        return TurnOutcome(_speak(session, _ask(session, prompt)))
+
+    if collected.get("provider_system_pending"):  # the question was answered, or skipped: asked once, never again
+        update_collected(session, provider_system_pending=False)
+    if not collected.get("provider_system"):
+        system = _provider_system(session)
+        if system:
+            update_collected(session, provider_system=system)
+        elif not _asked(session, "system"):
+            _mark_asked(session, "system")
+            update_collected(session, provider_system_pending=True)
+            return ask(VoiceCallState.COLLECT_DETAILS, scripts.PROVIDER_SYSTEM_ASK)
+
+    collected = session.collected  # update_collected replaces the dict
+    if not collected.get("caller_name"):
+        proposed = _pending_identity_name(session)
+        if proposed:
+            return _ask_identity(session, proposed, acknowledgement=acknowledgement)  # a proposal, never assumed
+        return ask(VoiceCallState.COLLECT_NAME, scripts.PROVIDER_NAME_ASK)
+
+    confirming = _name_confirmation(session, acknowledgement)
+    if confirming is not None:
+        return confirming
+
+    # The number to call back is always asked for, even when caller ID gave one: the provider may be calling from a
+    # clinic line and want the IT team to use a mobile. It is then read back and confirmed (`_finish_collection`).
+    if not collected.get("provider_phone_asked") and not collected.get("callback_confirmed"):
+        update_collected(session, provider_phone_asked=True)
+        return ask(VoiceCallState.COLLECT_PHONE, scripts.PROVIDER_PHONE_ASK)
+    if not collected.get("phone_number") and not collected.get("phone_skipped"):
+        return ask(VoiceCallState.COLLECT_PHONE, scripts.PHONE_ASK)
 
     return await _finish_collection(db, session, preamble=acknowledgement)
 
@@ -2938,7 +3040,9 @@ async def _finish_collection(
     collected = session.collected
     if _callback_number_pending(session):
         return _ask_callback_confirmation(session, preamble=preamble)
-    if _is_patient_call(session):
+    if _is_patient_call(session) or _is_provider_call(session):
+        # No ticket read-back: a patient's request is simple, and a provider's callback request is filed as soon as
+        # the callback number is confirmed.
         return await _create_ticket_and_read_back(db, session, preamble=preamble)
     if diagnostics.urgent_reason(collected.get("diagnostics")) is not None and not collected.get("summary_confirmed"):
         update_collected(session, summary_urgent_skip=True)  # urgent: filed straight away, without the read-back
@@ -3372,6 +3476,17 @@ async def _caller_leaving(db: AsyncSession, session: VoiceCallSession) -> TurnOu
 # --- ticket creation ------------------------------------------------------
 
 
+def _read_back_template(session: VoiceCallSession) -> str:
+    """What the caller hears once the ticket exists. A provider is told the IT team will use the number they
+    confirmed -- or, when they never did, the one on file -- and is promised no callback time."""
+    if _is_patient_call(session):
+        return scripts.PATIENT_READ_BACK
+    if _is_provider_call(session):
+        confirmed = bool(session.collected.get("callback_number"))
+        return scripts.PROVIDER_READ_BACK if confirmed else scripts.PROVIDER_READ_BACK_UNCONFIRMED
+    return scripts.READ_BACK
+
+
 async def _create_ticket_and_read_back(
     db: AsyncSession, session: VoiceCallSession, *, preamble: str | None = None
 ) -> TurnOutcome:
@@ -3380,8 +3495,7 @@ async def _create_ticket_and_read_back(
 
     if issue_filed(session):
         ticket = await db.get(Ticket, session.ticket_id)
-        read_back_tpl = scripts.PATIENT_READ_BACK if patient else scripts.READ_BACK
-        read_back = read_back_tpl.format(
+        read_back = _read_back_template(session).format(
             ticket_number=scripts.spoken_ticket_number(ticket.ticket_number)
         )
         return TurnOutcome(
@@ -3393,18 +3507,18 @@ async def _create_ticket_and_read_back(
     session.state = VoiceCallState.ANYTHING_ELSE
 
     lines = [preamble] if preamble else []
-    # A patient hears only the read-back, which says the request was saved: it is reached once the request exists.
-    if not patient and session.collected.get("summary_confirmed"):
+    # A patient or a provider hears only the read-back, which says the request was saved: it is reached once the
+    # request exists.
+    if not patient and not _is_provider_call(session) and session.collected.get("summary_confirmed"):
         lines.append(scripts.SUMMARY_FILING)
-    elif not patient:
+    elif not patient and not _is_provider_call(session):
         announcement = priority_rules.notice(_assessment(session))
         if announcement:
             lines.append(announcement)
         lines.append(scripts.CREATING_TICKET)
 
-    read_back_tpl = scripts.PATIENT_READ_BACK if patient else scripts.READ_BACK
     lines.append(
-        read_back_tpl.format(ticket_number=scripts.spoken_ticket_number(ticket.ticket_number))
+        _read_back_template(session).format(ticket_number=scripts.spoken_ticket_number(ticket.ticket_number))
     )
 
     return TurnOutcome(
@@ -3447,6 +3561,8 @@ async def _create_ticket(
 
     if patient:
         priority = Priority.MEDIUM  # always: a callback request or a dropped call included
+    elif _is_provider_call(session):
+        priority = PROVIDER_PRIORITY  # always: a provider's request, a callback request or a dropped call included
     else:
         priority = Priority(collected.get("priority") or Priority.MEDIUM.value)
         if escalation_note and raise_priority:
@@ -3495,6 +3611,26 @@ async def _create_ticket(
     )
 
 
+def _provider_callback_line(collected: dict) -> str:
+    """The provider's callback number as the ticket records it, and whether the provider confirmed it."""
+    confirmed, on_file = collected.get("callback_number"), collected.get("phone_number")
+    if confirmed:
+        return f"{confirmed} (confirmed by the provider)"
+    if on_file:
+        return f"{on_file} (not confirmed by the provider; the number on file)"
+    return "not captured (the provider could not give one)"
+
+
+def _provider_action_line(collected: dict) -> str:
+    """The instruction the IT team acts on: call the provider back, on this number."""
+    confirmed, on_file = collected.get("callback_number"), collected.get("phone_number")
+    if confirmed:
+        return f"IT Helpdesk must call the provider back at {confirmed} (the number the provider confirmed)."
+    if on_file:
+        return f"IT Helpdesk must call the provider back at {on_file}. The provider did not confirm this number."
+    return "IT Helpdesk must call the provider back. No callback number was captured: check the call record."
+
+
 def _intake_details(collected: dict) -> str:
     """Structured facts the tickets table has no columns for, as labelled lines
     at the top of the description where agents (and the AI summary) see them.
@@ -3511,7 +3647,7 @@ def _intake_details(collected: dict) -> str:
         department = f"{department} (given by the caller; not checked: no HFMG department list is configured)"
     elif department:
         department = f"{department} (given by the caller)"
-    elif not department and collected.get("caller_type") != "PATIENT_SUPPORT":
+    elif not department and collected.get("caller_type") not in ("PATIENT_SUPPORT", CallerType.PROVIDER.value):
         department = "not given"
     reason = collected.get("priority_reason")
     priority = collected.get("priority")
@@ -3522,11 +3658,17 @@ def _intake_details(collected: dict) -> str:
     who = collected.get("directory_identity") or {}
     confirmed = bool(collected.get("identity_confirmed"))
     provider = collected.get("caller_type") == CallerType.PROVIDER.value
+    if provider:
+        # Always the priority the ticket is saved with, even for a call that ended before the problem was heard.
+        priority_line = f"{PROVIDER_PRIORITY.value.title()}: {PROVIDER_PRIORITY_REASON}"
     lines = [
         # Said by the caller ("I'm a provider", "this is Dr. ..."), never checked.
-        ("Caller", "provider (said by the caller)" if provider else None),
-        # The IT category the problem reads as: the ticket's own category is Providers.
-        ("System", collected.get("category") if provider else None),
+        ("Caller type", "Provider (said by the caller)" if provider else None),
+        ("Provider", (collected.get("caller_name") or "not given") if provider else None),
+        # The application or system the provider named, or the description reads as. The ticket's own category is Providers.
+        ("System", collected.get("provider_system") if provider else None),
+        ("Callback number", _provider_callback_line(collected) if provider else None),
+        ("Action required", _provider_action_line(collected) if provider else None),
         ("Department", department),
         # The caller said yes to a directory entry. That is all it is: not authentication.
         ("Identity", "directory entry confirmed by the caller; not authenticated" if confirmed else None),
@@ -3540,8 +3682,8 @@ def _intake_details(collected: dict) -> str:
         ("Priority basis", collected.get("priority_basis")),
         ("Work impact", "not confirmed (the caller did not say whether this stops them working)" if "work_impact" in unverified else None),
         ("Patient impact", "not confirmed (the caller did not say whether patient care is affected)" if "patient_impact" in unverified else None),
-        ("Callback number", "not captured (the caller could not give one)" if collected.get("phone_skipped") else None),
-        ("Callback number", "not confirmed by the caller; using the number on file" if collected.get("callback_fallback") else None),
+        ("Callback number", "not captured (the caller could not give one)" if collected.get("phone_skipped") and not provider else None),
+        ("Callback number", "not confirmed by the caller; using the number on file" if collected.get("callback_fallback") and not provider else None),
         ("Name", "spelling could not be verified with the caller" if collected.get("name_unverified") else None),
         ("Read-back", "caller said the summary was not fully correct; details unverified" if collected.get("summary_unresolved") else None),
         ("Read-back", "not done: the caller ended the call first" if collected.get("summary_skipped") else None),

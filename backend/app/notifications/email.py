@@ -29,6 +29,10 @@ def _known(value: str | None, placeholders: set[str]) -> str | None:
 
 NOT_PROVIDED = "Not provided"
 
+#: Shown first, in the subject and the body, on a provider's callback request: it is the one email that asks the IT
+#: team to phone someone back, and the provider reached the help desk because no one was free to answer.
+PROVIDER_BANNER = "HIGH PRIORITY — PROVIDER CALLBACK REQUIRED"
+
 
 def _build_body(
     caller: str | None,
@@ -40,6 +44,10 @@ def _build_body(
     extension: str | None = None,
     with_extension: bool = False,
     ticket_number: str | None = None,
+    banner: str | None = None,
+    priority: str | None = None,
+    system: str | None = None,
+    required_action: str | None = None,
 ) -> str:
     """Who to call back, the number and email to reach them on, the issue, its summary and the
     ticket number. The details, transcript, intake details, department, priority and other ticket
@@ -54,20 +62,45 @@ def _build_body(
 
     `with_extension`: the office extension is shown the same way, right after the email -- "Not provided" when
     the caller gave none. It is shown exactly as the ticket records it, with any note ("unverified: not found in
-    the directory"), so an extension nobody checked never reads as checked."""
-    lines: list[str] = []
+    the directory"), so an extension nobody checked never reads as checked.
+
+    A provider's callback request passes `banner`, `priority`, `system` and `required_action`: it leads with the
+    banner, the priority and the ticket number, and ends with what the IT team must do. Every other ticket passes
+    none of them and reads exactly as before."""
+    lines: list[str] = [banner, ""] if banner else []
     for label, value in (
-        ("Caller", caller),
+        ("Priority", priority),
+        ("Ticket Number", ticket_number if banner else None),
+        ("Provider" if banner else "Caller", caller),
         ("Callback Number", callback),
         ("Email", (email or "").strip() or NOT_PROVIDED),
         ("Extension", ((extension or "").strip() or NOT_PROVIDED) if with_extension else None),
+        ("System", system),
         ("Issue", issue),
         ("Summary", summary),
-        ("Ticket Number", ticket_number),
+        ("Ticket Number", None if banner else ticket_number),
+        ("Required Action", required_action),
     ):
         if value:
             lines += [f"{label}:", value, ""]
     return "\n".join(lines).rstrip()
+
+
+def _provider_fields(ticket: Ticket, callback: str | None) -> dict[str, str | None]:
+    """What a provider's callback request adds to the email, read from the saved ticket."""
+    confirmed = bool(ticket.callback_number)
+    if callback and confirmed:
+        action = f"Contact the provider at the confirmed callback number: {callback}"
+    elif callback:
+        action = f"Contact the provider at {callback}. The provider did not confirm this number."
+    else:
+        action = "Contact the provider. No callback number was captured: check the call record."
+    return {
+        "banner": PROVIDER_BANNER,
+        "priority": ticket.priority.value,
+        "system": extract_intake_value(ticket.description, "System"),
+        "required_action": action,
+    }
 
 
 async def send_ticket_notification(ticket: Ticket, event: str) -> None:
@@ -108,19 +141,25 @@ async def send_ticket_notification(ticket: Ticket, event: str) -> None:
         subject = subject_template.format(
             ticket_number=ticket.ticket_number, category=ticket.category.name, status=ticket.status.value
         )
+        callback = _known(ticket.callback_number or ticket.phone_number, _NO_PHONE)
+        provider_callback = event == "created" and ticket.caller_type is CallerType.PROVIDER
+        if provider_callback:
+            subject = f"{PROVIDER_BANNER} — {subject}"
         body = _build_body(
             _known(ticket.caller_name, _NO_NAME),
             # The number the caller confirmed; a web ticket, or a call that never confirmed
             # one, has only its phone number.
-            _known(ticket.callback_number or ticket.phone_number, _NO_PHONE),
+            callback,
             extract_issue(ticket.description),
             ticket.ai_summary,
             email=ticket.email,
             # An employee's office extension, from the ticket's intake details. Not for a patient request:
-            # patients have no extension, so the line would only be noise.
+            # patients have no extension, so the line would only be noise. A provider is not asked for one.
             extension=extract_intake_value(ticket.description, "Extension"),
-            with_extension=ticket.caller_type is not CallerType.PATIENT_SUPPORT,
+            with_extension=ticket.caller_type not in (CallerType.PATIENT_SUPPORT, CallerType.PROVIDER),
             ticket_number=ticket.ticket_number,
+            # The priority printed is the one saved on the ticket, never a separate string.
+            **(_provider_fields(ticket, callback) if provider_callback else {}),
         )
 
         max_attempts = settings.notification_max_attempts  # 0 = until sent

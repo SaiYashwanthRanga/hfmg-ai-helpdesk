@@ -30,6 +30,26 @@ PROVIDER_DETAILS_ASK = "When did this start, and is it stopping you from seeing 
 PROVIDER_DETAILS_ASK_STRICT = "When did this start, and can you keep seeing patients, or is it stopping you?"
 PROVIDER_DETAILS_ASK_BLOCKED = "Is this stopping you from seeing patients right now?"
 
+# --- provider callback requests (CALL_FLOW.md 2.5) ---
+# A provider calls when no human IT representative is free. The agent takes the problem, the name and a confirmed
+# callback number, files a High ticket and says the IT team will call that number. No transfer, no promised time.
+PROVIDER_SYSTEM_ASK = "Which application or system is it?"
+PROVIDER_NAME_ASK = "May I have your name, please?"
+PROVIDER_PHONE_ASK = "What is the best phone number for our IT team to call you back on?"
+# A spoken number we could not get after the retries: the caller-ID number is offered for confirmation instead.
+PROVIDER_PHONE_FALLBACK = "I couldn't catch a number, so let me check the one you're calling from."
+PROVIDER_CALLBACK_CONFIRM = "I have {number}. Is that the correct number for our IT team to call you back on?"
+PROVIDER_CALLBACK_ASK_OTHER = "What is the correct number for our IT team to call you back on?"
+# Said only once the ticket exists. No callback time is promised.
+PROVIDER_READ_BACK = (
+    "I've recorded your request. Your ticket number is {ticket_number}. "
+    "Our IT team will use the number you confirmed to follow up with you."
+)
+PROVIDER_READ_BACK_UNCONFIRMED = (
+    "I've recorded your request. Your ticket number is {ticket_number}. "
+    "Our IT team will use the number we have on file to follow up with you."
+)
+
 # --- patients: what they need. There is no appointment system behind this line: the agent collects
 # the request and passes it to the support team, and says so; it never says anything was booked,
 # changed, cancelled or found.

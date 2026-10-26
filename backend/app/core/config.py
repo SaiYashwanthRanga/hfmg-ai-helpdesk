@@ -121,8 +121,9 @@ class Settings(BaseSettings):
     # flow or the employee IT flow. Off = the older behaviour: the caller describes the problem first
     # and the type is worked out from that (CLASSIFY_CALLER_TYPE).
     voice_ask_caller_type: bool = True
-    # With VOICE_ASK_CALLER_TYPE: also offer "provider" ("patient, employee, or provider?"). A provider gets the
-    # employee IT flow with provider questions, filed under the Providers category (CALL_FLOW.md 2.5).
+    # With VOICE_ASK_CALLER_TYPE: also offer "provider" ("patient, employee, or provider?"). A provider's call is a
+    # callback request: problem, name, a confirmed callback number, then a High ticket under the Providers category
+    # emailed to HELPDESK_EMAIL. No transfer is attempted (CALL_FLOW.md 2.5).
     # Off = the opening question and routing are exactly as before.
     voice_provider_flow: bool = False
     # Employee calls: ask once "Do you have an office extension number?" unless a caller-confirmed

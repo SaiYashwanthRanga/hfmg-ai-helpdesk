@@ -1,23 +1,30 @@
-"""Provider calls (CALL_FLOW.md 2.5): a doctor, nurse practitioner or physician assistant reporting a problem.
+"""Provider calls (CALL_FLOW.md 2.5): a doctor, nurse practitioner or physician assistant calling the help desk.
 
-The provider flow is the employee IT flow -- listening, no question asked twice, corrections, name, callback, email,
-read-back -- with provider questions for the clinical systems, "can you see patients?" deciding the priority, and
-every ticket filed under the Providers category and sent to the same IT inbox. Off by default (VOICE_PROVIDER_FLOW):
-then nothing about a call changes. Real /start and /turn routes; the language model is stubbed for the description,
-the details and the name only. Synthetic callers only; no patient is ever named.
+A provider calls when no human IT representative is free, so the agent never transfers or dials anyone. It takes the
+problem, the provider's name, the application or system (only when the description does not name it) and a callback
+number the provider confirms; files a High ticket under Providers; emails the IT inbox; and only then says the IT
+team will use the confirmed number. No diagnostic questions, department, extension, email or read-back.
+
+Off by default (VOICE_PROVIDER_FLOW): then nothing about a call changes. Real /start and /turn routes; the language
+model is stubbed for the description, the name, the phone number and yes/no. Synthetic callers only; no patient is
+ever named.
 """
 
+import uuid
+
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.config import get_settings
-from app.db.models import CallerType, Category, Priority, VoiceCallSession, VoiceCallState
+from app.db.models import CallerType, Category, Priority, Ticket, TicketSource, VoiceCallSession, VoiceCallState
+from app.notifications import email as email_module
+from app.services import ticket_service
 from app.voice import caller_routing as routing
 from app.voice import diagnostics as dx
 from app.voice import nlu, orchestrator, scripts
 from app.voice import priority as priority_rules
 from tests.test_directory_identity import DirCall
-from tests.test_multi_issue_calls import _session, _ticket
+from tests.test_multi_issue_calls import AUTH, SIP, _session, _ticket
 from tests.test_multi_issue_calls import call as _call_fixture  # noqa: F401  (seeds categories, token)
 from tests.test_ticket_followup import sent_emails  # noqa: F401
 
@@ -25,14 +32,17 @@ pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 settings = get_settings()
 CALLER = "+18455550177"
+CALLBACK = "8455550123"
+OTHER_CALLBACK = "8455550188"
 PROVIDER, EMPLOYEE, PATIENT = routing.PROVIDER, routing.EMPLOYEE, routing.PATIENT
+BANNER = "HIGH PRIORITY — PROVIDER CALLBACK REQUIRED"
 
 
 @pytest.fixture(autouse=True)
 async def _production_flow(monkeypatch, db_session):
     for name, value in (("voice_ask_caller_type", True), ("voice_provider_flow", True),
                         ("voice_diagnostic_questions", True), ("voice_ask_extension", True),
-                        ("voice_confirm_summary", True)):
+                        ("voice_confirm_summary", True), ("voice_confirm_callback", True)):
         monkeypatch.setattr(settings, name, value)
     for name in ("Providers", "eClinicalWorks", "Microsoft 365", "Network", "Printer", "Password", "Other",
                  "Other Patient Support", "Appointment Booking"):
@@ -61,11 +71,9 @@ def _description(call, said, category="eClinicalWorks", *, short="eClinicalWorks
     ))
 
 
-def _details(call, *, blocked, started=None):
-    call._say(interpret_details=nlu.TurnResult(
-        value="details", confidence="high", unable_to_determine=False,
-        extras={"work_blocked": blocked, "started": started},
-    ))
+def _name(call, name="Ana Rivera"):
+    call._say(interpret_name=nlu.TurnResult(value=name, confidence="high", unable_to_determine=False,
+                                            extras={"name_confidence": "high"}))
 
 
 async def _as_provider(call, said="This is Dr. Rivera, I'm a provider."):
@@ -73,16 +81,43 @@ async def _as_provider(call, said="This is Dr. Rivera, I'm a provider."):
     return await call.turn(said)
 
 
-async def _file(call, out):
-    """Name, no extension, skip the email, yes to the read-back -- whichever of these are still asked."""
-    call._say(interpret_name=nlu.TurnResult(value="Ana Rivera", confidence="high", unable_to_determine=False,
-                                            extras={"department": "Family Medicine", "name_confidence": "high"}))
-    out = await call.turn("Ana Rivera, Family Medicine")
-    for said in ("No, I don't have one.", "skip", "Yes.", "Yes."):
-        if out["ticket_id"] or not out["expect_reply"]:
-            break
-        out = await call.turn(said)
-    return out
+async def _report(call, said="eCW keeps freezing when I open the orders tab.", **kwargs):
+    """Provider identified, then the problem described: the next thing asked is the name."""
+    await _as_provider(call)
+    _description(call, said, **kwargs)
+    return await call.turn(said)
+
+
+async def _up_to_the_callback_question(call, **kwargs):
+    out = await _report(call, **kwargs)
+    assert _text(out).endswith(scripts.PROVIDER_NAME_ASK)
+    _name(call)
+    return await call.turn("Ana Rivera")
+
+
+async def _up_to_the_confirmation(call, number=CALLBACK, **kwargs):
+    out = await _up_to_the_callback_question(call, **kwargs)
+    assert _text(out) == scripts.PROVIDER_PHONE_ASK
+    call.phone_says(number)
+    return await call.turn("eight four five, five five five, zero one two three")
+
+
+async def _file(call, number=CALLBACK, **kwargs):
+    """The whole call up to the provider's yes to the read-back of the callback number."""
+    await _up_to_the_confirmation(call, number, **kwargs)
+    return await call.answer(True)
+
+
+async def _stored_priority(db_session, ticket_id):
+    await db_session.rollback()  # a fresh read: the ticket was written by the app's own session
+    return (await db_session.execute(select(Ticket.priority).where(Ticket.id == uuid.UUID(ticket_id)))).scalar_one()
+
+
+async def _ticket_count(db_session):
+    await db_session.rollback()
+    return (await db_session.execute(
+        select(func.count()).select_from(Ticket).where(Ticket.source == TicketSource.PHONE)
+    )).scalar_one()
 
 
 def _intake(ticket) -> str:
@@ -205,7 +240,42 @@ async def test_others_affected_is_at_least_high_for_a_provider():
     assert priority_rules.provider_floor(urgent, "several_people") is urgent  # never lowered
 
 
-# --- whole calls ---------------------------------------------------------------------------------------------
+# --- whole calls: the callback request ------------------------------------------------------------------------
+
+
+class _Mailbox:
+    """The helpdesk notification as the email provider receives it: every attempt, and the ones that went through."""
+
+    def __init__(self):
+        self.attempts: list[dict] = []
+        self.sent: list[dict] = []
+        self.fail_first = 0  # the first N attempts fail
+
+
+@pytest.fixture
+def mailbox(monkeypatch):
+    box = _Mailbox()
+
+    class Provider:
+        is_configured = True
+
+        async def send(self, **kwargs):
+            box.attempts.append(kwargs)
+            if len(box.attempts) <= box.fail_first:
+                return False
+            box.sent.append(kwargs)
+            return True
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(settings, "enable_email_notifications", True)
+    monkeypatch.setattr(settings, "helpdesk_email", "helpdesk@example.org")
+    monkeypatch.setattr(settings, "notification_max_attempts", 4)
+    monkeypatch.setattr(settings, "voice_max_phone_attempts", 2)
+    monkeypatch.setattr(email_module, "get_email_provider", lambda: Provider())
+    monkeypatch.setattr(email_module.asyncio, "sleep", no_sleep)
+    return box
 
 
 async def test_the_opening_question_offers_provider_only_when_the_flow_is_on(make_call, monkeypatch):
@@ -241,80 +311,324 @@ async def test_a_provider_is_asked_an_open_question_and_given_time(make_call, db
     session = await _session(db_session, "prov-open")
     assert session.collected["caller_type"] == PROVIDER
     assert "every patient" in session.collected["problem_words"]  # both halves, in the provider's words
-    assert _text(out).endswith(scripts.PROVIDER_DETAILS_ASK_BLOCKED)  # when it started was said: only the impact
+    assert _text(out).endswith(scripts.PROVIDER_NAME_ASK)  # the system was named, so straight on to who is calling
 
 
-async def test_an_ecw_problem_affecting_others_is_filed_high_under_providers_to_the_it_inbox(
-    make_call, client, db_session, sent_emails
+async def test_the_provider_is_asked_only_what_a_callback_ticket_needs(
+    make_call, client, db_session, mailbox
 ):
-    call = make_call("prov-ecw")
-    await _as_provider(call)
-    said = "eCW keeps freezing when I open the orders tab, on every patient, since about nine."
-    _description(call, said, started="since about nine")
-    await call.turn(said)
+    call = make_call("prov-seq")
+    assert _text(await _as_provider(call)) == scripts.PROVIDER_ASK
+    said = "eCW keeps freezing when I open the orders tab."
+    _description(call, said)
+    assert _text(await call.turn(said)).endswith(scripts.PROVIDER_NAME_ASK)
+    _name(call)
+    asked = await call.turn("Ana Rivera")
+    assert _text(asked) == "What is the best phone number for our IT team to call you back on?"
 
-    _details(call, blocked=False)
-    out = await call.turn("I can still see them, I'm writing orders on paper.")
-    assert _text(out).endswith(dx._PROVIDER_ERROR.prompt)  # which part, what happens, every patient: all said
+    call.phone_says(CALLBACK)
+    confirm = await call.turn("eight four five, five five five, zero one two three")
+    assert _text(confirm) == scripts.PROVIDER_CALLBACK_CONFIRM.format(number=scripts.spoken_phone_number(CALLBACK))
+    assert "Is that the correct number for our IT team to call you back on?" in _text(confirm)
+    session = await _session(db_session, "prov-seq")
+    assert session.state == VoiceCallState.CONFIRM_CALLBACK_NUMBER
+    assert await _ticket_count(db_session) == 0  # nothing is filed, or promised, before the number is confirmed
 
-    out = await call.turn("It just says not responding.")
-    assert _text(out).endswith(dx._SCOPE.prompt)
-    out = await call.turn("Yes, Dr. Shah next door has it too.")
+    done = await call.answer(True)
 
-    filed = await _file(call, out)
+    assert done["ticket_id"]
+    heard = _text(done)
+    assert "I've recorded your request" in heard and "the number you confirmed" in heard
+    assert scripts.spoken_ticket_number((await _ticket(client, done["ticket_id"]))["ticket_number"]) in heard
+    for promise in ("minute", "hour", "shortly", "soon", "today", "right away"):
+        assert promise not in heard.lower(), promise  # no callback time is promised
+    # Nothing else was asked: no diagnostics, impact, department, extension, email or read-back of the ticket.
+    spoken = " ".join(t["text"] for t in (await _session(db_session, "prov-seq")).turns if t["role"] == "agent").lower()
+    for unasked in ("department", "email", "extension", "error message", "anyone else", "when did this start",
+                    "stopping you", "is that all correct", "let me make sure"):
+        assert unasked not in spoken, unasked
 
-    ticket = await _ticket(client, filed["ticket_id"])
+
+async def test_the_ticket_is_a_provider_callback_request_saved_at_high(
+    make_call, client, db_session, mailbox
+):
+    call = make_call("prov-ticket")
+    # The model reads this as Low and nothing is blocked: a provider's request is still High.
+    done = await _file(call, priority=Priority.LOW, blocked=False)
+
+    ticket = await _ticket(client, done["ticket_id"])
     assert (ticket["caller_type"], ticket["category"]["name"], ticket["priority"]) == ("PROVIDER", "Providers", "HIGH")
+    assert await _stored_priority(db_session, done["ticket_id"]) is Priority.HIGH  # in the database, not just the email
+    assert ticket["callback_number"] == CALLBACK
+    assert ticket["caller_name"] == "Ana Rivera"
     intake = _intake(ticket)
-    for expected in ("Caller: provider (said by the caller)", "System: eClinicalWorks",
-                     "Issue type: eClinicalWorks (provider)", "Part of eClinicalWorks: orders",
-                     "Every patient or one chart: every", "Error message: It just says not responding.",
-                     "Others affected: yes", "Work blocked: no"):
+    for expected in ("Caller type: Provider (said by the caller)", "Provider: Ana Rivera", "System: eClinicalWorks",
+                     f"Callback number: {CALLBACK} (confirmed by the provider)", "Priority: High: provider callback request",
+                     f"Action required: IT Helpdesk must call the provider back at {CALLBACK}"):
         assert expected in intake, expected
-    assert len(sent_emails) == 1  # the same IT helpdesk notification as every other ticket
-    # The read-back says the level the ticket is filed at (a first version read "medium" and filed High).
-    spoken = " ".join(t["text"] for t in (await _session(db_session, "prov-ecw")).turns if t["role"] == "agent")
-    assert "Since others have the same problem, I'll mark this high priority." in spoken
-    assert "medium priority" not in spoken
+    assert "eCW keeps freezing" in ticket["description"]
+    assert "Department" not in intake
 
 
-@pytest.mark.parametrize("strict", [False, True])
-async def test_a_provider_who_cannot_see_patients_is_critical_and_told_straight_away(
-    make_call, client, db_session, sent_emails, monkeypatch, strict
+async def test_the_helpdesk_email_leads_with_the_callback_request(make_call, client, mailbox):
+    call = make_call("prov-mail")
+    done = await _file(call)
+    number = (await _ticket(client, done["ticket_id"]))["ticket_number"]
+
+    assert len(mailbox.sent) == 1
+    mail = mailbox.sent[0]
+    assert mail["to"] == ["helpdesk@example.org"]  # the configured recipients, through the existing provider
+    assert mail["subject"].startswith(BANNER) and number in mail["subject"]
+    body = mail["body"]
+    assert body.startswith(BANNER)
+    for expected in ("Priority:\nHIGH", f"Ticket Number:\n{number}", "Provider:\nAna Rivera",
+                     f"Callback Number:\n{CALLBACK}", "System:\neClinicalWorks", "Issue:\neCW keeps freezing",
+                     f"Required Action:\nContact the provider at the confirmed callback number: {CALLBACK}"):
+        assert expected in body, expected
+    assert "Extension" not in body  # a provider is not asked for one
+
+
+async def test_other_tickets_are_emailed_exactly_as_before():
+    plain = email_module._build_body("Maria Lopez", "8455550142", "Outlook will not open.", "A summary.",
+                                     ticket_number="HFMG-2026-000001")
+
+    assert plain == ("Caller:\nMaria Lopez\n\nCallback Number:\n8455550142\n\nEmail:\nNot provided\n\n"
+                     "Issue:\nOutlook will not open.\n\nSummary:\nA summary.\n\nTicket Number:\nHFMG-2026-000001")
+
+
+async def test_the_system_is_asked_once_when_the_description_does_not_name_it(
+    make_call, client, db_session, mailbox
 ):
-    monkeypatch.setattr(settings, "voice_strict_extraction", strict)
-    call = make_call("prov-critical")
-    await _as_provider(call)
-    said = "eClinicalWorks won't open at all."
-    _description(call, said, started="just now")
-    await call.turn(said)
+    call = make_call("prov-system")
+    asked = await _report(call, "Something is wrong with the thing on my desk.", category="Other", short="a problem")
+    assert _text(asked).endswith(scripts.PROVIDER_SYSTEM_ASK)
+    assert (await _session(db_session, "prov-system")).state == VoiceCallState.COLLECT_DETAILS
 
-    _details(call, blocked=True)
-    # Strict extraction asks the impact as a clarification question, read by its own model call.
-    call._say(interpret_clarification=nlu.TurnResult(confidence="high", unable_to_determine=False,
-                                                     extras={"answer": "yes"}))
-    out = await call.turn("Yes, I have a full clinic and I can't do anything.")
+    out = await call.turn("It's the Dragon dictation.")
+    assert _text(out) == scripts.PROVIDER_NAME_ASK  # not asked again, and nothing about impact
+    _name(call)
+    await call.turn("Ana Rivera")
+    call.phone_says(CALLBACK)
+    await call.turn("eight four five, five five five, zero one two three")
+    done = await call.answer(True)
 
-    assert "patient care is affected" in _text(out)  # the urgent notice comes first
-    assert any(option in _text(out) for option in scripts.NAME_ASK_OPTIONS)  # then only who and where to call
-    session = await _session(db_session, "prov-critical")
-    assert session.collected["patient_care_affected"] is True
-
-    filed = await _file(call, out)
-    ticket = await _ticket(client, filed["ticket_id"])
-    assert (ticket["priority"], ticket["category"]["name"]) == ("URGENT", "Providers")
+    ticket = await _ticket(client, done["ticket_id"])
+    assert "System: It's the Dragon dictation." in _intake(ticket)
+    assert "System:\nIt's the Dragon dictation." in mailbox.sent[0]["body"]
 
 
-async def test_a_provider_with_a_printer_problem_gets_the_printer_questions(make_call, db_session):
-    call = make_call("prov-printer")
-    await _as_provider(call)
-    said = "The printer in exam room 3 keeps jamming."
-    _description(call, said, "Printer", short="the printer", blocked=False)
+@pytest.mark.parametrize("answer", ["I don't know", ""])
+async def test_a_provider_who_cannot_name_the_system_is_not_pressed(make_call, client, db_session, mailbox, answer):
+    call = make_call("prov-nosystem")
+    await _report(call, "Something is wrong with the thing on my desk.", category="Other", short="a problem")
 
-    await call.turn(said)
+    out = await call.turn(answer)
 
-    state = (await _session(db_session, "prov-printer")).collected["diagnostics"]
-    assert state["playbook"] == dx.PRINTER.name and state["provider"] is True
+    assert _text(out) == scripts.PROVIDER_NAME_ASK
+    _name(call)
+    await call.turn("Ana Rivera")
+    call.phone_says(CALLBACK)
+    await call.turn("eight four five, five five five, zero one two three")
+    done = await call.answer(True)
+    assert "System:" not in _intake(await _ticket(client, done["ticket_id"]))  # nothing is invented
+
+
+async def test_a_number_that_is_not_understood_is_asked_for_again(make_call, db_session, mailbox):
+    call = make_call("prov-unclear")
+    await _up_to_the_callback_question(call)
+
+    call.phone_says(None)
+    retry = await call.turn("mumble mumble")
+    assert _text(retry) == scripts.phone_retry(0, 1)
+    assert (await _session(db_session, "prov-unclear")).state == VoiceCallState.COLLECT_PHONE
+
+    call.phone_says(CALLBACK)
+    confirm = await call.turn("eight four five, five five five, zero one two three")
+    assert scripts.spoken_phone_number(CALLBACK) in _text(confirm)
+    assert await _ticket_count(db_session) == 0
+
+
+async def test_when_no_number_is_understood_the_number_calling_in_is_offered_for_confirmation(
+    make_call, client, db_session, mailbox
+):
+    call = make_call("prov-fallback")
+    await _up_to_the_callback_question(call)
+
+    call.phone_says(None)
+    await call.turn("mumble mumble")
+    out = await call.turn("mumble")
+
+    session = await _session(db_session, "prov-fallback")
+    on_file = session.collected["phone_number"]
+    assert _text(out).startswith(scripts.PROVIDER_PHONE_FALLBACK)
+    assert scripts.PROVIDER_CALLBACK_CONFIRM.format(number=scripts.spoken_phone_number(on_file)) in _text(out)
+    assert await _ticket_count(db_session) == 0  # still not filed until the provider says yes
+
+    done = await call.answer(True)
+    ticket = await _ticket(client, done["ticket_id"])
+    assert ticket["callback_number"] == on_file
+
+
+async def test_a_corrected_number_is_confirmed_before_the_ticket_is_filed(make_call, client, db_session, mailbox):
+    call = make_call("prov-correct-number")
+    await _up_to_the_confirmation(call)
+
+    asked = await call.answer(False)  # "No, that's not right"
+    assert _text(asked) == scripts.PROVIDER_CALLBACK_ASK_OTHER
+    assert await _ticket_count(db_session) == 0
+
+    call.phone_says(OTHER_CALLBACK)
+    confirm = await call.turn("eight four five, five five five, zero one eight eight")
+    assert _text(confirm) == scripts.CALLBACK_CONFIRM_NEW.format(number=scripts.spoken_phone_number(OTHER_CALLBACK))
+    assert await _ticket_count(db_session) == 0  # the corrected number is read back first
+
+    done = await call.answer(True)
+
+    ticket = await _ticket(client, done["ticket_id"])
+    assert ticket["callback_number"] == OTHER_CALLBACK
+    assert OTHER_CALLBACK in mailbox.sent[0]["body"] and CALLBACK not in mailbox.sent[0]["body"]
+
+
+async def test_a_provider_call_never_transfers_or_dials(make_call, db_session, mailbox):
+    from app.voice.sip_routes import TurnResponse
+
+    call = make_call("prov-notransfer")
+    outcomes = [await _as_provider(call)]
+    out = await _up_to_the_callback_question(call)
+    outcomes += [out]
+    call.phone_says(CALLBACK)
+    outcomes += [await call.turn("eight four five, five five five, zero one two three"), await call.answer(True)]
+
+    # The gateway contract has nothing to carry a transfer or a number to dial, and none was sent.
+    assert set(TurnResponse.model_fields) == {"lines", "expect_reply", "ticket_id", "stt_prompt"}
+    for outcome in outcomes:
+        assert set(outcome) <= set(TurnResponse.model_fields)
+        assert not any(word in _text(outcome).lower() for word in ("transfer", "dial", "connect you", "hold on"))
+    session = await _session(db_session, "prov-notransfer")
+    assert session.escalated is False and session.state == VoiceCallState.ANYTHING_ELSE
+    assert len(mailbox.sent) == 1  # the one ticket email, and nothing else went out
+
+
+async def test_a_provider_who_asks_for_a_person_gets_a_high_callback_ticket_not_a_transfer(
+    make_call, client, db_session, mailbox
+):
+    call = make_call("prov-person")
+    await _report(call)
+    call._say(interpret_name=nlu.TurnResult(escalation_requested=True))  # the model hears a request for a person
+
+    out = await call.turn("I want to talk to a person")
+
+    assert out["ticket_id"] and out["expect_reply"] is False
+    heard = _text(out).lower()
+    assert "it team call you back" in heard
+    assert "transfer" not in heard and "dial" not in heard
+    session = await _session(db_session, "prov-person")
+    assert session.state == VoiceCallState.ESCALATED
+    ticket = await _ticket(client, out["ticket_id"])
+    assert (ticket["caller_type"], ticket["category"]["name"], ticket["priority"]) == ("PROVIDER", "Providers", "HIGH")
+    assert "CALLBACK REQUESTED" in ticket["description"]
+    assert mailbox.sent[0]["body"].startswith(BANNER)
+
+
+async def test_a_provider_who_hangs_up_keeps_what_they_said(make_call, client, db_session, mailbox):
+    call = make_call("prov-hangup")
+    await _report(call)  # described, then the call drops while the name is being asked
+
+    response = await client.post(f"{SIP}/status", json={"call_id": "prov-hangup", "reason": "hangup"}, headers=AUTH)
+
+    assert response.status_code == 204
+    session = await _session(db_session, "prov-hangup")
+    ticket = await _ticket(client, str(session.ticket_id))
+    assert (ticket["category"]["name"], ticket["priority"]) == ("Providers", "HIGH")
+    assert ticket["description"].startswith("INCOMPLETE VOICE INTAKE")
+    assert "eCW keeps freezing" in ticket["description"]
+    assert "The provider did not confirm this number" in _intake(ticket)
+    assert "did not confirm this number" in mailbox.sent[0]["body"]  # the IT team is not told it was confirmed
+
+
+async def test_a_failed_ticket_is_never_reported_as_created(make_call, client, db_session, mailbox, monkeypatch):
+    call = make_call("prov-fail")
+    await _up_to_the_confirmation(call)
+
+    async def broken(*args, **kwargs):
+        raise RuntimeError("database unavailable")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(ticket_service, "create_ticket", broken)
+        out = await call.answer(True)
+
+    assert _text(out) == scripts.SYSTEM_ERROR
+    assert out["ticket_id"] is None and out["expect_reply"] is False
+    assert "ticket number" not in _text(out).lower() and "recorded" not in _text(out).lower()
+    assert await _ticket_count(db_session) == 0
+    assert mailbox.attempts == []
+
+    # The gateway tries the same turn again once the database is back: exactly one ticket, one email.
+    retried = await call.answer(True)
+    assert retried["ticket_id"]
+    assert await _ticket_count(db_session) == 1
+    assert len(mailbox.sent) == 1
+
+
+async def test_a_failed_email_keeps_the_ticket_and_is_retried(make_call, client, db_session, mailbox):
+    call = make_call("prov-email-retry")
+    mailbox.fail_first = 2
+
+    done = await _file(call)
+
+    assert done["ticket_id"] and "I've recorded your request" in _text(done)  # the caller is not told about the email
+    assert await _ticket_count(db_session) == 1
+    assert len(mailbox.attempts) == 3 and len(mailbox.sent) == 1  # failed twice, then sent
+    assert (await _ticket(client, done["ticket_id"]))["priority"] == "HIGH"
+
+
+async def test_an_email_that_never_goes_through_still_leaves_the_ticket(make_call, client, db_session, mailbox):
+    call = make_call("prov-email-down")
+    mailbox.fail_first = 10_000
+
+    done = await _file(call)
+
+    assert done["ticket_id"]
+    assert await _ticket_count(db_session) == 1
+    assert len(mailbox.attempts) == settings.notification_max_attempts  # the existing retry limit, then it stops
+    assert mailbox.sent == []
+    assert (await _ticket(client, done["ticket_id"]))["callback_number"] == CALLBACK
+
+
+async def test_a_repeated_request_from_the_gateway_files_one_ticket_and_sends_one_email(
+    make_call, client, db_session, mailbox
+):
+    call = make_call("prov-dup")
+    await _up_to_the_confirmation(call)
+    call._say(interpret_yes_no=nlu.TurnResult(yes_no=True, unable_to_determine=False))
+    request = {"call_id": "prov-dup", "utterance": "yes", "turn_id": "turn-confirm-1"}
+
+    first = await client.post(f"{SIP}/turn", json=request, headers=AUTH)
+    second = await client.post(f"{SIP}/turn", json=request, headers=AUTH)
+
+    assert first.status_code == second.status_code == 200
+    assert second.headers["Idempotent-Replayed"] == "true"
+    assert first.json()["ticket_id"] and second.json()["ticket_id"] == first.json()["ticket_id"]
+    assert second.json()["lines"] == first.json()["lines"]
+    assert await _ticket_count(db_session) == 1
+    assert len(mailbox.sent) == 1
+
+
+# --- the other flows are untouched ---------------------------------------------------------------------------
+
+
+async def test_an_employee_call_is_unchanged_with_providers_offered(make_call, db_session):
+    call = make_call("prov-employee")
+    await call.start()
+    await call.turn("I'm an employee.")
+
+    out = await call.describe_it_issue()
+
+    session = await _session(db_session, "prov-employee")
+    assert session.collected["caller_type"] == EMPLOYEE
+    assert session.state == VoiceCallState.COLLECT_DIAGNOSTICS  # the employee issue questions still run
+    assert session.collected.get("priority_rule") != "provider_callback"
+    assert scripts.PROVIDER_NAME_ASK not in _text(out)
 
 
 async def test_an_employee_who_corrects_to_provider_at_the_first_question_is_moved(make_call, db_session):
