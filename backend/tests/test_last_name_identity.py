@@ -47,6 +47,20 @@ def _rows():
         merged_row("Wei Li", display="Wei Li", phone="(845) 555-0511", ext="5111", mailbox="wei.li@example.org"),
         merged_row("Tom Baker Jr", display="Tom Baker Jr.", phone="(845) 555-0512", ext="5112", mailbox="tom.baker@example.org"),
         merged_row("Mary OBrien", display="Mary O'Brien", phone="(845) 555-0513", ext="5113", mailbox="mary.obrien@example.org"),
+        # One person on two phone lines at two sites: the same name and mailbox.
+        merged_row("5131 Gina Ferrante", display="Gina Ferrante", ext="5131", location="Goshen",
+                   mailbox="gina.ferrante@example.org"),
+        merged_row("5132 Gina Ferrante", display="Gina Ferrante", ext="5132", location="Warwick",
+                   mailbox="gina.ferrante@example.org"),
+        # One person on two lines whose rows disagree on the department: it is not taken from either.
+        merged_row("5134 Omar Quillon", display="Omar Quillon", ext="5134", department="Billing",
+                   mailbox="omar.quillon@example.org"),
+        merged_row("5135 Omar Quillon", display="Omar Quillon", ext="5135", department="Radiology",
+                   mailbox="omar.quillon@example.org"),
+        # The same name with another mailbox is another person: never merged with the two above.
+        merged_row("5136 Omar Quillon", display="Omar Quillon", ext="5136", mailbox="omar.quillon2@example.org"),
+        # An initial for a surname.
+        merged_row("5133 Omid Q", display="Omid Q", ext="5133", mailbox="omid.q@example.org"),
         # Records that carry a name but are not a live person. They share a last name with real people (Nair, Rao)
         # or are the only holder of theirs (Deskline, Servline, Testline): none is ever offered.
         merged_row("Front Desk Nair", kind="shared_line", display="Front Nair", phone="(845) 555-0590", ext="5190"),
@@ -157,6 +171,10 @@ async def test_a_name_in_either_order_and_a_middle_name_find_the_same_person(tmp
     ("Maria Ranga", ["Ranga Sai Yashwanth"], False),  # a word that is not in the listed name
     ("", ["Ranga Sai Yashwanth"], False),
     ("Ranga Sai", [], False),
+    ("Omid Q", ["Omid Q"], True),
+    ("Omid Q", ["Omid Quill"], True),  # an initial cannot tell these apart: both stay candidates
+    ("Omid Q", ["Omid Patel"], False),  # but it must be the initial of a word of the name
+    ("K", ["Omid Q"], False),  # an initial alone is no name
 ])
 async def test_the_extension_note_compares_a_name_by_any_word(caller, listed, same):
     from app.voice import directory_identity
@@ -406,6 +424,84 @@ async def test_several_people_with_that_last_name_are_told_apart_by_first_name_o
     session = await _session(db_session, call.call_id)
     assert session.collected["caller_name"] == expected
     assert session.collected["directory_identity"]["extension"] == extension
+
+
+@pytest.mark.parametrize("heard, expected", [
+    ("Rani Rao", "Rani Rao"), ("Rao Rani", "Rani Rao"), ("Ranga Rao", "Ranga Rao"),
+])
+async def test_several_people_are_told_apart_by_a_full_name_in_either_order(make_call, db_session, heard, expected):
+    call = make_call(f"ln-which-full-{heard[:4]}")
+    await call.start()
+    await call.report()
+    assert _said(await call.last_name("Rao")) == scripts.LAST_NAME_WHICH
+
+    call._say(interpret_name=nlu.TurnResult(value=heard, confidence="high", unable_to_determine=False))
+
+    assert _said(await call.turn(heard)) == f"Are you {expected}?"
+
+
+async def test_one_person_on_several_lines_is_asked_about_once_and_keeps_no_line_details(make_call, db_session):
+    call = make_call("ln-lines")
+    await call.start()
+    await call.report()
+
+    asked = await call.last_name("Ferrante")
+
+    assert _said(asked) == "Are you Gina Ferrante?"  # one person, not "more than one person with that name"
+    await call.turn("yes")
+    c = (await _session(db_session, call.call_id)).collected
+    assert (c["caller_name"], c["identity_confirmed"]) == ("Gina Ferrante", True)
+    who = c["directory_identity"]
+    assert who["email"] == "gina.ferrante@example.org"
+    # Which of the two lines is unknown: no extension or site is taken from either, so the extension is asked.
+    assert (who["extension"], who["location"], who["teams"]) == (None, None, [])
+
+
+async def test_two_people_with_one_name_and_two_mailboxes_are_never_merged(directory):
+    from app.voice import directory_identity
+
+    rows = list(directory.find_by_last_name("Quillon"))
+    assert len(rows) == 3 and not directory_identity.one_person(rows)  # two mailboxes: two people
+    assert directory_identity.one_person(rows[:2])  # one mailbox, two lines
+
+
+async def test_a_line_picked_by_its_extension_is_kept_in_full(make_call, db_session):
+    call = make_call("ln-lines-dept")
+    await call.start()
+    await call.report()
+    # Three "Quillon" rows: two people. Picked by extension, the caller gets that line in full.
+    assert _said(await call.last_name("Quillon")) == scripts.LAST_NAME_WHICH
+    call._say(interpret_name=nlu.TurnResult(value="5135", confidence="high", unable_to_determine=False))
+    assert _said(await call.turn("5135")) == "Are you Omar Quillon?"
+    await call.turn("yes")
+    who = (await _session(db_session, call.call_id)).collected["directory_identity"]
+    assert (who["extension"], who["department"]) == ("5135", "Radiology")
+
+
+async def test_one_persons_lines_that_disagree_keep_only_what_they_share(directory, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.voice import orchestrator
+
+    rows = list(directory.find_by_last_name("Quillon"))[:2]
+    session = SimpleNamespace(collected={"directory": {
+        "proposed_name": "Omar Quillon", "pending_row": rows[0].source_row,
+        "pending_rows": [r.source_row for r in rows], "last_name_heard": "Quillon",
+    }})
+    monkeypatch.setattr(orchestrator, "update_collected", lambda s, **kw: s.collected.update(kw))
+
+    assert orchestrator._fill_pending_entry(session, directory)
+    who = session.collected["directory"]["entry"]
+    assert who["email"] == "omar.quillon@example.org"
+    assert (who["extension"], who["department"], who["location"]) == (None, None, None)
+
+
+async def test_a_person_whose_surname_is_an_initial_is_found_by_the_other_name(make_call, db_session):
+    call = make_call("ln-initial")
+    await call.start()
+    await call.report()
+
+    assert _said(await call.last_name("Omid")) == "Are you Omid Q?"
 
 
 @pytest.mark.parametrize("answer", ["Pat", "5999", "5191", "5193", "Ranga or Rani", ""])

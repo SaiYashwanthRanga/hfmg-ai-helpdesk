@@ -601,7 +601,7 @@ model.
 | Last-name outcome | What the caller experiences |
 |---|---|
 | One person | *"Are you Ranga Nair?"* through the same confirm-identity step. Yes: name, extension, email (offered, not assumed) and phone come from the entry, exactly as for a caller-ID match. No: *"Sorry about that"* and the normal name question |
-| Several people | *"I have more than one person with that last name. What's your first name, or your extension?"* once. One person left: *"Are you ...?"*. Still unclear, or silence: the normal name question |
+| Several people | *"I have more than one person with that name. What's your full name, or your extension?"* once (any words of the name, in any order). One person left, or one person's several phone lines (same name and mailbox): *"Are you ...?"*; for several lines the extension is then asked as usual. Still unclear, or silence: the normal name question |
 | Nobody, or only shared lines/services/tests | The normal name question |
 
 Nothing about the person asked about is said or kept before the caller says yes: only the name being asked and the

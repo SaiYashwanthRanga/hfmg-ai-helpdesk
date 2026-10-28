@@ -219,14 +219,16 @@ class _Snapshot:
 
 def clean_display_name(raw: str | None) -> str | None:
     """A mailbox display name the agent may say aloud, else None: two to four words, each made of letters (and
-    an apostrophe, hyphen or period), the first and last at least two characters. Anything else (a digit, a
-    single word, an address, a stray symbol) is not guessed at: the agent asks who is calling."""
+    an apostrophe, hyphen or period), at least one of them a real word of two or more letters. An initial is
+    allowed anywhere, a surname included: "Omid Q", "J. Dana Sample" and "Pat Lee Q" are how some
+    staff are named. Anything else (a digit, a single word, an address, a stray symbol) is not guessed at: the
+    agent asks who is calling."""
     words = (raw or "").split()
     if not 2 <= len(words) <= 4 or len(" ".join(words)) > 60:
         return None
     if not all(_REAL_NAME_WORD.match(word) for word in words):
         return None
-    if min(len(words[0].rstrip(".")), len(words[-1].rstrip("."))) < 2:
+    if max(len(word.rstrip(".")) for word in words) < 2:
         return None
     return " ".join(words)
 

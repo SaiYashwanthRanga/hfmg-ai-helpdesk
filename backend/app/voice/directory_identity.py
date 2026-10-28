@@ -109,15 +109,32 @@ def with_first_name(entries: list[DirectoryEntry], first_name: str | None) -> li
 def is_same_name(caller_name: str | None, listed_names: list[str | None]) -> bool:
     """Whether the caller's name is one of the listed names, whatever the order and with or without a middle name:
     every word the caller gave must be a word of a listed name (allowing a recognizer's slip), as in find_by_last_name.
-    "Yashwanth Ranga" is "Ranga Sai Yashwanth"; "Ranga" alone is too, as no other name is being compared."""
-    heard = [key for word in (caller_name or "").split() if len(key := names.letters(word)) >= 2]
-    if not heard:
+    "Yashwanth Ranga" is "Ranga Sai Yashwanth"; "Ranga" alone is too, as no other name is being compared. An initial
+    the caller gave must be the initial of a word of the listed name: "Omid Q" is not "Omid Patel"."""
+    heard = [key for word in (caller_name or "").split() if (key := names.letters(word))]
+    if not any(len(h) >= 2 for h in heard):
         return False
     for listed in listed_names:
-        words = [names.letters(word) for word in (listed or "").split()]
-        if words and all(any(names.same_name_part(h, w) for w in words) for h in heard):
+        words = [w for w in (names.letters(word) for word in (listed or "").split()) if w]
+        if words and all(
+            any(w.startswith(h) if len(h) == 1 else names.same_name_part(h, w) for w in words) for h in heard
+        ):
             return True
     return False
+
+
+def one_person(entries: list[DirectoryEntry]) -> bool:
+    """Whether these entries are all one person on several phone lines (sites): the same name said aloud and the same
+    mailbox. Such a person is one person to ask about, not several to choose between."""
+    keys = {(employee_name(e), (e.mailbox_email or "").strip().lower()) for e in entries}
+    if len(keys) != 1:
+        return False
+    name, mailbox = next(iter(keys))
+    return bool(name and mailbox)
+
+
+#: The fields of an entry that belong to one phone line, not to the person: unknown when a person has several lines.
+LINE_FIELDS = ("directory_name", "extension", "teams", "location", "phone", "site", "source_row")
 
 
 def with_extension(entries: list[DirectoryEntry], extension: str | None) -> list[DirectoryEntry]:
@@ -129,8 +146,11 @@ def directory_email_for(name: str, email: str | None) -> str | None:
     """An address from the caller's confirmed directory entry that is safe to offer, else None.
 
     The address is returned exactly as it is on file (never repaired: hmfg.net stays hmfg.net), and
-    only when it is in the usual shape and belongs to this person: its username must contain the last
-    name and either the first name or the first initial. That also keeps out shared mailboxes and
+    only when it is in the usual shape and belongs to this person. The name is two or more words, in
+    whatever order the directory writes it ("Dana Sample", "Ranga Sai Yashwanth"), and may hold an
+    initial ("Tara B. Sample", "Omid Q"). The username must contain at least two of its words (an
+    initial is not one), or one word and the initial of another word just before or after it, and
+    nothing else ("dsample", "lior.e", "omid.q"). That also keeps out shared mailboxes and
     placeholders ("0301user@", "helpdesk@"), which are nobody's name.
     The directory has entries whose email belongs to someone else; those are never offered.
     """
@@ -140,14 +160,20 @@ def directory_email_for(name: str, email: str | None) -> str | None:
     local, _, domain = address.partition("@")
     if not local or not domain:
         return None
-    words = [re.sub(r"[^a-z]", "", part.lower()) for part in name.split()]
-    if len(words) != 2 or min(len(w) for w in words) < 2:
+    words = [w for w in (re.sub(r"[^a-z]", "", part.lower()) for part in name.split()) if w]
+    if len(words) < 2:
         return None
-    first, last = words
     letters = re.sub(r"[^a-z]", "", local)
-    if last not in letters:
+    hits = [w for w in words if len(w) >= 2 and w in letters]
+    if len(hits) >= 2:
+        return address
+    # One word of the name, and the initial of another one in front of it ("dsample") or after it ("liore").
+    if not hits:
         return None
-    return address if (first in letters or letters.startswith(first[0])) else None
+    word = hits[0]
+    others = [w for w in words if w != word]
+    # Exactly that, nothing else: "kate.testwell" is not Kara Testwell's, though it starts with her initial.
+    return address if any(letters in (o[0] + word, word + o[0]) for o in others) else None
 
 
 def entry_context(entry: DirectoryEntry) -> dict:

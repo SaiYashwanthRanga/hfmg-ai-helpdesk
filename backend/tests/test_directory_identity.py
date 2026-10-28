@@ -769,7 +769,8 @@ def _matched(entry):
     ("person", "", None),
     ("person", None, None),
     ("person", "Maria", None),  # one word
-    ("person", "Akash C", None),  # an initial is not a surname
+    ("person", "Akash C", "Akash C"),  # an initial as the surname: how some staff are named
+    ("person", "A. B.", None),  # initials only
     ("person", "Front Desk 2", None),  # a digit
     ("person", "maria@example.test", None),  # an address
     ("person", "A Bb Cc Dd Ee", None),  # too many words

@@ -141,11 +141,51 @@ async def test_every_character_is_said_slowly_so_a_wrong_one_can_be_heard(email,
     ("Dana Sample", "callpark1@example.org", None),
     ("Dana Sample", "", None),
     ("Dana Sample", None, None),
+    # A name of three words, written in whatever order the directory has it.
+    ("Ranga Sai Yashwanth", "Ranga.SaiYashwanth@hfmg.net", "ranga.saiyashwanth@hfmg.net"),
+    ("Ranga Sai Yashwanth", "yashwanth.ranga@hfmg.net", "yashwanth.ranga@hfmg.net"),
+    ("Ranga Sai Yashwanth", "ryashwanth@hfmg.net", "ryashwanth@hfmg.net"),  # one word and another word's initial
+    ("Ranga Sai Yashwanth", "sai@hfmg.net", None),  # one word of the name only
+    ("Ranga Sai Yashwanth", "yashwanth@hfmg.net", None),
+    ("Ranga Sai Yashwanth", "ranga.nair@hfmg.net", None),  # someone else with one of the words
+    ("Ranga Sai Yashwanth", "bsmith@hfmg.net", None),
+    ("Ranga Sai Yashwanth", "helpdesk@hfmg.net", None),  # shared mailboxes and placeholders, still
+    ("Ranga Sai Yashwanth", "0301user@hfmg.net", None),
+    ("Ranga Sai Yashwanth", "callpark1@hfmg.net", None),
+    # Initials in the name, and a username of one name and another's initial: shapes seen in practice.
+    ("Tara B. Sample", "tara.sample@example.org", "tara.sample@example.org"),  # a middle initial is not required
+    ("Omid Q", "omid.q@example.org", "omid.q@example.org"),
+    ("Lior Example", "lior.e@example.org", "lior.e@example.org"),
+    ("Lior Example", "lior.ex@example.org", None),  # more than the initial after the name
+    ("Dana Sample", "dsamplex@example.org", None),  # more than the name after the initial
+    ("Omid Q", "omid@example.org", None),
+    # Two colleagues with the same initial and surname: neither is offered the other's address.
+    ("Kara Testwell", "kate.testwell@example.org", None),
+    ("Kate Testwell", "kara.testwell@example.org", None),
+    ("Kara Testwell", "ktestwell@example.org", "ktestwell@example.org"),
+    ("Jon Example", "jon@example.org", None),  # first name only
+    ("Mona Example", "mona.other@example.org", None),  # another surname: not offered
     ("Dana", "dana@example.org", None),  # a one-word name is not a person we can match
     ("", "dana.sample@example.org", None),
 ])
 async def test_only_an_address_that_belongs_to_the_confirmed_person_is_offered(name, email, offered):
     assert directory_identity.directory_email_for(name, email) == offered
+
+
+@pytest.mark.parametrize("collected, greeted_as", [
+    ({"caller_name": "Maria Example"}, "Maria"),  # said by the caller: first word
+    ({"caller_name": "Ranga Sai Yashwanth"}, "Ranga"),  # said by the caller, unchanged
+    ({"caller_name": "Maria Example", "directory_identity": {"extension": "2001"}}, "Maria"),
+    ({"caller_name": "Ranga Sai Yashwanth", "directory_identity": {"extension": "3000"}}, ""),  # order not known
+    ({"caller_name": "Maria", "directory_identity": {"extension": "2001"}}, ""),
+    ({}, ""),
+])
+async def test_a_directory_name_of_three_words_is_not_cut_at_its_first_word(collected, greeted_as):
+    from types import SimpleNamespace
+
+    from app.voice import orchestrator
+
+    assert orchestrator._greeting_name(SimpleNamespace(collected=collected)) == greeted_as
 
 
 # --- the speech hints ----------------------------------------------------------------------------------------

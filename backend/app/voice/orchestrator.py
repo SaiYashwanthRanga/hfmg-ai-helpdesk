@@ -1210,9 +1210,10 @@ async def _handle_last_name(
             words, result = await _heard_name_words(utterance, asked=scripts.LAST_NAME_WHICH)
             if _wants_human(utterance, result):
                 return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
-            if len(words) > 1 and not names.same_name_part(names.letters(words[-1]), names.letters(c.get("last_name_heard"))):
-                words = []  # more than a first name that is not "<first> <last name already given>": "Ranga or Rani"
-            chosen = directory_identity.with_first_name(candidates, words[0] if words else None)
+            # Every word said must be a word of the person's name, in any order: "Gina Ferrante", "Ferrante", but not
+            # "Ranga or Rani".
+            said = " ".join(words)
+            chosen = [e for e in candidates if words and directory_identity.is_same_name(said, [directory_identity.employee_name(e)])]
         return _propose_by_last_name(session, chosen) or await _end_last_name(db, session)
 
     words, result = await _heard_name_words(utterance, asked=scripts.LAST_NAME_ASK)
@@ -1238,9 +1239,9 @@ async def _handle_last_name(
 def _propose_by_last_name(
     session: VoiceCallSession, candidates: list[DirectoryEntry], *, heard: str | None = None
 ) -> TurnOutcome | None:
-    """Ask "Are you <name>?" when exactly one person is left, else None. Only the name and the row it came from are
-    kept until the caller says yes."""
-    if len(candidates) != 1:
+    """Ask "Are you <name>?" when exactly one person is left (one entry, or one person's several phone lines), else
+    None. Only the name and the rows it came from are kept until the caller says yes."""
+    if len(candidates) != 1 and not directory_identity.one_person(candidates):
         return None
     entry = candidates[0]
     name = directory_identity.employee_name(entry)
@@ -1254,6 +1255,7 @@ def _propose_by_last_name(
             "match": "last_name",
             "proposed_name": name,
             "pending_row": entry.source_row,
+            "pending_rows": [e.source_row for e in candidates],
             "last_name_heard": heard or c.get("last_name_heard"),
         },
         last_name_step=None, last_name_heard=None, last_name_rows=None,
@@ -1265,19 +1267,28 @@ def _fill_pending_entry(session: VoiceCallSession, directory: UserDirectoryServi
     """The caller said yes to someone found by last name: read that person's details from the directory now.
 
     True when there is nothing to read (a caller-ID match carries its entry already) or it was read; False when the
-    person cannot be found any more, so the yes confirms nobody."""
+    person cannot be found any more, so the yes confirms nobody. A person on several phone lines keeps only what is
+    theirs (name, mailbox, department, ...): which line they are on is not known, so the extension is asked as usual."""
     found = session.collected.get("directory") or {}
     row = found.get("pending_row")
     if row is None:
         return True
-    entry = next(
-        (e for e in (directory.find_by_last_name(found.get("last_name_heard")) if directory else ()) if e.source_row == row),
-        None,
-    )
-    if entry is None or directory_identity.employee_name(entry) != found.get("proposed_name"):
+    rows = found.get("pending_rows") or [row]
+    entries = [
+        e for e in (directory.find_by_last_name(found.get("last_name_heard")) if directory else ()) if e.source_row in rows
+    ]
+    if len(entries) != len(rows) or any(directory_identity.employee_name(e) != found.get("proposed_name") for e in entries):
         return False
-    kept = {k: v for k, v in found.items() if k not in ("pending_row", "last_name_heard")}
-    update_collected(session, directory={**kept, "entry": directory_identity.entry_context(entry)})
+    contexts = [directory_identity.entry_context(e) for e in entries]
+    entry = contexts[0]
+    if len(entries) > 1:
+        # Only what every line agrees on is the person's; the rest (extension, site, and anything else that differs)
+        # belongs to a line the caller has not said they are on.
+        for field in entry:
+            if field in directory_identity.LINE_FIELDS or any(c.get(field) != entry[field] for c in contexts[1:]):
+                entry[field] = [] if field == "teams" else None
+    kept = {k: v for k, v in found.items() if k not in ("pending_row", "pending_rows", "last_name_heard")}
+    update_collected(session, directory={**kept, "entry": entry})
     return True
 
 
@@ -2082,8 +2093,11 @@ async def _next_step(
     # --- department (IT only) ---
     if not patient and not urgent and not collected.get("department") and not _asked(session, "department"):
         _mark_asked(session, "department")
-        first_name = collected["caller_name"].split(" ")[0]
-        return ask(VoiceCallState.COLLECT_NAME, scripts.DEPARTMENT_ASK.format(first_name=first_name))
+        first_name = _greeting_name(session)
+        return ask(
+            VoiceCallState.COLLECT_NAME,
+            scripts.DEPARTMENT_ASK.format(first_name=first_name) if first_name else scripts.DEPARTMENT_ASK_NO_NAME,
+        )
 
     # --- name confirmation (IT only; patient flow keeps it simple) ---
     if not patient:
@@ -2772,6 +2786,19 @@ def _ticket_accepts_email(email: str | None) -> bool:
 MAX_EMAIL_FIXES = 3
 
 
+def _greeting_name(session: VoiceCallSession) -> str:
+    """The name the agent greets the caller with ("Thanks, Maria."), or "" for no name.
+
+    The first word of what the caller said. A name that came from the directory is not trusted to be "First Last":
+    it may be written surname first ("Ranga Sai Yashwanth"), and three or more words do not say where the given
+    name is, so the agent greets without a name rather than call the caller by the wrong word."""
+    c = session.collected
+    words = (c.get("caller_name") or "").split()
+    if not words or (c.get("directory_identity") and len(words) != 2):
+        return ""
+    return words[0]
+
+
 def _directory_email_offer(session: VoiceCallSession) -> str | None:
     """An address from the caller's confirmed directory entry that can be offered, exactly as on
     file. Offered for the caller's yes, never filled in: see directory_identity.directory_email_for."""
@@ -2791,7 +2818,7 @@ def _ask_for_email(
         session.state = VoiceCallState.CONFIRM_EMAIL
         prompt = scripts.EMAIL_DIRECTORY_CONFIRM.format(email=scripts.spoken_email(offered))
         return TurnOutcome(_speak(session, _ask(session, f"{acknowledgement} {prompt}" if acknowledgement else prompt)))
-    first_name = (session.collected.get("caller_name") or "").split(" ")[0]
+    first_name = _greeting_name(session)
     prompt = (
         scripts.EMAIL_ASK.format(first_name=first_name) if first_name else scripts.EMAIL_ASK_NO_NAME
     )
@@ -3171,7 +3198,7 @@ def _summary_text(session: VoiceCallSession, *, updated: bool = False) -> str:
     heard, not read, and the caller can interrupt it.
     """
     c = session.collected
-    first_name = (c.get("caller_name") or "").split(" ")[0]
+    first_name = _greeting_name(session)
     n = len(session.turns or [])
 
     if updated:
