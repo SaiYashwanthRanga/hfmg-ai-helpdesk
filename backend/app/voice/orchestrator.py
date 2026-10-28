@@ -2556,11 +2556,10 @@ def _record_extension(
         result = directory.find_by_extension(extension)
         if result.status is LookupStatus.MATCHED and result.entry is not None:
             # The merged directory's clean name, or the name the phone-system label gives: either is this caller's name.
-            listed = {
-                name.lower() for name in (directory_identity.employee_name(result.entry), directory_identity.person_name(result.entry))
-                if name
-            }
-            same = (c.get("caller_name") or "").strip().lower() in listed
+            same = directory_identity.is_same_name(
+                c.get("caller_name"),
+                [directory_identity.employee_name(result.entry), directory_identity.person_name(result.entry)],
+            )
             note = "matches the directory entry for this caller's name" if same else (
                 "unverified: the directory lists this extension for a different entry"
             )

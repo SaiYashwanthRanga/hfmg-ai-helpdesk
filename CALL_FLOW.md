@@ -589,8 +589,10 @@ account; their Status is `Unknown`) are never named, whatever else they carry.
 
 **Identifying by last name.** When the caller-ID lookup returns `not_found`, `ambiguous` or `unavailable` (and the
 directory itself can be searched), the agent asks *"What's your last name?"* once, before the normal name question
-(`orchestrator._ask_last_name`, `UserDirectoryService.find_by_last_name`). The directory matches the last word of the
-clean Display Name, case-insensitively and with the same one-letter tolerance as names elsewhere
+(`orchestrator._ask_last_name`, `UserDirectoryService.find_by_last_name`). The directory matches **any word** of the
+clean Display Name (the directory does not say which word is the family name: "Ranga", "Sai" and "Yashwanth" all find
+"Ranga Sai Yashwanth"; the "first name or extension?" step and the extension note compare by any word too),
+case-insensitively and with the same one-letter tolerance as names elsewhere
 (`names.same_name_part`; an exact match is never mixed with near misses, a trailing Jr/Sr/II/III/IV is not the family
 name), and returns **only live, real people**: never a shared line, call park, service, system or test account, a
 deactivated user or a mailbox-only record. A spelled-out name ("R-A-N-G-A") is decoded letter by letter, without the

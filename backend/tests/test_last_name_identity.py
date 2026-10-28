@@ -132,9 +132,36 @@ async def test_matching_is_as_tolerant_as_names_are_elsewhere(directory, said, e
     assert _found(directory, said) == expected
 
 
-async def test_only_the_last_word_of_the_name_counts(directory):
-    assert directory.find_by_last_name("Ranga") == ()  # a first name
-    assert directory.find_by_last_name("Ranga Nair") == ()  # a whole name is not a last name
+async def test_any_word_of_the_name_finds_the_person_whatever_order_the_directory_writes_it(directory):
+    assert _found(directory, "Ranga") == ["Ranga Nair", "Ranga Rao"]  # a first name finds everyone who has it
+    assert _found(directory, "Dana") == ["Dana Reilly"]
+    assert directory.find_by_last_name("Ranga Nair") == ()  # a whole name is not one name part
+
+
+async def test_a_name_in_either_order_and_a_middle_name_find_the_same_person(tmp_path):
+    service = await _service(tmp_path, [
+        merged_row("3000 Sai Yashwanth", display="Ranga Sai Yashwanth", phone="(845) 555-0601", ext="6001"),
+        merged_row("Yashwanth Ranga", display="Anna Smith-Jones", phone="(845) 555-0602", ext="6002"),
+    ])
+
+    for said in ("Ranga", "Sai", "Yashwanth"):
+        assert _found(service, said) == ["Ranga Sai Yashwanth"]
+    assert _found(service, "Smith") == _found(service, "Jones") == _found(service, "Smith-Jones") == ["Anna Smith-Jones"]
+
+
+@pytest.mark.parametrize("caller, listed, same", [
+    ("Yashwanth Ranga", ["Ranga Sai Yashwanth"], True),  # either order, the middle name left out
+    ("Ranga Sai Yashwanth", ["Ranga Sai Yashwanth"], True),
+    ("Ranga Yashwanth", [None, "Ranga Sai Yashwanth"], True),
+    ("Yashwanth Nair", ["Ranga Sai Yashwanth"], False),
+    ("Maria Ranga", ["Ranga Sai Yashwanth"], False),  # a word that is not in the listed name
+    ("", ["Ranga Sai Yashwanth"], False),
+    ("Ranga Sai", [], False),
+])
+async def test_the_extension_note_compares_a_name_by_any_word(caller, listed, same):
+    from app.voice import directory_identity
+
+    assert directory_identity.is_same_name(caller, listed) is same
 
 
 async def test_an_unavailable_directory_finds_nobody():

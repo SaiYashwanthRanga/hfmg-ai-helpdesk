@@ -94,15 +94,30 @@ def employee_name(entry: DirectoryEntry) -> str | None:
 
 
 def with_first_name(entries: list[DirectoryEntry], first_name: str | None) -> list[DirectoryEntry]:
-    """The entries (people of the merged directory, found by last name) whose clean display name starts with this
-    first name, allowing a recognizer's slip. Used to pick one of several people who share a last name."""
+    """The entries (people of the merged directory, found by a name they share) whose clean display name has this
+    other name among its words, allowing a recognizer's slip. Any word counts, not just the first: the directory does
+    not say which is the given name. Used to pick one of several people who share a name."""
     heard = names.letters(first_name)
     if not heard:
         return []
     return [
         e for e in entries
-        if e.display_name and names.same_name_part(heard, names.letters(e.display_name.split()[0]))
+        if e.display_name and any(names.same_name_part(heard, names.letters(word)) for word in e.display_name.split())
     ]
+
+
+def is_same_name(caller_name: str | None, listed_names: list[str | None]) -> bool:
+    """Whether the caller's name is one of the listed names, whatever the order and with or without a middle name:
+    every word the caller gave must be a word of a listed name (allowing a recognizer's slip), as in find_by_last_name.
+    "Yashwanth Ranga" is "Ranga Sai Yashwanth"; "Ranga" alone is too, as no other name is being compared."""
+    heard = [key for word in (caller_name or "").split() if len(key := names.letters(word)) >= 2]
+    if not heard:
+        return False
+    for listed in listed_names:
+        words = [names.letters(word) for word in (listed or "").split()]
+        if words and all(any(names.same_name_part(h, w) for w in words) for h in heard):
+            return True
+    return False
 
 
 def with_extension(entries: list[DirectoryEntry], extension: str | None) -> list[DirectoryEntry]:

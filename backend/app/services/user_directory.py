@@ -213,7 +213,7 @@ class _Snapshot:
     by_phone: dict[str, tuple[int, ...]]
     by_email: dict[str, tuple[int, ...]]
     by_extension: dict[str, tuple[int, ...]]
-    people: tuple[tuple[str, int], ...]  # (last name's letters, position) of each live, real person
+    people: tuple[tuple[str, int], ...]  # (letters of one word of the name, position), for each live, real person
     report: DirectoryLoadReport
 
 
@@ -231,18 +231,25 @@ def clean_display_name(raw: str | None) -> str | None:
     return " ".join(words)
 
 
-def _last_name_letters(entry: DirectoryEntry) -> str | None:
-    """The letters of the family name of an entry that is a live person with a clean display name, else None:
-    a shared line, a service, a test, a call park, a deactivated user and a mailbox with no phone account have none."""
+def _name_keys(entry: DirectoryEntry) -> tuple[str, ...]:
+    """The letters of every part of the name of an entry that is a live person with a clean display name, else none:
+    a shared line, a service, a test, a call park, a deactivated user and a mailbox with no phone account have none.
+
+    Every word counts, not just the last: the directory does not say which word is the family name ("Ranga Sai
+    Yashwanth" and "Yashwanth Ranga" are the same person to a caller who says "Ranga"). A suffix ("Jr"), a lone
+    initial and a hyphenated name's whole and parts ("Smith-Jones", "Smith", "Jones") are handled."""
     if entry.account_type != _PERSON or not entry.active:
-        return None
+        return ()
     name = clean_display_name(entry.display_name)
     if name is None:
-        return None
-    words = name.split()
-    while len(words) > 2 and names.letters(words[-1]) in _NAME_SUFFIXES:
-        words.pop()
-    return names.letters(words[-1]) or None
+        return ()
+    keys: dict[str, None] = {}
+    for word in name.split():
+        for part in (word, *word.split("-")):
+            key = names.letters(part)
+            if len(key) >= 2 and key not in _NAME_SUFFIXES:
+                keys[key] = None
+    return tuple(keys)
 
 
 def _teams(cell: str) -> tuple[str, ...]:
@@ -401,7 +408,7 @@ def _parse(reader, path: Path) -> _Snapshot:
         duplicate_phone_numbers=dup_phone, duplicate_emails=dup_email, duplicate_extensions=dup_ext,
         ambiguous_phone_numbers=amb_phone, ambiguous_emails=amb_email, ambiguous_extensions=amb_ext,
     )
-    people = tuple((key, i) for i, record in enumerate(records) if (key := _last_name_letters(record)))
+    people = tuple((key, i) for i, record in enumerate(records) for key in _name_keys(record))
     return _Snapshot(tuple(records), _index(by_phone), _index(by_email), _index(by_extension), people, report)
 
 
@@ -479,8 +486,9 @@ class UserDirectoryService:
         return self._lookup("by_extension", normalize_extension(extension), "invalid_extension")
 
     def find_by_last_name(self, last_name: str | None) -> tuple[DirectoryEntry, ...]:
-        """The live people whose clean display name ends in this last name, in file order; none when it is
-        blank, unknown or the directory is unavailable.
+        """The live people whose clean display name has this name as any of its words (first, middle or last, so
+        the order the directory writes a name in does not matter), in file order; none when it is blank, unknown or
+        the directory is unavailable.
 
         Only entries that are a real person (a `person` of the merged directory, active, with a name that is
         safe to say) are ever returned: never a shared line, service, test or call park. Matching is
@@ -493,7 +501,7 @@ class UserDirectoryService:
             return ()
         exact = [i for key, i in snapshot.people if key == heard]
         positions = exact or [i for key, i in snapshot.people if names.same_name_part(heard, key)]
-        return tuple(snapshot.records[i] for i in positions)
+        return tuple(snapshot.records[i] for i in sorted(set(positions)))
 
     def find_by_identifier(self, identifier: str | None) -> LookupResult:
         """Look up by whatever the caller gave: an email address, a phone number (including a
