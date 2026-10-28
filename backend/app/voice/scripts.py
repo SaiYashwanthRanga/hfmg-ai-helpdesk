@@ -348,6 +348,11 @@ IDENTITY_CONFIRM = "I found a directory entry for {name}. Am I speaking with {na
 IDENTITY_REASK = "Sorry, I didn't catch that. Am I speaking with {name}? Please say yes or no."
 IDENTITY_DECLINED = "Sorry about that."
 IDENTITY_NOT_CONFIRMED = "That's okay."
+# The caller ID found nobody, so the caller is asked for a last name to look up. What is proposed from it is still
+# only a proposal (IDENTITY_CONFIRM's rules apply), and nobody else's details are said before the caller agrees.
+LAST_NAME_ASK = "What's your last name?"
+LAST_NAME_WHICH = "I have more than one person with that last name. What's your first name, or your extension?"
+IDENTITY_CONFIRM_BY_LAST_NAME = "Are you {name}?"
 
 # --- caller type classification (low confidence) ------------------------------------
 CLASSIFY_CALLER_TYPE_ASK = (

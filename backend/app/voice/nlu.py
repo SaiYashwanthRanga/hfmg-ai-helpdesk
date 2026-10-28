@@ -29,6 +29,7 @@ from app.core.config import get_settings
 from app.db.models import Priority
 from app.voice import strict_extraction
 from app.voice.facts import WORK_BLOCKED, Source, normalize_text
+from app.voice.names import edit_distance as _edit_distance
 from app.llm.factory import get_provider
 
 logger = logging.getLogger("hfmg.voice.nlu")
@@ -144,16 +145,6 @@ def mentions_escalation(text: str) -> bool:
 
 
 # --- normalization -------------------------------------------------------------
-
-
-def _edit_distance(a: str, b: str) -> int:
-    previous = list(range(len(b) + 1))
-    for i, ca in enumerate(a, 1):
-        current = [i]
-        for j, cb in enumerate(b, 1):
-            current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (ca != cb)))
-        previous = current
-    return previous[-1]
 
 
 def _repair_home_domain(address: str) -> str:

@@ -99,6 +99,7 @@ async def test_the_reported_call_end_to_end(make_call, client, db_session, sent_
     timeout_q = await say("Adjust the timeout.")  # 4.
     assert _text(timeout_q) == Q["timeout_kind"]
     await say("The connection is timing out.")
+    await call.last_name("Real")  # nobody in the directory has it: the usual name question follows
     call._say(interpret_name=nlu.TurnResult(value="Pat Real", confidence="high", unable_to_determine=False,
                                             extras={"department": "Development", "name_confidence": "high"}))
     await say("Pat Real, development.")

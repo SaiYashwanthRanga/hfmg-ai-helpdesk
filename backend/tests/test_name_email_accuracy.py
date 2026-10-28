@@ -502,6 +502,7 @@ async def test_a_name_the_recognizer_was_unsure_of_is_spelled_before_it_is_trust
     call = make_call("acc-name-spell")
     await call.start()
     await call.report()
+    await call.last_name("Want")  # asked first; nobody in the directory has it
     call._say(interpret_name=nlu.TurnResult(
         value="Yash Want", confidence="low", unable_to_determine=False, extras={"name_confidence": "low"}
     ))
@@ -526,6 +527,7 @@ async def test_a_clearly_heard_ordinary_name_costs_the_caller_nothing(make_call,
     call = make_call("acc-name-clear")
     await call.start()
     await call.report()
+    await call.last_name("Lopez")  # asked first; nobody in the directory has it
     call._say(interpret_name=nlu.TurnResult(
         value="Maria Lopez", confidence="high", unable_to_determine=False, extras={"name_confidence": "high"}
     ))
@@ -545,6 +547,7 @@ async def test_a_doubtful_name_that_the_recognizer_was_fairly_sure_of_gets_the_o
     call = make_call("acc-name-readback")
     await call.start()
     await call.report()
+    await call.last_name("Rao")  # asked first; nobody in the directory has it
     call._say(interpret_name=nlu.TurnResult(
         value="Natakarani Rao", confidence="high", unable_to_determine=False, extras={"name_confidence": "high"}
     ))
@@ -580,6 +583,7 @@ async def test_simultaneous_calls_keep_their_own_names_addresses_and_corrections
     for call, name in ((first, "Pat Real"), (second, "Sam Other")):  # set up one at a time, then run them together
         await call.start()
         await call.report()
+        await call.turn(name.split()[-1])  # the last name, asked first: nobody in the directory has it
         await call.turn(f"{name}, Billing")
     await third.start()
     await third.report()

@@ -69,6 +69,27 @@ def parts(name: str | None) -> list[str]:
     return [p for p in re.split(r"[\s\-]+", (name or "").lower()) if re.sub(r"[^a-z]", "", p)]
 
 
+def letters(word: str | None) -> str:
+    """A name part reduced to its lowercase letters (any alphabet): "O'Brien" and "OBrien" are one name."""
+    return re.sub(r"[\W\d_]+", "", (word or "").casefold())
+
+
+def edit_distance(a: str, b: str) -> int:
+    previous = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        current = [i]
+        for j, cb in enumerate(b, 1):
+            current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (ca != cb)))
+        previous = current
+    return previous[-1]
+
+
+def same_name_part(heard: str, listed: str) -> bool:
+    """One part of a name as the caller said it, against the same part as written: equal, or one letter off in a
+    name of four letters or more (a recognizer's slip: "Reilly" for "Riley"). Shorter names must be exact."""
+    return heard == listed or (len(heard) >= 4 and edit_distance(heard, listed) <= 1)
+
+
 #: Words a recognizer or a model hands back as a "name" that are not one. Seen on a test call: "Hi, name" was taken
 #: as the name and read back as "N A M E".
 _NOT_A_NAME = frozenset({

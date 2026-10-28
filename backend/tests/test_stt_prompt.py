@@ -18,6 +18,13 @@ async def test_name_prompt_covers_name_and_department():
     assert "first and last name" in prompt and "department" in prompt
 
 
+async def test_last_name_question_hears_a_name_an_extension_or_spelled_letters():
+    prompt = context.stt_prompt("COLLECT_NAME", {"last_name_step": "last"})
+    assert prompt == context.transcription_prompt("LAST_NAME")
+    assert "last name" in prompt and "extension" in prompt and "department" not in prompt
+    assert context.stt_prompt("COLLECT_NAME", {"last_name_step": None}) == context.stt_prompt("COLLECT_NAME")
+
+
 async def test_email_step_uses_the_spelling_prompt():
     prompt = context.stt_prompt("COLLECT_EMAIL")
     assert prompt == context.transcription_prompt("SPELL_EMAIL")

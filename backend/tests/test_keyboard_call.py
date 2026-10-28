@@ -138,6 +138,8 @@ async def test_the_reported_call_end_to_end(make_call, client, db_session, monke
 
     name_q = await say("Some keys aren't working, but I can still work.")
     assert "name" in _text(name_q).lower() or "speaking with" in _text(name_q).lower()
+    assert scripts.LAST_NAME_ASK in _text(name_q)
+    await call.last_name("Yashwant")  # nobody in the directory has it: the usual name question follows
 
     call._say(interpret_name=nlu.TurnResult(value="Yashwant", confidence="high", unable_to_determine=False,
                                             extras={"department": "Development", "name_confidence": "low"}))
@@ -266,6 +268,7 @@ async def test_what_counts_as_not_following_the_question(said, confused):
 async def _to_email(call):
     await _describe(call, "My wired keyboard is not working.", description="The caller's wired keyboard is not working.")
     await call.turn("Some keys aren't working.")
+    await call.last_name("Yashwanth")  # nobody in the directory has it: the usual name question follows
     call._say(interpret_name=nlu.TurnResult(value="Yashwanth", confidence="high", unable_to_determine=False,
                                             extras={"department": "IT", "name_confidence": "low"}))
     await call.turn("Yashwanth, IT.")
@@ -312,6 +315,7 @@ async def test_a_name_that_is_not_a_name_is_never_stored(make_call, db_session):
     call = make_call("kb-not-a-name")
     await _describe(call, "My wired keyboard is not working.", description="The caller's wired keyboard is not working.")
     await call.turn("Some keys aren't working.")
+    await call.last_name("Smith")  # nobody in the directory has it: the usual name question follows
     call._say(interpret_name=nlu.TurnResult(value="Name", confidence="high", unable_to_determine=False))
 
     out = await call.turn("Hi, name.")

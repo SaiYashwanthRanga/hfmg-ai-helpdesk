@@ -223,9 +223,10 @@ callback number, email, issue, summary and ticket number.
 - **The directory entry has a usable email** (and the confirmed name matches it): the email question is replaced by
   *"I have d a n a dot s a m p l e at e x a m p l e dot org on file for you. Is that still the best email for
   updates?"* (`EMAIL_DIRECTORY_CONFIRM`). Only a yes uses it; a caller who declines it is asked for their own.
-- **No directory match** (not found, ambiguous, shared line, deactivated, or no usable caller ID): the identity
-  question is replaced by the normal name question, *"May I have your name and department?"* or *"Who am I
-  speaking with, and which department are you in?"*.
+- **No directory match** (shared line, deactivated, or no usable caller ID): the identity question is replaced by the
+  normal name question, *"May I have your name and department?"* or *"Who am I speaking with, and which department
+  are you in?"*. When the caller ID is not found, ambiguous or could not be looked up, *"What's your last name?"* comes
+  first (section 2.2): one match is asked as *"Are you Dana Sample?"*, and anything else is the normal name question.
 - **The first answer already holds the problem** ("I'm an employee, my printer is jammed"): the problem question is
   skipped and the agent goes straight on: *"Got it, your printer. When did this start, and can you still get your
   work done?"*
@@ -582,8 +583,28 @@ account; their Status is `Unknown`) are never named, whatever else they carry.
 |---|---|
 | One live entry with a name the agent can say | After the issue is described, **instead of** the name question: "Am I speaking with X?" (`CONFIRM_IDENTITY`) |
 | One entry that is a shared line, a room, a role, or deactivated | The normal name question. The entry is kept for audit only and never proposed |
-| Several entries share the number (`ambiguous`) | The normal name question. Which entries matched is not kept; none is ever picked |
-| `not_found`, `unavailable`, or no usable caller ID | The normal name question; no lookup at all without a caller ID |
+| Several entries share the number (`ambiguous`) | The last-name question (below), then the normal name question. Which entries matched is not kept; none is ever picked by caller ID |
+| `not_found`, `unavailable` | The last-name question (below), then the normal name question |
+| No usable caller ID | The normal name question; no lookup at all without a caller ID |
+
+**Identifying by last name.** When the caller-ID lookup returns `not_found`, `ambiguous` or `unavailable` (and the
+directory itself can be searched), the agent asks *"What's your last name?"* once, before the normal name question
+(`orchestrator._ask_last_name`, `UserDirectoryService.find_by_last_name`). The directory matches the last word of the
+clean Display Name, case-insensitively and with the same one-letter tolerance as names elsewhere
+(`names.same_name_part`; an exact match is never mixed with near misses, a trailing Jr/Sr/II/III/IV is not the family
+name), and returns **only live, real people**: never a shared line, call park, service, system or test account, a
+deactivated user or a mailbox-only record. A spelled-out name ("R-A-N-G-A") is decoded letter by letter, without the
+model.
+
+| Last-name outcome | What the caller experiences |
+|---|---|
+| One person | *"Are you Ranga Nair?"* through the same confirm-identity step. Yes: name, extension, email (offered, not assumed) and phone come from the entry, exactly as for a caller-ID match. No: *"Sorry about that"* and the normal name question |
+| Several people | *"I have more than one person with that last name. What's your first name, or your extension?"* once. One person left: *"Are you ...?"*. Still unclear, or silence: the normal name question |
+| Nobody, or only shared lines/services/tests | The normal name question |
+
+Nothing about the person asked about is said or kept before the caller says yes: only the name being asked and the
+row it came from. The details are read from the directory again on the yes. The callback number stays the number the
+caller is calling from. A patient or provider call never does this.
 
 Rules that do not bend:
 

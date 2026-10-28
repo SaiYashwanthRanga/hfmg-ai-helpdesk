@@ -38,7 +38,7 @@ from app.db.models import (
 )
 from app.schemas.ticket import TicketCreate
 from app.services import ticket_service
-from app.services.user_directory import LookupStatus, UserDirectoryService, normalize_extension
+from app.services.user_directory import DirectoryEntry, LookupStatus, UserDirectoryService, normalize_extension
 from app.voice import caller_routing, departments, directory_identity, diagnostics, names, nlu, reply, scripts
 from app.voice import facts as facts_mod
 from app.voice import priority as priority_rules
@@ -135,6 +135,10 @@ def _look_up_employee(session: VoiceCallSession, directory: UserDirectoryService
     except Exception as exc:  # unexpected: still must not take the call down
         logger.error("Call %s: employee directory lookup failed (%s); asking who is calling", session.call_id, type(exc).__name__)
         found = {"status": LookupStatus.UNAVAILABLE.value, "reason": "lookup_error"}
+    if found["status"] != LookupStatus.MATCHED.value and directory.available:
+        # Nobody was found by caller ID (or the lookup failed): the caller is asked for a last name before the name
+        # question. Not when the directory itself cannot be searched: that would only cost the caller a question.
+        found["by_last_name"] = True
     update_collected(session, directory=found)
 
 
@@ -276,6 +280,8 @@ async def handle_turn(
             return await _next_step(db, session)
         if session.state == VoiceCallState.CONFIRM_IDENTITY:
             return await _identity_unclear(db, session)  # silence is not a yes
+        if session.state == VoiceCallState.COLLECT_NAME and session.collected.get("last_name_step"):
+            return await _end_last_name(db, session)  # no last name to look up: the usual name question
         if session.state == VoiceCallState.IDENTIFY_CALLER:
             return await _identify_unclear(db, session)  # silence is not an answer, and is not a failure
         if session.state == VoiceCallState.PATIENT_INTENT:
@@ -339,7 +345,7 @@ async def handle_turn(
         VoiceCallState.COLLECT_DETAILS: _handle_details,
         VoiceCallState.COLLECT_DIAGNOSTICS: _handle_diagnostics,
         VoiceCallState.CONFIRM_IDENTITY: lambda d, s, u: _handle_identity_confirmation(d, s, u, directory),
-        VoiceCallState.COLLECT_NAME: _handle_name,
+        VoiceCallState.COLLECT_NAME: lambda d, s, u: _handle_name(d, s, u, directory),
         VoiceCallState.CONFIRM_NAME: _handle_name_confirmation,
         VoiceCallState.COLLECT_PHONE: _handle_phone,
         VoiceCallState.CONFIRM_CALLBACK_NUMBER: _handle_callback_confirmation,
@@ -913,7 +919,11 @@ def _keep_details(session: VoiceCallSession, result: nlu.TurnResult, utterance: 
         update_collected(session, details=details[:2000])
 
 
-async def _handle_name(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
+async def _handle_name(
+    db: AsyncSession, session: VoiceCallSession, utterance: str, directory: UserDirectoryService | None = None
+) -> TurnOutcome:
+    if session.collected.get("last_name_step"):
+        return await _handle_last_name(db, session, utterance, directory)
     name_known = bool(session.collected.get("caller_name"))
     if name_known:
         known = _department_only(utterance)
@@ -966,7 +976,9 @@ def _pending_identity_name(session: VoiceCallSession) -> str | None:
 def _ask_identity(session: VoiceCallSession, name: str, *, acknowledgement: str | None = None) -> TurnOutcome:
     update_collected(session, identity_rounds=session.collected.get("identity_rounds", 0) + 1, identity_unclear=0)
     session.state = VoiceCallState.CONFIRM_IDENTITY
-    prompt = scripts.IDENTITY_CONFIRM.format(name=name)
+    # Someone the caller's own last name led to is asked about plainly; a caller-ID match is "a directory entry".
+    by_last_name = (session.collected.get("directory") or {}).get("match") == "last_name"
+    prompt = (scripts.IDENTITY_CONFIRM_BY_LAST_NAME if by_last_name else scripts.IDENTITY_CONFIRM).format(name=name)
     return TurnOutcome(_speak(session, _ask(session, f"{acknowledgement} {prompt}" if acknowledgement else prompt)))
 
 
@@ -1019,6 +1031,10 @@ async def _handle_identity_confirmation(
     if verdict is None and _rejects_proposal(utterance):
         verdict = False
     if verdict is True:
+        if not _fill_pending_entry(session, directory):
+            # The person asked about is no longer in the directory (it was reloaded mid-call): nothing to confirm.
+            _discard_proposal(session)
+            return await _next_step(db, session, acknowledgement=scripts.IDENTITY_NOT_CONFIRMED)
         return await _identity_confirmed(db, session)
     if verdict is False:
         rejected = (session.collected.get("directory") or {}).get("proposed_name")
@@ -1057,10 +1073,7 @@ _NAME_CUE = re.compile(r"\b(?:this is|i'?m|i am|my name|name is|it'?s|speaking)\
 def _same_person_name(name: str, other: str | None) -> bool:
     """Does `name` share a part with `other` (allowing a recognizer's one-letter slip)?"""
     theirs = names.parts(other)
-    return any(
-        part == mine or (len(mine) >= 4 and nlu._edit_distance(part, mine) <= 1)
-        for mine in names.parts(name) for part in theirs
-    )
+    return any(names.same_name_part(mine, part) for mine in names.parts(name) for part in theirs)
 
 
 async def _name_from_rejection(
@@ -1115,7 +1128,8 @@ async def _identity_from_identifier(
     """The caller gave another identifier instead of answering. One more lookup, and the result
     is itself only a proposal, subject to the same rules and the same budget."""
     collected = session.collected
-    current = ((collected.get("directory") or {}).get("entry") or {}).get("source_row")
+    shown = collected.get("directory") or {}
+    current = (shown.get("entry") or {}).get("source_row", shown.get("pending_row"))
     result = directory.find_by_identifier(identifier) if directory is not None else None
     found = directory_identity.compact_lookup(result) if result is not None else None
     sayable = (
@@ -1130,6 +1144,141 @@ async def _identity_from_identifier(
     # Not found, ambiguous, a shared line, the same entry again, or no directory: ask who is calling.
     _discard_proposal(session)
     return await _next_step(db, session, acknowledgement=scripts.IDENTITY_DECLINED)
+
+
+# --- identifying the caller by last name --------------------------------------------------------
+#
+# When the caller ID found nobody (not found, ambiguous, or the lookup failed) the caller is asked for a last name
+# before the usual name question, once per call. The directory (`find_by_last_name`: live people only, never a shared
+# line, service or test) turns it into at most one person to ask about, through the same confirm step as a caller-ID
+# match: "Are you Maria Example?". Several people share the last name: one question (first name or extension) picks
+# one. Anything still unclear, a no, or nobody found is the usual name question. Nothing about the person asked about
+# is said or kept before the caller says yes: only the name being asked and the row it came from. The rest is read
+# from the directory again on the yes (`_fill_pending_entry`). Employee calls only: a patient or provider is never
+# looked up.
+
+
+def _should_ask_last_name(session: VoiceCallSession) -> bool:
+    c = session.collected
+    directory = c.get("directory") or {}
+    return (
+        _is_employee_call(session)
+        and bool(directory.get("by_last_name"))
+        and not directory.get("rejected")
+        and not c.get("identity_confirmed")
+        and not _asked(session, "last_name")
+    )
+
+
+def _ask_last_name(session: VoiceCallSession, *, acknowledgement: str | None = None) -> TurnOutcome:
+    _mark_asked(session, "last_name")
+    update_collected(session, last_name_step="last")
+    session.state = VoiceCallState.COLLECT_NAME
+    return TurnOutcome(_speak(session, _ask(session, _with(acknowledgement, scripts.LAST_NAME_ASK))))
+
+
+async def _end_last_name(db: AsyncSession, session: VoiceCallSession) -> TurnOutcome:
+    """Nobody to ask about: forget what was heard and ask the usual name question."""
+    update_collected(session, last_name_step=None, last_name_heard=None, last_name_rows=None)
+    return await _next_step(db, session)
+
+
+async def _heard_name_words(utterance: str, *, asked: str) -> tuple[list[str], nlu.TurnResult]:
+    """The words of a name the caller said or spelled. Spelled letters are decoded exactly, as everywhere else
+    (the model "corrects" unfamiliar names into familiar words); a spoken name comes from the model."""
+    if nlu.looks_spelled(utterance):
+        spelled = nlu.decode_spelled(utterance)
+        if spelled and names.plausible(spelled):
+            return [spelled], nlu.TurnResult()
+    result = await nlu.interpret_name(utterance, asked=asked)
+    return [word for word in (result.value or "").split() if names.plausible(word)], result
+
+
+async def _handle_last_name(
+    db: AsyncSession, session: VoiceCallSession, utterance: str, directory: UserDirectoryService | None
+) -> TurnOutcome:
+    """The answer to "What's your last name?", or to "first name or extension?" when several people share it."""
+    c = session.collected
+    if directory is None:
+        return await _end_last_name(db, session)
+    if c.get("last_name_step") == "which":
+        candidates = [
+            e for e in directory.find_by_last_name(c.get("last_name_heard")) if e.source_row in (c.get("last_name_rows") or [])
+        ]
+        chosen = directory_identity.with_extension(candidates, normalize_extension(_extension_digits(utterance)))
+        if not chosen:
+            words, result = await _heard_name_words(utterance, asked=scripts.LAST_NAME_WHICH)
+            if _wants_human(utterance, result):
+                return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
+            if len(words) > 1 and not names.same_name_part(names.letters(words[-1]), names.letters(c.get("last_name_heard"))):
+                words = []  # more than a first name that is not "<first> <last name already given>": "Ranga or Rani"
+            chosen = directory_identity.with_first_name(candidates, words[0] if words else None)
+        return _propose_by_last_name(session, chosen) or await _end_last_name(db, session)
+
+    words, result = await _heard_name_words(utterance, asked=scripts.LAST_NAME_ASK)
+    if _wants_human(utterance, result):
+        return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
+    if not words:
+        return await _end_last_name(db, session)
+    last = words[-1]
+    candidates = list(directory.find_by_last_name(last))
+    if len(words) > 1:  # "Maria Example": the first name was given too, so it narrows the list
+        candidates = directory_identity.with_first_name(candidates, words[0])
+    proposed = _propose_by_last_name(session, candidates, heard=last)
+    if proposed is not None:
+        return proposed
+    if len(candidates) > 1:
+        update_collected(
+            session, last_name_step="which", last_name_heard=last, last_name_rows=[e.source_row for e in candidates]
+        )
+        return TurnOutcome(_speak(session, _ask(session, scripts.LAST_NAME_WHICH)))
+    return await _end_last_name(db, session)
+
+
+def _propose_by_last_name(
+    session: VoiceCallSession, candidates: list[DirectoryEntry], *, heard: str | None = None
+) -> TurnOutcome | None:
+    """Ask "Are you <name>?" when exactly one person is left, else None. Only the name and the row it came from are
+    kept until the caller says yes."""
+    if len(candidates) != 1:
+        return None
+    entry = candidates[0]
+    name = directory_identity.employee_name(entry)
+    if not name:
+        return None
+    c = session.collected
+    update_collected(
+        session,
+        directory={
+            "status": (c.get("directory") or {}).get("status", LookupStatus.NOT_FOUND.value),
+            "match": "last_name",
+            "proposed_name": name,
+            "pending_row": entry.source_row,
+            "last_name_heard": heard or c.get("last_name_heard"),
+        },
+        last_name_step=None, last_name_heard=None, last_name_rows=None,
+    )
+    return _ask_identity(session, name)
+
+
+def _fill_pending_entry(session: VoiceCallSession, directory: UserDirectoryService | None) -> bool:
+    """The caller said yes to someone found by last name: read that person's details from the directory now.
+
+    True when there is nothing to read (a caller-ID match carries its entry already) or it was read; False when the
+    person cannot be found any more, so the yes confirms nobody."""
+    found = session.collected.get("directory") or {}
+    row = found.get("pending_row")
+    if row is None:
+        return True
+    entry = next(
+        (e for e in (directory.find_by_last_name(found.get("last_name_heard")) if directory else ()) if e.source_row == row),
+        None,
+    )
+    if entry is None or directory_identity.employee_name(entry) != found.get("proposed_name"):
+        return False
+    kept = {k: v for k, v in found.items() if k not in ("pending_row", "last_name_heard")}
+    update_collected(session, directory={**kept, "entry": directory_identity.entry_context(entry)})
+    return True
 
 
 # --- name confirmation -----------------------------------------------------------
@@ -1921,6 +2070,8 @@ async def _next_step(
             # A directory entry matched the caller ID: ask, never assume. Employee IT calls only,
             # and only here, where the name is about to be asked for anyway.
             return _ask_identity(session, proposed, acknowledgement=acknowledgement)
+        if _should_ask_last_name(session):
+            return _ask_last_name(session, acknowledgement=acknowledgement)
         _mark_asked(session, "department")  # asked together with the name
         return ask(VoiceCallState.COLLECT_NAME, scripts.pick(scripts.NAME_ASK_OPTIONS, len(session.turns or [])))
 

@@ -55,6 +55,12 @@ _STATE_HINTS: dict[str, str] = {
         "Names may be unusual or from any language: write them as spoken, do not translate them or change "
         "them into common words."
     ),
+    # The employee's last name (or, when several share it, a first name or an extension), said or spelled.
+    "LAST_NAME": (
+        "The caller says their last name, or spells it one letter at a time, or says a first name or an office "
+        "extension. Names may be unusual or from any language: write them as spoken, do not translate them or "
+        "change them into common words. Write spelled letters separately."
+    ),
     "COLLECT_PHONE": "The caller says a ten-digit US phone number, for example: 845-555-0142.",
     "CONFIRM_CALLBACK_NUMBER": "The caller answers yes or no, or says a different ten-digit US phone number.",
     "COLLECT_ALTERNATE_CALLBACK_NUMBER": "The caller says a ten-digit US phone number, for example: 845-555-0142.",
@@ -147,6 +153,8 @@ def recognition_mode(state: str | None, collected: dict | None) -> str | None:
         return "CONFIRM_EMAIL_PART"
     if state == "CONFIRM_NAME" and collected.get("name_spell_step"):
         return "SPELL_NAME"
+    if state == "COLLECT_NAME" and collected.get("last_name_step"):
+        return "LAST_NAME"
     if state == "COLLECT_DETAILS" and collected.get("pending_question"):
         return f"CLARIFY_{str(collected['pending_question']).upper()}"
     return state

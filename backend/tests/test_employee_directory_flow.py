@@ -85,7 +85,7 @@ async def merged_directory(tmp_path, monkeypatch):
 
         return wrapper
 
-    for name in ("find_by_phone", "find_by_extension", "find_by_email", "find_by_identifier"):
+    for name in ("find_by_phone", "find_by_extension", "find_by_email", "find_by_identifier", "find_by_last_name"):
         monkeypatch.setattr(service, name, counting(name, getattr(service, name)))
     service.calls = calls
     return service
@@ -221,8 +221,10 @@ async def test_a_directory_that_fails_never_ends_an_employee_call(
         asked = await call.report()
 
     session = await _session(db_session, "emp-broken")
-    assert session.collected["directory"] == {"status": "unavailable", "reason": "lookup_error"}
-    assert session.state == VoiceCallState.COLLECT_NAME and "directory entry" not in _said(asked)  # the normal name question
+    # The caller ID could not be looked up, but the directory itself can still be searched: by last name.
+    assert session.collected["directory"] == {"status": "unavailable", "reason": "lookup_error", "by_last_name": True}
+    assert session.state == VoiceCallState.COLLECT_NAME and "directory entry" not in _said(asked)
+    assert scripts.LAST_NAME_ASK in _said(asked)
     assert session.misunderstanding_count == 0 and session.state != VoiceCallState.ESCALATED
     assert "RuntimeError" in caplog.text and "secret detail" not in caplog.text  # the kind of failure, never what it held
 
@@ -327,6 +329,8 @@ async def test_the_extension_question_compares_the_callers_name_with_the_directo
     call = make_call(f"emp-extq-{said_name[:3]}", UNKNOWN)  # a number the directory does not have: the caller says who they are
     await call.start()
     await call.report()
+    await call.last_name("Second")
+    await call.turn("no")  # "Are you Samuel Second?": this caller says who they are instead
     await call.name_and_department(said_name)
 
     await call.turn("2002")  # Samuel Second's extension

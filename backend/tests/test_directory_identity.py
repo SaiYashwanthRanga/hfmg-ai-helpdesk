@@ -88,13 +88,36 @@ class DirCall(PatientCall):
         self._say(interpret_description=result)
         return await self.turn("My Outlook keeps crashing.")
 
+    last_said = ""
+
+    async def turn(self, utterance):
+        outcome = await super().turn(utterance)
+        self.last_said = " ".join(outcome.get("lines") or [])
+        return outcome
+
+    async def _past_the_last_name_question(self, name):
+        """A caller the caller ID did not find is asked for a last name before the name question. These calls are
+        about what comes after, so it is answered with a last name the directory does not have (the usual name
+        question follows). The last-name step itself is tested in test_last_name_identity.py."""
+        if scripts.LAST_NAME_ASK in self.last_said:
+            last = name.split()[-1]
+            self._say(interpret_name=nlu.TurnResult(value=last, confidence="high", unable_to_determine=False))
+            await self.turn(last)
+
+    async def last_name(self, said, *, heard=None):
+        """Answer "What's your last name?". The language model is stubbed to hear `heard` (default: what was said)."""
+        self._say(interpret_name=nlu.TurnResult(value=heard or said, confidence="high", unable_to_determine=False))
+        return await self.turn(said)
+
     async def department(self, name, department="Billing"):
+        await self._past_the_last_name_question(name)
         self._say(interpret_name=nlu.TurnResult(
             value=name, confidence="high", unable_to_determine=False, extras={"department": department}
         ))
         return await self.turn(department)
 
     async def name_and_department(self, name, department="Billing"):
+        await self._past_the_last_name_question(name)
         self._say(interpret_name=nlu.TurnResult(
             value=name, confidence="high", unable_to_determine=False, extras={"department": department}
         ))
@@ -222,7 +245,13 @@ async def test_without_a_sayable_unique_live_match_the_agent_just_asks_who_is_ca
     stored = session.collected["directory"]
     assert stored["status"] == status and stored.get("candidate_count", 0) == count
     assert "directory entry" not in _said(asked)
-    assert session.state == VoiceCallState.COLLECT_NAME  # the normal name question
+    assert session.state == VoiceCallState.COLLECT_NAME
+    # Nobody found by caller ID: a last name is asked for first. A shared line or a former employee is a match
+    # that cannot be proposed, and gets the normal name question.
+    if status in ("ambiguous", "not_found"):
+        assert scripts.LAST_NAME_ASK in _said(asked)
+    else:
+        assert any(option in _said(asked) for option in scripts.NAME_ASK_OPTIONS)
     assert not session.collected.get("caller_name")
     if status == "ambiguous":
         assert "entry" not in stored  # which records matched is never kept, so none can be picked

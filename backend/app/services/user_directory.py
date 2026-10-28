@@ -22,6 +22,8 @@ from pathlib import Path
 
 from fastapi import Request
 
+from app.voice import names
+
 logger = logging.getLogger("hfmg.directory")
 
 #: Columns the file must have (matched case-insensitively). Anything else is optional.
@@ -30,6 +32,12 @@ _TEAM, _LOCATION, _DEACTIVATED = "Team", "Location", "Deactivated Date"
 #: Only the merged directory has these. "Account Type" being present is what marks a file as merged; a record
 #: that exists only as a mailbox ("Record Source" mailbox_only) has no phone-system account to be live on.
 _ACCOUNT_TYPE, _RECORD_SOURCE, _MAILBOX_ONLY = "Account Type", "Record Source", "mailbox_only"
+#: The merged directory's account type of a record that is a person (shared lines, services, tests and the like are not).
+_PERSON = "person"
+#: One word of a person's real name: letters (any alphabet), then letters, apostrophes, hyphens or periods.
+_REAL_NAME_WORD = re.compile(r"^[^\W\d_](?:[^\W\d_]|['’.\-])*$")
+#: A trailing word that is not part of the family name: "John Smith Jr." is a Smith.
+_NAME_SUFFIXES = frozenset({"jr", "sr", "ii", "iii", "iv"})
 
 
 class LookupStatus(str, Enum):
@@ -205,7 +213,36 @@ class _Snapshot:
     by_phone: dict[str, tuple[int, ...]]
     by_email: dict[str, tuple[int, ...]]
     by_extension: dict[str, tuple[int, ...]]
+    people: tuple[tuple[str, int], ...]  # (last name's letters, position) of each live, real person
     report: DirectoryLoadReport
+
+
+def clean_display_name(raw: str | None) -> str | None:
+    """A mailbox display name the agent may say aloud, else None: two to four words, each made of letters (and
+    an apostrophe, hyphen or period), the first and last at least two characters. Anything else (a digit, a
+    single word, an address, a stray symbol) is not guessed at: the agent asks who is calling."""
+    words = (raw or "").split()
+    if not 2 <= len(words) <= 4 or len(" ".join(words)) > 60:
+        return None
+    if not all(_REAL_NAME_WORD.match(word) for word in words):
+        return None
+    if min(len(words[0].rstrip(".")), len(words[-1].rstrip("."))) < 2:
+        return None
+    return " ".join(words)
+
+
+def _last_name_letters(entry: DirectoryEntry) -> str | None:
+    """The letters of the family name of an entry that is a live person with a clean display name, else None:
+    a shared line, a service, a test, a call park, a deactivated user and a mailbox with no phone account have none."""
+    if entry.account_type != _PERSON or not entry.active:
+        return None
+    name = clean_display_name(entry.display_name)
+    if name is None:
+        return None
+    words = name.split()
+    while len(words) > 2 and names.letters(words[-1]) in _NAME_SUFFIXES:
+        words.pop()
+    return names.letters(words[-1]) or None
 
 
 def _teams(cell: str) -> tuple[str, ...]:
@@ -364,7 +401,8 @@ def _parse(reader, path: Path) -> _Snapshot:
         duplicate_phone_numbers=dup_phone, duplicate_emails=dup_email, duplicate_extensions=dup_ext,
         ambiguous_phone_numbers=amb_phone, ambiguous_emails=amb_email, ambiguous_extensions=amb_ext,
     )
-    return _Snapshot(tuple(records), _index(by_phone), _index(by_email), _index(by_extension), report)
+    people = tuple((key, i) for i, record in enumerate(records) if (key := _last_name_letters(record)))
+    return _Snapshot(tuple(records), _index(by_phone), _index(by_email), _index(by_extension), people, report)
 
 
 # --- the service ----------------------------------------------------------------------
@@ -439,6 +477,23 @@ class UserDirectoryService:
 
     def find_by_extension(self, extension: str | None) -> LookupResult:
         return self._lookup("by_extension", normalize_extension(extension), "invalid_extension")
+
+    def find_by_last_name(self, last_name: str | None) -> tuple[DirectoryEntry, ...]:
+        """The live people whose clean display name ends in this last name, in file order; none when it is
+        blank, unknown or the directory is unavailable.
+
+        Only entries that are a real person (a `person` of the merged directory, active, with a name that is
+        safe to say) are ever returned: never a shared line, service, test or call park. Matching is
+        case-insensitive and as tolerant of a recognizer's slip as names are everywhere else (names.same_name_part);
+        a name that matches exactly is not mixed up with near misses. What comes back is a list of people the
+        caller may be asked about, not an answer to who is calling."""
+        snapshot = self._snapshot
+        heard = names.letters(last_name)
+        if snapshot is None or not heard:
+            return ()
+        exact = [i for key, i in snapshot.people if key == heard]
+        positions = exact or [i for key, i in snapshot.people if names.same_name_part(heard, key)]
+        return tuple(snapshot.records[i] for i in positions)
 
     def find_by_identifier(self, identifier: str | None) -> LookupResult:
         """Look up by whatever the caller gave: an email address, a phone number (including a

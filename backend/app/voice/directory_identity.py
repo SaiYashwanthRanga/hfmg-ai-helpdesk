@@ -14,7 +14,8 @@ agent simply asks who is calling.
 
 import re
 
-from app.services.user_directory import DirectoryEntry, LookupResult, LookupStatus
+from app.services.user_directory import DirectoryEntry, LookupResult, LookupStatus, clean_display_name
+from app.voice import names
 
 #: Words that mark a phone-system label (a room, a role, a department, a device), not a person.
 LABEL_WORDS = frozenset({
@@ -30,8 +31,6 @@ LABEL_WORDS = frozenset({
 _LEADING_EXTENSION = re.compile(r"^\s*\d+\s*[-–]?\s*")
 _NAME_WORD = re.compile(r"^[A-Za-z][A-Za-z'’.\-]*$")
 _SPLIT = re.compile(r"[^a-z0-9]+")
-#: One word of a person's real name: letters (any alphabet), then letters, apostrophes, hyphens or periods.
-_REAL_NAME_WORD = re.compile(r"^[^\W\d_](?:[^\W\d_]|['’.\-])*$")
 #: Account types of a record that is a person. A `likely_person` is a phone line whose label looks like a name but
 #: that no mailbox backs up; everything else (shared line, call park, service, system, test, external) is not one.
 _PERSON, _LIKELY_PERSON = "person", "likely_person"
@@ -80,20 +79,6 @@ def person_name(entry: DirectoryEntry) -> str | None:
     return " ".join(tokens)
 
 
-def clean_display_name(raw: str | None) -> str | None:
-    """A mailbox display name the agent may say aloud, else None: two to four words, each made of letters (and
-    an apostrophe, hyphen or period), the first and last at least two characters. Anything else (a digit, a
-    single word, an address, a stray symbol) is not guessed at: the agent asks who is calling."""
-    words = (raw or "").split()
-    if not 2 <= len(words) <= 4 or len(" ".join(words)) > 60:
-        return None
-    if not all(_REAL_NAME_WORD.match(word) for word in words):
-        return None
-    if min(len(words[0].rstrip(".")), len(words[-1].rstrip("."))) < 2:
-        return None
-    return " ".join(words)
-
-
 def employee_name(entry: DirectoryEntry) -> str | None:
     """The name the agent may say aloud for a directory entry, or None (ask who is calling).
 
@@ -106,6 +91,23 @@ def employee_name(entry: DirectoryEntry) -> str | None:
     if entry.account_type == _PERSON:
         return clean_display_name(entry.display_name)
     return None
+
+
+def with_first_name(entries: list[DirectoryEntry], first_name: str | None) -> list[DirectoryEntry]:
+    """The entries (people of the merged directory, found by last name) whose clean display name starts with this
+    first name, allowing a recognizer's slip. Used to pick one of several people who share a last name."""
+    heard = names.letters(first_name)
+    if not heard:
+        return []
+    return [
+        e for e in entries
+        if e.display_name and names.same_name_part(heard, names.letters(e.display_name.split()[0]))
+    ]
+
+
+def with_extension(entries: list[DirectoryEntry], extension: str | None) -> list[DirectoryEntry]:
+    """The entries that have exactly this extension."""
+    return [e for e in entries if extension and e.extension == extension]
 
 
 def directory_email_for(name: str, email: str | None) -> str | None:
