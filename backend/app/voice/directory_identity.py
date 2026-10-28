@@ -4,9 +4,12 @@ A directory match is a proposal the caller must confirm, never proof of who is c
 never authentication. Nothing here calls a model, and nothing logs what the directory holds.
 
 The directory's Name column is a phone-system label ("1001 Exec First Last", "Billing First
-Last", "Lab Slate Hill"), not a clean person name, so the name the agent would say aloud is
-derived conservatively (person_name): when it cannot be derived with confidence the entry is
-treated as a shared or unclear line and the agent simply asks who is calling.
+Last", "Lab Slate Hill"), not a clean person name. The merged directory (data/directory_merged.csv)
+adds the person's real name from their mailbox and says what each record is, so there the name is
+the clean Display Name of a `person` record and nothing else is ever named (employee_name). On a
+plain phone-system export the name is derived conservatively from the label (person_name). When
+a name cannot be had with confidence the entry is treated as a shared or unclear line and the
+agent simply asks who is calling.
 """
 
 import re
@@ -27,6 +30,11 @@ LABEL_WORDS = frozenset({
 _LEADING_EXTENSION = re.compile(r"^\s*\d+\s*[-–]?\s*")
 _NAME_WORD = re.compile(r"^[A-Za-z][A-Za-z'’.\-]*$")
 _SPLIT = re.compile(r"[^a-z0-9]+")
+#: One word of a person's real name: letters (any alphabet), then letters, apostrophes, hyphens or periods.
+_REAL_NAME_WORD = re.compile(r"^[^\W\d_](?:[^\W\d_]|['’.\-])*$")
+#: Account types of a record that is a person. A `likely_person` is a phone line whose label looks like a name but
+#: that no mailbox backs up; everything else (shared line, call park, service, system, test, external) is not one.
+_PERSON, _LIKELY_PERSON = "person", "likely_person"
 
 
 def _context_words(entry: DirectoryEntry) -> set[str]:
@@ -72,6 +80,34 @@ def person_name(entry: DirectoryEntry) -> str | None:
     return " ".join(tokens)
 
 
+def clean_display_name(raw: str | None) -> str | None:
+    """A mailbox display name the agent may say aloud, else None: two to four words, each made of letters (and
+    an apostrophe, hyphen or period), the first and last at least two characters. Anything else (a digit, a
+    single word, an address, a stray symbol) is not guessed at: the agent asks who is calling."""
+    words = (raw or "").split()
+    if not 2 <= len(words) <= 4 or len(" ".join(words)) > 60:
+        return None
+    if not all(_REAL_NAME_WORD.match(word) for word in words):
+        return None
+    if min(len(words[0].rstrip(".")), len(words[-1].rstrip("."))) < 2:
+        return None
+    return " ".join(words)
+
+
+def employee_name(entry: DirectoryEntry) -> str | None:
+    """The name the agent may say aloud for a directory entry, or None (ask who is calling).
+
+    The merged directory says what every record is. A `person` is named by its clean Display Name, never by the
+    phone-system label. A `likely_person` has no mailbox to confirm it, so the conservative label rule applies, as it
+    does to every entry of a plain phone-system export (which has no account type). A shared line, call park,
+    service, system, test or external record is never a person. Whether the record is live is the caller's check."""
+    if entry.account_type is None or entry.account_type == _LIKELY_PERSON:
+        return person_name(entry)
+    if entry.account_type == _PERSON:
+        return clean_display_name(entry.display_name)
+    return None
+
+
 def directory_email_for(name: str, email: str | None) -> str | None:
     """An address from the caller's confirmed directory entry that is safe to offer, else None.
 
@@ -98,16 +134,26 @@ def directory_email_for(name: str, email: str | None) -> str | None:
 
 
 def entry_context(entry: DirectoryEntry) -> dict:
-    """The directory-provided values kept with the call once the caller has confirmed."""
-    return {
+    """The directory-provided values kept with the call once the caller has confirmed.
+
+    An entry of the merged directory also carries the clean identity fields. Its email is the real mailbox
+    address when there is one (the phone system's is often a placeholder or someone else's)."""
+    data = {
         "directory_name": entry.name,
-        "email": entry.email,
+        "email": entry.mailbox_email or entry.email,
         "extension": entry.extension,
         "teams": list(entry.teams),
         "location": entry.location,
         "active": entry.active,
         "source_row": entry.source_row,
     }
+    if entry.account_type is not None:
+        data.update(
+            account_type=entry.account_type, display_name=entry.display_name, phone=entry.phone,
+            department=entry.department, site=entry.site, job_title=entry.job_title, credentials=entry.credentials,
+            is_provider=entry.is_provider, status=entry.status, match_confidence=entry.match_confidence,
+        )
+    return data
 
 
 def compact_lookup(result: LookupResult | None) -> dict:
@@ -123,7 +169,7 @@ def compact_lookup(result: LookupResult | None) -> dict:
     if result.matched and result.entry is not None:
         data["entry"] = entry_context(result.entry)
         # Only a live entry with a name we can say aloud is ever proposed to the caller.
-        name = person_name(result.entry) if result.entry.active else None
+        name = employee_name(result.entry) if result.entry.active else None
         data["proposed_name"] = name
         if name is None:
             data["reason"] = "inactive_entry" if not result.entry.active else "not_a_person_name"

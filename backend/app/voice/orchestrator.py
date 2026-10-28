@@ -38,7 +38,7 @@ from app.db.models import (
 )
 from app.schemas.ticket import TicketCreate
 from app.services import ticket_service
-from app.services.user_directory import LookupResult, LookupStatus, UserDirectoryService, normalize_extension
+from app.services.user_directory import LookupStatus, UserDirectoryService, normalize_extension
 from app.voice import caller_routing, departments, directory_identity, diagnostics, names, nlu, reply, scripts
 from app.voice import facts as facts_mod
 from app.voice import priority as priority_rules
@@ -112,6 +112,32 @@ def _is_provider_call(session: VoiceCallSession) -> bool:
     return (session.collected or {}).get("caller_type") == CallerType.PROVIDER.value
 
 
+def _is_employee_call(session: VoiceCallSession) -> bool:
+    """An employee IT call: the only flow that consults the employee directory (CALL_FLOW.md 2.2). A call that has
+    not been routed yet, a patient and a provider are not."""
+    return (session.collected or {}).get("caller_type") == caller_routing.EMPLOYEE
+
+
+def _look_up_employee(session: VoiceCallSession, directory: UserDirectoryService | None) -> None:
+    """The call has just been routed to the employee flow: look the caller ID up in the employee directory, once.
+
+    The result is only kept on this call's session; the caller is asked to confirm a proposed name later. No lookup
+    without a directory (the call simulator), without a usable caller ID, or when the call has been looked up
+    already (a caller who switches flows and back, or a call that began before lookups moved here). A hint for the
+    conversation must never end it: a lookup that fails leaves the directory "unavailable" for this call and the
+    normal name question applies. Only the outcome's status, or the kind of failure, is logged."""
+    if directory is None or session.collected.get("directory") is not None or not caller_id_is_usable(session.from_number):
+        return
+    try:
+        result = directory.find_by_phone(session.from_number)
+        found = directory_identity.compact_lookup(result)
+        logger.info("Call %s: employee directory lookup: %s", session.call_id, result.status.value)
+    except Exception as exc:  # unexpected: still must not take the call down
+        logger.error("Call %s: employee directory lookup failed (%s); asking who is calling", session.call_id, type(exc).__name__)
+        found = {"status": LookupStatus.UNAVAILABLE.value, "reason": "lookup_error"}
+    update_collected(session, directory=found)
+
+
 #: Every provider ticket is filed here; the system involved is in the intake details.
 PROVIDERS_CATEGORY = "Providers"
 #: Every provider ticket is filed at this priority (and saved with it), and the notification says the same.
@@ -126,21 +152,16 @@ def _offers_provider() -> bool:
 async def start_call(
     session: VoiceCallSession,
     *,
-    directory_lookup: LookupResult | None = None,
     identify_caller: bool | None = None,
 ) -> TurnOutcome:
     """Turn 0: greet, and ask who is calling (or, with the step off, wait for the problem).
 
-    `directory_lookup` is the result of looking the caller ID up in the employee directory
-    (None when there was no usable caller ID, or no directory is wired in). It is only kept on
-    this call's session; the caller is asked to confirm a proposed name later, if the call turns
-    out to be an employee IT call.
+    Nothing is looked up here: who is calling is not known yet. The employee directory is consulted
+    only once the call is routed to the employee IT flow (`_look_up_employee`).
 
     `identify_caller` overrides VOICE_ASK_CALLER_TYPE for this call (the call simulator, which
     tests the employee IT intake, passes False).
     """
-    if directory_lookup is not None:
-        update_collected(session, directory=directory_identity.compact_lookup(directory_lookup))
     if settings.voice_ask_caller_type if identify_caller is None else identify_caller:
         session.state = VoiceCallState.IDENTIFY_CALLER
         greeting = scripts.GREETING_IDENTIFY_PROVIDER if _offers_provider() else scripts.GREETING_IDENTIFY
@@ -222,8 +243,10 @@ async def handle_turn(
 ) -> TurnOutcome:
     """Interpret one caller utterance and advance the conversation.
 
-    `directory` is only used to look up an identifier the caller gives while confirming who
-    they are; without it that step simply treats the answer as "no"."""
+    `directory` is the employee directory and is used on an employee call only: to look the caller ID
+    up when the call is routed to the employee flow, and to look up an identifier the caller gives
+    while confirming who they are (without it that step simply treats the answer as "no"). A
+    patient or provider call never reads it."""
     utterance = (utterance or "").strip()
     if _not_caller_speech(session, utterance):
         # The recognizer returned the agent's (or its own prompt's) words, not the caller's: a silence. Kept
@@ -249,7 +272,7 @@ async def handle_turn(
             update_collected(session, summary_unanswered=True, summary_confirmed=False, summary_awaiting_change=False)
             return await _create_ticket_and_read_back(db, session)
         if session.state == VoiceCallState.CLASSIFY_CALLER_TYPE:
-            _apply_classification(session, nlu.CallerClassification("INTERNAL_IT", 0.60))
+            _apply_classification(session, nlu.CallerClassification("INTERNAL_IT", 0.60), directory)
             return await _next_step(db, session)
         if session.state == VoiceCallState.CONFIRM_IDENTITY:
             return await _identity_unclear(db, session)  # silence is not a yes
@@ -273,7 +296,7 @@ async def handle_turn(
         if session.state == VoiceCallState.COLLECT_DIAGNOSTICS:
             return await _handle_diagnostics(db, session, "")  # unanswered, not a misunderstanding
         if session.state == VoiceCallState.COLLECT_DESCRIPTION and session.collected.get("problem_partial"):
-            return await _handle_description(db, session, "")  # silence after "go on": take what was said
+            return await _handle_description(db, session, "", directory)  # silence after "go on": take what was said
         return await _handle_failure(db, session)
 
     if session.state in _GOODBYE_STATES and nlu.is_goodbye(utterance):
@@ -303,16 +326,16 @@ async def handle_turn(
             return _reask_open_question(session, diagnostics.CORRECTED)
         extension_noted = extension_noted or changed
 
-    corrected = await _maybe_switch_caller_type(db, session, utterance)
+    corrected = await _maybe_switch_caller_type(db, session, utterance, directory)
     if corrected is not None:
         return corrected
 
     handlers = {
-        VoiceCallState.IDENTIFY_CALLER: _handle_identify_caller,
+        VoiceCallState.IDENTIFY_CALLER: lambda d, s, u: _handle_identify_caller(d, s, u, directory),
         VoiceCallState.PATIENT_INTENT: _handle_patient_intent,
         VoiceCallState.PATIENT_DETAILS: _handle_patient_details,
-        VoiceCallState.COLLECT_DESCRIPTION: _handle_description,
-        VoiceCallState.CLASSIFY_CALLER_TYPE: _handle_caller_type_clarification,
+        VoiceCallState.COLLECT_DESCRIPTION: lambda d, s, u: _handle_description(d, s, u, directory),
+        VoiceCallState.CLASSIFY_CALLER_TYPE: lambda d, s, u: _handle_caller_type_clarification(d, s, u, directory),
         VoiceCallState.COLLECT_DETAILS: _handle_details,
         VoiceCallState.COLLECT_DIAGNOSTICS: _handle_diagnostics,
         VoiceCallState.CONFIRM_IDENTITY: lambda d, s, u: _handle_identity_confirmation(d, s, u, directory),
@@ -488,13 +511,14 @@ def _with(acknowledgement: str | None, prompt: str) -> str:
 
 
 async def _route_caller(
-    db: AsyncSession, session: VoiceCallSession, utterance: str, caller_type: str, *, acknowledgement: str | None = None
+    db: AsyncSession, session: VoiceCallSession, utterance: str, caller_type: str, *,
+    acknowledgement: str | None = None, directory: UserDirectoryService | None = None,
 ) -> TurnOutcome:
     """The caller type is known: store it and start that flow. If the same sentence already carries the
     request ("I'm an employee, my printer is jammed", "I need to cancel my appointment") it is used,
     so the caller is never asked for it twice."""
     update_collected(session, identified_by_routing=True, identify_attempts=0)
-    _apply_classification(session, nlu.CallerClassification(caller_type, 1.0))
+    _apply_classification(session, nlu.CallerClassification(caller_type, 1.0), directory)
     if caller_type == caller_routing.PATIENT:
         intent = caller_routing.patient_intent(utterance)
         if intent:
@@ -503,7 +527,7 @@ async def _route_caller(
         return TurnOutcome(_speak(session, _ask(session, _with(acknowledgement, scripts.PATIENT_INTENT_ASK))))
     session.state = VoiceCallState.COLLECT_DESCRIPTION
     if caller_routing.states_it_problem(utterance):
-        return await _handle_description(db, session, utterance)
+        return await _handle_description(db, session, utterance, directory)
     ask = scripts.PROVIDER_ASK if caller_type == caller_routing.PROVIDER else scripts.EMPLOYEE_ASK
     return TurnOutcome(_speak(session, _ask(session, _with(acknowledgement, ask))))
 
@@ -512,12 +536,14 @@ async def _route_caller(
 MAX_IDENTIFY_HELLOS = 2
 
 
-async def _handle_identify_caller(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
+async def _handle_identify_caller(
+    db: AsyncSession, session: VoiceCallSession, utterance: str, directory: UserDirectoryService | None = None
+) -> TurnOutcome:
     if nlu.mentions_escalation(utterance):
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
     caller_type = caller_routing.identify_caller(utterance, providers=_offers_provider())
     if caller_type:
-        return await _route_caller(db, session, utterance, caller_type)
+        return await _route_caller(db, session, utterance, caller_type, directory=directory)
     if nlu.is_greeting(utterance):  # "Hello?": ask again, without counting it as an unclear answer -- twice
         hellos = session.collected.get("identify_hellos", 0) + 1
         update_collected(session, identify_hellos=hellos)
@@ -531,7 +557,7 @@ async def _handle_identify_caller(db: AsyncSession, session: VoiceCallSession, u
         # sides are never sent here: that is a question for the caller, not a guess.
         classification = await nlu.classify_caller_type(utterance)
         if classification.confidence >= CLASSIFICATION_CONFIDENCE_THRESHOLD:
-            return await _route_caller(db, session, utterance, classification.caller_type)
+            return await _route_caller(db, session, utterance, classification.caller_type, directory=directory)
     return await _identify_unclear(db, session)
 
 
@@ -549,7 +575,9 @@ async def _identify_unclear(db: AsyncSession, session: VoiceCallSession) -> Turn
     return TurnOutcome(_speak(session, _ask(session, clarify)))
 
 
-async def _maybe_switch_caller_type(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome | None:
+async def _maybe_switch_caller_type(
+    db: AsyncSession, session: VoiceCallSession, utterance: str, directory: UserDirectoryService | None = None
+) -> TurnOutcome | None:
     """A caller who says "actually, I'm an employee" (or a patient) is moved to the right flow. Only an explicit
     "I'm a ..." counts -- a sentence that merely mentions a patient or an appointment never changes who is calling --
     and never once the current request is filed (a request already filed on this call stays as it is).
@@ -572,7 +600,7 @@ async def _maybe_switch_caller_type(db: AsyncSession, session: VoiceCallSession,
         "description", "short_issue", "category", "category_confidence", "started", "work_blocked", "problem_words",
         "affected_scope", "patient_care_affected", "model_priority", "pending_question",
     )})
-    return await _route_caller(db, session, utterance, said, acknowledgement=scripts.TYPE_CORRECTED)
+    return await _route_caller(db, session, utterance, said, acknowledgement=scripts.TYPE_CORRECTED, directory=directory)
 
 
 async def _set_patient_intent(
@@ -660,7 +688,9 @@ async def _handle_patient_details(db: AsyncSession, session: VoiceCallSession, u
     return await _next_step(db, session)
 
 
-async def _handle_description(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
+async def _handle_description(
+    db: AsyncSession, session: VoiceCallSession, utterance: str, directory: UserDirectoryService | None = None
+) -> TurnOutcome:
     joined = bool(session.collected.get("problem_partial"))
     utterance, go_on = _continue_problem(session, utterance)
     if go_on is not None:
@@ -692,7 +722,7 @@ async def _handle_description(db: AsyncSession, session: VoiceCallSession, utter
     if not session.collected.get("caller_type"):
         classification = await nlu.classify_caller_type(result.value or utterance)
         if classification.confidence >= CLASSIFICATION_CONFIDENCE_THRESHOLD:
-            _apply_classification(session, classification)
+            _apply_classification(session, classification, directory)
         else:
             update_collected(session, classification_pending=True)
             ack = _acknowledgement(session)
@@ -760,7 +790,11 @@ def _record_description(session: VoiceCallSession, result: nlu.TurnResult) -> No
     _apply_priority_rules(session)
 
 
-def _apply_classification(session: VoiceCallSession, classification: nlu.CallerClassification) -> None:
+def _apply_classification(
+    session: VoiceCallSession, classification: nlu.CallerClassification, directory: UserDirectoryService | None = None
+) -> None:
+    """Store the caller type. The one place a call becomes an employee call, so the one place the employee
+    directory is looked up: a patient or a provider is never looked up."""
     update_collected(
         session,
         caller_type=classification.caller_type,
@@ -768,16 +802,18 @@ def _apply_classification(session: VoiceCallSession, classification: nlu.CallerC
     )
     if classification.caller_type == "PATIENT_SUPPORT" and classification.patient_category:
         update_collected(session, patient_category=classification.patient_category)
+    if classification.caller_type == caller_routing.EMPLOYEE:
+        _look_up_employee(session, directory)
 
 
 async def _handle_caller_type_clarification(
-    db: AsyncSession, session: VoiceCallSession, utterance: str
+    db: AsyncSession, session: VoiceCallSession, utterance: str, directory: UserDirectoryService | None = None
 ) -> TurnOutcome:
     if _wants_human(utterance, nlu.TurnResult()):
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
 
     classification = await nlu.interpret_caller_type_answer(utterance)
-    _apply_classification(session, classification)
+    _apply_classification(session, classification, directory)
     return await _next_step(db, session, acknowledgement=_patient_ack(session))
 
 
@@ -913,7 +949,10 @@ async def _handle_name(db: AsyncSession, session: VoiceCallSession, utterance: s
 
 def _pending_identity_name(session: VoiceCallSession) -> str | None:
     """The name to propose now, if there is one: a live directory entry with a sayable name that
-    the caller has not rejected or confirmed, and the call is still within its proposal budget."""
+    the caller has not rejected or confirmed, and the call is still within its proposal budget.
+    Employee calls only: a call that has since become a patient's or a provider's proposes nothing."""
+    if not _is_employee_call(session):
+        return None
     c = session.collected
     directory = c.get("directory") or {}
     name = directory.get("proposed_name")
@@ -2344,24 +2383,33 @@ def _record_extension(
     session: VoiceCallSession, extension: str | None, source: str, directory: UserDirectoryService | None
 ) -> None:
     """A caller-given extension is checked against the directory only to note how it compares for the
-    helpdesk; it never changes who the caller is, and another employee's name is never said or stored."""
+    helpdesk; it never changes who the caller is, and another employee's name is never said or stored.
+    Only an employee call consults the directory: for a provider (who can still say "my extension is ..." late in
+    the call) the extension is kept as said, with no note."""
     note = None
     c = session.collected
-    # The extension the directory has for this caller ID (a confirmed identity, or the caller-ID match).
-    own = normalize_extension(
-        (c.get("directory_identity") or {}).get("extension")
-        or (((c.get("directory") or {}).get("entry") or {}).get("extension"))
-    )
+    employee = _is_employee_call(session)
+    own = None
+    if employee:
+        # The extension the directory has for this caller ID (a confirmed identity, or the caller-ID match).
+        own = normalize_extension(
+            (c.get("directory_identity") or {}).get("extension")
+            or (((c.get("directory") or {}).get("entry") or {}).get("extension"))
+        )
     if extension and own and own != extension:
         # Kept as the caller said it, never replaced by the directory's -- and marked, so nobody takes it as checked.
         note = f"unverified: the directory entry for this caller ID lists extension {own}"
     elif extension and own == extension:
         note = "matches the directory entry for this caller ID"
-    elif extension and directory is not None:
+    elif extension and employee and directory is not None:
         result = directory.find_by_extension(extension)
         if result.status is LookupStatus.MATCHED and result.entry is not None:
-            listed = (directory_identity.person_name(result.entry) or "").lower()
-            same = listed and listed == (c.get("caller_name") or "").strip().lower()
+            # The merged directory's clean name, or the name the phone-system label gives: either is this caller's name.
+            listed = {
+                name.lower() for name in (directory_identity.employee_name(result.entry), directory_identity.person_name(result.entry))
+                if name
+            }
+            same = (c.get("caller_name") or "").strip().lower() in listed
             note = "matches the directory entry for this caller's name" if same else (
                 "unverified: the directory lists this extension for a different entry"
             )

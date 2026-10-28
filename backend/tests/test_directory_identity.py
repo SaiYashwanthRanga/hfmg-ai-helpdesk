@@ -133,7 +133,7 @@ async def _confirmed_ticket(call, name="Maria Example"):
 # --- 1. a unique match at call start --------------------------------------------------------------
 
 
-async def test_a_unique_directory_match_is_stored_on_that_call_and_the_greeting_is_unchanged(
+async def test_nothing_is_looked_up_at_start_and_a_unique_match_is_stored_once_the_call_is_an_employee_call(
     make_call, client, db_session, directory
 ):
     call = make_call("dir-start")
@@ -143,6 +143,12 @@ async def test_a_unique_directory_match_is_stored_on_that_call_and_the_greeting_
     assert started == {"lines": [scripts.GREETING], "expect_reply": True, "ticket_id": None, "stt_prompt": started["stt_prompt"]}
     session = await _session(db_session, "dir-start")
     assert session.state == VoiceCallState.COLLECT_DESCRIPTION  # nothing asked yet, nothing confirmed
+    assert "directory" not in session.collected  # who is calling is not known yet, so nobody is looked up
+    assert directory.counts == {"phone": 0, "identifier": 0}
+
+    await call.report()  # an employee IT call: now the caller ID is looked up
+
+    session = await _session(db_session, "dir-start")
     stored = session.collected["directory"]
     assert (stored["status"], stored["proposed_name"]) == ("matched", "Maria Example")
     assert stored["entry"]["extension"] == "2001" and stored["entry"]["active"] is True
@@ -395,11 +401,15 @@ async def test_a_confirmed_identity_is_never_asked_again_and_never_looked_up_aga
     assert "Identity:" in (await _ticket(client, second["ticket_id"]))["description"]
 
 
-async def test_a_retried_start_does_not_look_the_caller_up_again(make_call, directory):
+async def test_a_retried_start_looks_nobody_up_and_the_routed_call_is_looked_up_once(make_call, directory):
     call = make_call("dir-retry")
     await call.start()
     await call.start()
     await call.start()
+
+    assert directory.counts["phone"] == 0
+
+    await call.report()
 
     assert directory.counts["phone"] == 1
 
@@ -705,3 +715,98 @@ async def test_what_is_stored_for_each_lookup_outcome():
     )
     assert inactive["proposed_name"] is None and inactive["reason"] == "inactive_entry"
     assert directory_identity.compact_lookup(None) == {"status": "not_looked_up", "reason": "no_caller_number"}
+
+
+# --- the name the agent says for an entry of the merged directory (data/directory_merged.csv) ---------------------------------------------------
+
+
+def _merged_entry(kind, *, display="Maria Example", label="Maria Example", location="Test Clinic", active=True, **fields):
+    return DirectoryEntry(
+        name=label, email=None, extension="2001", teams=("Service",), location=location, active=active, source_row=2,
+        account_type=kind, display_name=display, **fields,
+    )
+
+
+def _matched(entry):
+    return type("R", (), {"status": LookupStatus.MATCHED, "entry": entry, "candidate_count": 0, "reason": None, "matched": True})()
+
+
+@pytest.mark.parametrize("kind, display, expected", [
+    ("person", "Maria Example", "Maria Example"),
+    ("person", "Rita T. Petrarca", "Rita T. Petrarca"),
+    ("person", "Jean-Luc O'Neil", "Jean-Luc O'Neil"),
+    ("person", "José Muñoz", "José Muñoz"),
+    ("person", "  Maria   Example ", "Maria Example"),
+    ("person", "", None),
+    ("person", None, None),
+    ("person", "Maria", None),  # one word
+    ("person", "Akash C", None),  # an initial is not a surname
+    ("person", "Front Desk 2", None),  # a digit
+    ("person", "maria@example.test", None),  # an address
+    ("person", "A Bb Cc Dd Ee", None),  # too many words
+    ("shared_line", "Front Desk", None),
+    ("call_park", "Call Park", None),
+    ("shared_or_service", "IT Helpdesk Team", None),
+    ("system_account", "Exchange Admin", None),
+    ("test", "Test User", None),
+    ("test_or_unassigned", "Test Phone", None),
+    ("external_or_student", "Vendor Rep", None),
+    ("", "Maria Example", None),  # the column is there but this cell is blank: not a person
+    ("something_new", "Maria Example", None),  # a type this code does not know is not a person
+])
+async def test_only_a_person_is_named_and_by_the_clean_display_name(kind, display, expected):
+    assert directory_identity.employee_name(_merged_entry(kind, display=display)) == expected
+
+
+async def test_a_likely_person_is_named_by_the_label_rule_and_a_plain_entry_exactly_as_before():
+    assert directory_identity.employee_name(_merged_entry("likely_person", display=None, label="Maria Example")) == "Maria Example"
+    assert directory_identity.employee_name(_merged_entry("likely_person", display=None, label="Room 3 Test Clinic")) is None
+    plain = _entry("1006 Chandu Example", location="Goshen - Exec", teams=())
+    assert directory_identity.employee_name(plain) == directory_identity.person_name(plain) == "Chandu Example"
+
+
+async def test_a_persons_clean_name_is_used_instead_of_the_phone_label():
+    entry = _merged_entry("person", display="Maximilian Negulici", label="1005 Exec Max Negulici", location="Goshen - Exec")
+
+    assert directory_identity.person_name(entry) == "Max Negulici"  # what the label alone would have said
+    assert directory_identity.compact_lookup(_matched(entry))["proposed_name"] == "Maximilian Negulici"
+
+
+async def test_the_stored_lookup_of_a_merged_entry_carries_the_clean_identity_fields():
+    entry = DirectoryEntry(
+        name="1005 Exec Max Negulici", email="1005@example.test", extension="1005", teams=("Service", "IT-Helpdesk"),
+        location="Goshen - Exec", active=True, source_row=7, account_type="person", display_name="Maximilian Negulici",
+        phone="+18455550105", mailbox_email="max.negulici@example.test", department="IT", site="Goshen",
+        job_title="IT Helpdesk", credentials=None, is_provider=False, status="Active", match_confidence="high",
+    )
+
+    stored = directory_identity.compact_lookup(_matched(entry))
+
+    assert (stored["status"], stored["proposed_name"]) == ("matched", "Maximilian Negulici")
+    assert stored["entry"] == {
+        "directory_name": "1005 Exec Max Negulici", "email": "max.negulici@example.test",  # the real mailbox, not 1005@
+        "extension": "1005", "teams": ["Service", "IT-Helpdesk"], "location": "Goshen - Exec", "active": True,
+        "source_row": 7, "account_type": "person", "display_name": "Maximilian Negulici", "phone": "+18455550105",
+        "department": "IT", "site": "Goshen", "job_title": "IT Helpdesk", "credentials": None, "is_provider": False,
+        "status": "Active", "match_confidence": "high",
+    }
+
+
+async def test_a_plain_entrys_stored_context_is_exactly_what_it_was():
+    stored = directory_identity.compact_lookup(_matched(_entry("Maria Example")))
+
+    assert set(stored["entry"]) == {"directory_name", "email", "extension", "teams", "location", "active", "source_row"}
+
+
+@pytest.mark.parametrize("kind, active, reason", [
+    ("shared_line", True, "not_a_person_name"),
+    ("call_park", True, "not_a_person_name"),
+    ("shared_or_service", True, "not_a_person_name"),
+    ("system_account", True, "not_a_person_name"),
+    ("test", True, "not_a_person_name"),
+    ("person", False, "inactive_entry"),  # deactivated, or a mailbox with no phone-system account
+])
+async def test_a_merged_entry_that_is_not_a_live_person_is_never_proposed(kind, active, reason):
+    stored = directory_identity.compact_lookup(_matched(_merged_entry(kind, active=active)))  # it has a Display Name
+
+    assert stored["proposed_name"] is None and stored["reason"] == reason

@@ -54,6 +54,31 @@ def write_csv(tmp_path: Path, rows: list[list[str]], *, header=HEADER, bom=False
     return path
 
 
+#: The columns of data/directory_merged.csv (backend/build_directory.py): the phone system's, then the mailbox side's.
+MERGED_HEADER = [
+    "Name", "Email", "Phone Number", "Extension", "Team", "Role", "Status", "Deactivated Date", "Location",
+    "Voice-Enabled", "Account Type", "Display Name", "Credentials", "Job Title", "Is Provider", "Department", "Site",
+    "Mailbox Email", "Additional Mailbox Emails", "Original Email", "Signature Emails", "Signature Phones",
+    "Signature Extensions", "Mailbox Role", "Match Method", "Match Confidence", "Review Notes",
+]
+
+
+def merged_row(label="Test Person", *, kind="person", display="", phone="", ext="", email=None, status="Active",
+               team="Service", location="Test Clinic", credentials="", title="", provider="N", department="",
+               site="", mailbox="", method="", confidence="", record_source=None) -> list[str]:
+    """One row of the merged directory. `record_source` adds that column (a newer build writes it)."""
+    email = f"{label.lower().replace(' ', '.')}@example.test" if email is None else email
+    cells = {
+        "Name": label, "Email": email, "Phone Number": phone, "Extension": ext, "Team": team, "Role": "User",
+        "Status": status, "Deactivated Date": "", "Location": location, "Voice-Enabled": "Y", "Account Type": kind,
+        "Display Name": display, "Credentials": credentials, "Job Title": title, "Is Provider": provider,
+        "Department": department, "Site": site, "Mailbox Email": mailbox, "Match Method": method,
+        "Match Confidence": confidence,
+    }
+    values = [cells.get(column, "") for column in MERGED_HEADER]
+    return values if record_source is None else [*values, record_source]
+
+
 async def loaded(path: Path) -> UserDirectoryService:
     service = UserDirectoryService()
     await service.load(path)
@@ -505,7 +530,86 @@ async def test_loading_logs_counts_but_no_names_numbers_or_addresses(tmp_path, c
 async def test_a_match_exposes_only_the_fields_the_call_workflow_needs(tmp_path):
     entry = (await loaded(write_csv(tmp_path, [row("Ann Example", phone=P1)]))).find_by_phone(P1).entry
 
-    assert set(vars(entry)) == {"name", "email", "extension", "teams", "location", "active", "source_row"}
+    merged_only = {
+        "account_type", "display_name", "phone", "mailbox_email", "department", "site", "job_title", "credentials",
+        "is_provider", "status", "match_confidence",
+    }
+    assert set(vars(entry)) == {"name", "email", "extension", "teams", "location", "active", "source_row"} | merged_only
+    assert all(getattr(entry, field) is None for field in merged_only)  # a plain export has none of them
+
+
+# --- the merged directory (data/directory_merged.csv) -------------------------------------------
+
+
+async def test_the_merged_directory_loads_the_clean_identity_fields(tmp_path):
+    path = write_csv(tmp_path, [merged_row(
+        "1001 Exec Max Example", display="Maximilian Example", phone=P1, ext="1001", email="1001@example.test",
+        mailbox="Max.Example@Example.test", team="Service, Billing Team", location="Test Clinic - Exec",
+        credentials="MD", title="Physician", provider="Y", department="Surgery", site="Goshen",
+        method="phone_and_name", confidence="medium",
+    )], header=MERGED_HEADER, name="directory_merged.csv")
+
+    entry = (await loaded(path)).find_by_phone(P1).entry
+
+    assert (entry.name, entry.display_name, entry.account_type) == ("1001 Exec Max Example", "Maximilian Example", "person")
+    assert (entry.phone, entry.extension) == ("+18455550101", "1001")
+    assert (entry.email, entry.mailbox_email) == ("1001@example.test", "max.example@example.test")
+    assert (entry.department, entry.site, entry.location) == ("Surgery", "Goshen", "Test Clinic - Exec")
+    assert (entry.job_title, entry.credentials, entry.is_provider) == ("Physician", "MD", True)
+    assert (entry.status, entry.active, entry.match_confidence) == ("Active", True, "medium")
+    assert entry.teams == ("Service", "Billing Team")
+
+
+async def test_a_merged_record_is_found_by_phone_extension_and_either_address(tmp_path):
+    service = await loaded(write_csv(tmp_path, [merged_row(
+        "Ann Example", display="Ann Example", phone=P1, ext="1001", email="1001@example.test",
+        mailbox="ann.example@example.test",
+    )], header=MERGED_HEADER))
+
+    found = [
+        service.find_by_phone(P1), service.find_by_extension("1001"), service.find_by_email("1001@example.test"),
+        service.find_by_email("ann.example@example.test"), service.find_by_identifier("Ann.Example@example.test"),
+    ]
+
+    assert all(result.matched and result.entry.display_name == "Ann Example" for result in found)
+
+
+async def test_a_record_whose_two_addresses_are_the_same_is_not_ambiguous_with_itself(tmp_path):
+    service = await loaded(write_csv(tmp_path, [merged_row(
+        "Ann Example", display="Ann Example", phone=P1, mailbox="ann.example@example.test",
+    )], header=MERGED_HEADER))
+
+    assert service.find_by_email("ann.example@example.test").matched
+    assert service.report.duplicate_emails == 0
+
+
+@pytest.mark.parametrize("status, record_source, live", [
+    ("Active", "phone_and_mailbox", True),
+    ("Active", "phone_system_only", True),
+    ("Unknown", "mailbox_only", False),  # what a mailbox with no phone-system account is given by default
+    ("Active", "mailbox_only", False),  # even when the build forced it to Active: it has no phone-system account
+    ("Inactive", "phone_and_mailbox", False),
+])
+async def test_a_record_that_exists_only_as_a_mailbox_is_never_live(tmp_path, status, record_source, live):
+    path = write_csv(tmp_path, [merged_row(
+        "Ann Example", display="Ann Example", phone=P1, status=status, record_source=record_source,
+    )], header=[*MERGED_HEADER, "Record Source"])
+
+    entry = (await loaded(path)).find_by_phone(P1).entry
+
+    assert entry.active is live
+
+
+async def test_the_app_loads_the_merged_directory_it_is_pointed_at(tmp_path, monkeypatch):
+    path = write_csv(tmp_path, [merged_row("Ann Example", display="Ann Example", phone=P1, ext="1001")],
+                     header=MERGED_HEADER, name="directory_merged.csv")
+    monkeypatch.setattr(settings, "user_directory_csv_path", str(path))
+    monkeypatch.setattr(app.state, "user_directory", None, raising=False)  # put back as it was when the test ends
+
+    async with app.router.lifespan_context(app):
+        entry = app.state.user_directory.find_by_phone(P1).entry
+
+    assert (entry.display_name, entry.account_type, entry.extension) == ("Ann Example", "person", "1001")
 
 
 async def test_the_app_loads_the_directory_at_startup(tmp_path, monkeypatch):

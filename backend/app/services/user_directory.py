@@ -1,8 +1,11 @@
 """Employee directory: look a caller up by phone number, work email or extension.
 
-Built from the phone system's users.csv export. A lookup answers "who might this be", never
-"who is this": a match is a hint for the conversation, not proof of identity, and many
-entries are shared lines (exam rooms, front desks), not people.
+Built from the phone system's users.csv export, or from data/directory_merged.csv, which
+backend/build_directory.py makes from that export plus the mailbox export and which says, for
+every record, what it is (a person, a shared line, a service, a test) and who the person is.
+A lookup answers "who might this be", never "who is this": a match is a hint for the
+conversation, not proof of identity, and many entries are shared lines (exam rooms, front
+desks), not people. Only the employee call flow consults it (CALL_FLOW.md 2.2).
 
 The file is read once, off the event loop, into an immutable snapshot; lookups are plain
 dict reads, safe from any number of concurrent requests or threads. Nothing here logs a
@@ -24,6 +27,9 @@ logger = logging.getLogger("hfmg.directory")
 #: Columns the file must have (matched case-insensitively). Anything else is optional.
 REQUIRED_COLUMNS = ("Name", "Email", "Phone Number", "Extension", "Status")
 _TEAM, _LOCATION, _DEACTIVATED = "Team", "Location", "Deactivated Date"
+#: Only the merged directory has these. "Account Type" being present is what marks a file as merged; a record
+#: that exists only as a mailbox ("Record Source" mailbox_only) has no phone-system account to be live on.
+_ACCOUNT_TYPE, _RECORD_SOURCE, _MAILBOX_ONLY = "Account Type", "Record Source", "mailbox_only"
 
 
 class LookupStatus(str, Enum):
@@ -37,13 +43,25 @@ class LookupStatus(str, Enum):
 class DirectoryEntry:
     """The fields a call workflow may use. Not proof of who is calling."""
 
-    name: str
+    name: str  # the phone system's label ("1001 Exec First Last"), not a clean person name
     email: str | None
     extension: str | None
     teams: tuple[str, ...]
     location: str | None
     active: bool
     source_row: int  # line in the CSV, for diagnostics
+    # Only from the merged directory; None on a plain phone-system export, whose entries are what they always were.
+    account_type: str | None = None  # person, likely_person, shared_line, call_park, shared_or_service, system_account, ...
+    display_name: str | None = None  # the person's clean name, from the mailbox
+    phone: str | None = None  # E.164
+    mailbox_email: str | None = None  # the real mailbox address; `email` is the phone system's
+    department: str | None = None
+    site: str | None = None
+    job_title: str | None = None
+    credentials: str | None = None
+    is_provider: bool | None = None
+    status: str | None = None  # the Status cell as written ("Active", "Inactive", "Unknown")
+    match_confidence: str | None = None  # how sure the merge is that this line and that mailbox are one person
 
 
 @dataclass(frozen=True)
@@ -194,6 +212,24 @@ def _teams(cell: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(part.strip() for part in cell.split(",") if part.strip()))
 
 
+def _merged_fields(cell, row: list[str], phone: str | None, mailbox_email: str | None) -> dict:
+    """The entry fields only the merged directory has. Empty when the file has no "Account Type" column."""
+    provider = cell(row, "Is Provider").upper()
+    return dict(
+        account_type=cell(row, _ACCOUNT_TYPE).lower(),
+        display_name=cell(row, "Display Name") or None,
+        phone=phone,
+        mailbox_email=mailbox_email,
+        department=cell(row, "Department") or None,
+        site=cell(row, "Site") or None,
+        job_title=cell(row, "Job Title") or None,
+        credentials=cell(row, "Credentials") or None,
+        is_provider={"Y": True, "N": False}.get(provider),
+        status=cell(row, "Status") or None,
+        match_confidence=cell(row, "Match Confidence").lower() or None,
+    )
+
+
 def _resolve(entries: list[DirectoryEntry]) -> LookupResult:
     """One record, or why there isn't one. A deactivated duplicate does not make a live
     record ambiguous (a number reassigned to a new employee); if nothing is live, the
@@ -239,6 +275,7 @@ def _parse(reader, path: Path) -> _Snapshot:
     missing = [name for name in REQUIRED_COLUMNS if name.lower() not in column]
     if missing:
         raise DirectoryLoadError("missing_columns", f"directory file lacks required columns: {', '.join(missing)}")
+    merged = _ACCOUNT_TYPE.lower() in column
 
     def cell(row: list[str], name: str) -> str:
         position = column.get(name.lower())
@@ -284,20 +321,26 @@ def _parse(reader, path: Path) -> _Snapshot:
         counts["invalid_phones"] += bool(raw_phone) and phone is None
         counts["invalid_emails"] += bool(raw_email) and email is None
         counts["invalid_extensions"] += bool(raw_ext) and extension is None
-        # Live only when explicitly active and not deactivated; a blank status is not assumed live.
-        active = status.lower() == "active" and not cell(row, _DEACTIVATED)
+        # Live only when explicitly active and not deactivated; a blank status is not assumed live. A record that
+        # exists only as a mailbox is never live, whatever status it was given: it has no phone-system account.
+        active = (
+            status.lower() == "active" and not cell(row, _DEACTIVATED)
+            and cell(row, _RECORD_SOURCE).lower() != _MAILBOX_ONLY
+        )
         counts["inactive"] += not active
         counts["no_identifiers"] += not (phone or email or extension)
+        mailbox_email = normalize_email(cell(row, "Mailbox Email")) if merged else None
 
         position = len(records)
         records.append(
             DirectoryEntry(
                 name=name, email=email, extension=extension, teams=_teams(cell(row, _TEAM)),
                 location=cell(row, _LOCATION) or None, active=active, source_row=line,
+                **(_merged_fields(cell, row, phone, mailbox_email) if merged else {}),
             )
         )
-        for key, index in ((phone, by_phone), (email, by_email), (extension, by_extension)):
-            if key:
+        for key, index in ((phone, by_phone), (email, by_email), (extension, by_extension), (mailbox_email, by_email)):
+            if key and position not in index.get(key, ()):  # one record is listed once, even if both addresses match
                 index.setdefault(key, []).append(position)
 
     if not records:

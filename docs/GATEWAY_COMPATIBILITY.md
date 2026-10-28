@@ -76,8 +76,9 @@ document passes against a real gateway.
 
 ## 5. Employee directory (Phase 2): what was checked
 
-- Lookup happens once, on the first `/start` only. A second `/start` that arrives while the first is still
-  starting used to run the start (and the lookup) twice; `/start` now takes the call's row lock like
+- `/start` looks nobody up. The caller ID is looked up once, when the call is routed to the employee flow
+  (during a `/turn`); patient and provider calls are never looked up (CALL_FLOW.md 2.2). A second `/start` that
+  arrives while the first is still starting used to run the start twice; `/start` takes the call's row lock like
   `/turn` and `/status`.
 - A directory name is only proposed, never assumed; only the caller's yes confirms it, and nothing
   authenticates anyone.
@@ -86,5 +87,7 @@ document passes against a real gateway.
   (`tests/test_directory_identity.py`).
 - Dashboard: call list and detail return the new `CONFIRM_IDENTITY` state; the frontend type-checks.
 - Data note: the call-detail API returns the whole stored call state, which now includes the matched
-  directory entry (name label, email, extension, teams, location) while a proposal is pending. The API has
-  no authentication in this version; that is the larger issue and is unchanged.
+  directory entry (name label, email, extension, teams, location) while a proposal is pending. With the merged
+  directory file it also includes that entry's phone number, clean name, department, site, job title,
+  credentials, provider flag, account type and status. Only employee calls carry it. The API has no
+  authentication in this version; that is the larger issue and is unchanged.

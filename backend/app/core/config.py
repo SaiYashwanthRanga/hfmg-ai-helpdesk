@@ -145,7 +145,9 @@ class Settings(BaseSettings):
     # in app/voice/departments.py, which is NOT HFMG's real org chart.
     voice_departments: str = ""
 
-    # Employee directory (the phone system's users.csv export), read once at startup.
+    # Employee directory, read once at startup and used by the employee call flow only (a patient or a provider is
+    # never looked up). Set it to data/directory_merged.csv, which build_directory.py makes from the phone system's
+    # users.csv and the mailbox export; a plain users.csv export still loads.
     # Empty = no directory: lookups answer "unavailable". The file holds employee names,
     # numbers and addresses: keep it out of the repository (backend/data/ is git-ignored).
     user_directory_csv_path: str = ""

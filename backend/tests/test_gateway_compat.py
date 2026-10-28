@@ -139,6 +139,10 @@ async def test_a_sip_uri_caller_id_is_reduced_to_the_number_it_carries(make_call
 
     session = await _session(db_session, "gw-uri")
     assert session.from_number == "+18455550201" and session.collected["phone_number"] == "+18455550201"
+
+    await call.report()  # routed to the employee flow: the caller ID is looked up now
+
+    session = await _session(db_session, "gw-uri")
     assert session.collected["directory"]["status"] == "matched"  # the directory sees the number, not the URI
 
 
@@ -177,6 +181,7 @@ async def test_a_full_number_unknown_number_and_ambiguous_number_through_the_cal
     for number, status in expected.items():
         call = make_call(f"gw-num-{number[-3:]}", number)
         await call.start()
+        await call.report()  # the lookup happens once the call is routed to the employee flow
         assert (await _session(db_session, call.call_id)).collected["directory"]["status"] == status
 
 
@@ -204,18 +209,24 @@ async def test_the_turn_id_contract_is_live_on_the_gateways_routes(make_call, cl
 # --- 4. Phase 2 under repeated and concurrent requests ------------------------------------------------
 
 
-async def test_simultaneous_starts_look_the_caller_up_once_and_leave_one_coherent_call(make_call, client, db_session, directory):
+async def test_simultaneous_starts_leave_one_coherent_call_and_the_routed_call_is_looked_up_once(
+    make_call, client, db_session, directory
+):
     call = make_call("gw-par-start", MARIA)
 
     results = await asyncio.gather(*(call.start() for _ in range(8)))
 
     assert all(r["expect_reply"] is True for r in results)
-    assert directory.counts["phone"] == 1  # one lookup however many starts arrived together
+    assert directory.counts["phone"] == 0  # a start looks nobody up, however many arrived together
     session = await _session(db_session, "gw-par-start")
     assert session.state == VoiceCallState.COLLECT_DESCRIPTION
     assert [t["role"] for t in session.turns] == ["agent"]  # one greeting, not one per request
     rows = (await db_session.execute(select(func.count()).select_from(type(session)).where(type(session).call_id == "gw-par-start"))).scalar_one()
     assert rows == 1
+
+    await call.report()
+
+    assert directory.counts["phone"] == 1  # one lookup, when the call is routed to the employee flow
 
 
 async def test_a_start_that_arrives_after_the_caller_has_spoken_changes_nothing(make_call, client, db_session, directory):
@@ -288,6 +299,6 @@ async def test_a_second_start_arriving_while_the_first_is_still_starting_does_no
     await asyncio.gather(first, second)
 
     assert len(started) == 1  # the second one saw a call that had already started
-    assert directory.counts["phone"] == 1
+    assert directory.counts["phone"] == 0  # and neither start looked anybody up
     session = await _session(db_session, "gw-held-start")
     assert session.state == VoiceCallState.COLLECT_DESCRIPTION and [t["role"] for t in session.turns] == ["agent"]

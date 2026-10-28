@@ -205,27 +205,18 @@ async def _escalate_after_failed_turn(
         return None
 
 
-def _directory_lookup(directory: UserDirectoryService, session: VoiceCallSession):
-    """Look the caller ID up once, when the call starts. None (no lookup) when the gateway sent no
-    usable caller ID, so the normal identity questions apply. Only the outcome's status is logged."""
-    if not caller_id_is_usable(session.from_number):
-        return None
-    result = directory.find_by_phone(session.from_number)
-    logger.info("sip call=%s directory=%s", session.call_id, result.status.value)
-    return result
-
-
 @router.post("/start", response_model=TurnResponse)
 async def start_call(
     body: StartCallRequest,
     db: AsyncSession = Depends(get_db),
-    directory: UserDirectoryService = Depends(get_user_directory),
 ) -> TurnResponse:
+    # The caller ID is stored with the call but not looked up here: who is calling is not known yet, and
+    # only an employee call consults the employee directory (once it is routed there, in /turn).
     await get_or_create_session(
         db, call_sid=body.call_id, from_number=body.from_number, to_number=body.to_number
     )
-    # Serialize with any other /start or /turn for this call, so the call starts (and the directory
-    # is consulted) exactly once however many starts arrive together.
+    # Serialize with any other /start or /turn for this call, so the call starts exactly once
+    # however many starts arrive together.
     session = await get_session(db, body.call_id, lock=True)
     if session.state != VoiceCallState.GREETING:
         # A retried /start (the gateway lost our first response). Never reset a
@@ -243,7 +234,7 @@ async def start_call(
         )
 
     try:
-        outcome = await orchestrator.start_call(session, directory_lookup=_directory_lookup(directory, session))
+        outcome = await orchestrator.start_call(session)
         await db.commit()
     except Exception:
         logger.exception("Failed to start SIP call %s", body.call_id)

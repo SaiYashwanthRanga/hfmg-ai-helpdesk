@@ -477,8 +477,9 @@ promised. Nothing is tried, fixed or looked up on the call.
 3. **The application or system, only if it is not known.** Taken from the description (eClinicalWorks, e-prescribing,
    dictation, results, telehealth, fax or referrals, or the category). If it is not named, asked once: "Which
    application or system is it?". "I don't know" or silence keeps nothing; it is never invented.
-4. **The provider's name.** "May I have your name, please?" A directory match on the caller ID is still only a
-   proposal ("Am I speaking with X?"). A doubtful name is read back spelled, as everywhere.
+4. **The provider's name.** "May I have your name, please?" The employee directory is not consulted on a provider
+   call (2.2), so this is always asked, whoever the caller ID belongs to. A doubtful name is read back spelled, as
+   everywhere.
 5. **The callback number, always asked:** "What is the best phone number for our IT team to call you back on?" Asked
    even when caller ID gave a number. A number that is not understood is asked for again (`VOICE_MAX_PHONE_ATTEMPTS`);
    if none is ever understood and caller ID gave one, that number is offered for confirmation.
@@ -549,10 +550,33 @@ recipients and mail providers. With `VOICE_PROVIDER_FLOW=false` (the default), c
 
 ### 2.2 Employee directory (`USER_DIRECTORY_CSV_PATH`)
 
-On the first `/start` of a call, if the gateway sent a usable caller ID, it is looked up once in the
-employee directory (`app/services/user_directory.py`); only the outcome is kept, in that call's
-session (`collected["directory"]`). The greeting, `/start` and `/turn` request and response shapes are
-unchanged. A retried `/start` never repeats the lookup.
+**Only the employee flow uses the directory.** `/start` looks nobody up: who is calling is not known yet. When
+the call is routed to the employee flow (the caller says they are an employee, or their description is
+classified as an employee IT problem), the gateway's caller ID, if it is usable, is looked up once in the
+employee directory (`app/services/user_directory.py`; `orchestrator._look_up_employee`); only the outcome is
+kept, in that call's session (`collected["directory"]`). A patient or a provider call is never looked up, never
+proposed a name, and runs exactly as it does for a caller who is not in the directory. A caller who switches flows
+("actually, I'm a provider") is looked up only while they are an employee, and never twice. The greeting,
+`/start` and `/turn` request and response shapes are unchanged.
+
+**The file.** `USER_DIRECTORY_CSV_PATH=data/directory_merged.csv`, made by `backend/build_directory.py` from the
+phone system's `users.csv` and the Exchange mailbox export. It keeps every phone-system column and adds the
+mailbox side's: a clean **Display Name**, credentials, job title, provider flag, department, site, the real
+mailbox address, and an **Account Type** for every record (`person`, `likely_person`, `shared_line`, `call_park`,
+`shared_or_service`, `system_account`, `test`, `test_or_unassigned`, `external_or_student`). A plain `users.csv`
+export still loads and behaves as it did.
+
+| Lookup by | Where |
+|---|---|
+| Phone number (the caller ID) | When the call is routed to the employee flow |
+| Extension, email address (the phone system's or the mailbox's), phone number | An identifier the caller gives instead of saying yes to the proposal |
+| Extension | The office-extension answer, to describe it on the ticket |
+
+Only a **live person** is ever named: a `person` record that is Active and not deactivated, by its Display Name
+(two to four plain words). A `likely_person` (a line whose label looks like a name but that no mailbox backs up) is
+named by the conservative label rule, as every entry of a plain export is. Shared lines, call parks, services,
+system, test and external accounts, deactivated users and mailbox-only records (a mailbox with no phone-system
+account; their Status is `Unknown`) are never named, whatever else they carry.
 
 | Lookup outcome | What the caller experiences |
 |---|---|
@@ -567,14 +591,20 @@ Rules that do not bend:
   *caller-confirmed*, never authenticated: nothing is authorized by caller ID or by that yes, and the ticket
   says so (`Identity: directory entry confirmed by the caller; not authenticated`).
 - The decision is deterministic (the directory service's result plus the rule-based yes/no): no model call.
-- Patients and other non-employee callers never see it: the question exists only in the employee IT flow, and
-  directory membership never classifies a call.
-- The directory's Name column holds phone-system labels ("1001 Exec First Last", "Lab Slate Hill"), so the name said
-  aloud is derived conservatively (`app/voice/directory_identity.py`): an extension prefix and the entry's own
-  site/team words are stripped, and the result must be exactly two plain words. Anything else is asked, not guessed.
-- Confirmed values (name, extension, teams, location, active) are kept in call context and written to the ticket's
-  intake details. The directory's email is **not** put on the ticket (many entries are placeholders or use a
-  misspelled domain); the usual email question still applies. The directory itself is never modified.
+- Patients and providers never see it: the lookup and the question exist only in the employee IT flow, and
+  directory membership never classifies a call (a caller the directory lists as a provider is still an employee
+  caller unless they say otherwise).
+- On the merged file the name said aloud is the entry's clean Display Name. On a plain export the Name column holds
+  phone-system labels ("1001 Exec First Last", "Lab Slate Hill"), so the name is derived conservatively
+  (`app/voice/directory_identity.py`): an extension prefix and the entry's own site/team words are stripped, and the
+  result must be exactly two plain words. Anything else is asked, not guessed.
+- Confirmed values are kept in call context (`collected["directory_identity"]`): name, extension, teams, location,
+  active and, from the merged file, the Display Name, phone number, mailbox email, department, site, job title,
+  credentials, provider flag, account type, status and how sure the merge was. The ticket's intake details show
+  the extension, location and teams, as before. The directory's email is **not** put on the ticket: after the caller
+  confirms who they are, the mailbox address is *offered* ("I have ... on file. Is that still the best email?") only
+  when it is in the usual shape and belongs to that name, and the caller's own answer is what the ticket uses. The
+  directory itself is never modified.
 
 **Office extension (`VOICE_ASK_EXTENSION`, employee calls).** A directory entry the caller said yes to
 carries its extension, and it is reused: the caller is not asked. Otherwise, after the name and callback number,
