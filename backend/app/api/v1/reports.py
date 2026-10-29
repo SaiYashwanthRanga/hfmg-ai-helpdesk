@@ -6,8 +6,8 @@
     GET  /reports/{id}              the report: validation, progress, analysis, email status
     POST /reports/{id}/send         email the saved analysis to the IT distribution list
 
-Every route except /config answers 404 unless ENABLE_TICKET_REPORTS=true. The API has no authentication (like every
-other route here), so the feature is off by default and the recipient is fixed in the backend's configuration.
+Every route except /config answers 404 unless ENABLE_TICKET_REPORTS=true. Any signed-in user may run it (there are no
+roles yet), so the feature is off by default and the recipient is fixed in the backend's configuration.
 """
 
 import uuid

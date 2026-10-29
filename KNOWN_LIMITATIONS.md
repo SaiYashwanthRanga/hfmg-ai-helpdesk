@@ -6,7 +6,8 @@ Written for stakeholders and end users, not engineers — what you'll notice, an
 
 ## Security & Access
 
-- **There is no login.** Anyone who can reach the application on the network can view and act on every ticket, call, and (read-only) configuration status. This system is safe to run only on a trusted internal network, never exposed to the public internet, until authentication ships (a planned future phase).
+- **One access level.** Staff sign in with their HFMG email and password (checked by the org login server), and every API route except the health probes and the SIP gateway's own token-protected routes needs that session. But anyone whose HFMG account signs in sees and can act on every ticket and call: there are no roles and no per-user restriction yet. Keep the system on the internal network.
+- **Sign-out is per browser.** The session is a signed cookie, valid for `SESSION_TTL_HOURS` (12 by default). Signing out clears it in that browser; there is no server-side list of sessions to revoke. Changing `SESSION_SECRET` signs everyone out.
 - **Settings cannot be edited from the app.** You can see whether OpenAI, the SIP voice gateway, and email are configured and working, but changing any of those requires editing server configuration directly. This is deliberate: editing live credentials with no login in front of the page would be a security hole, not a convenience.
 
 ## Voice & Calls

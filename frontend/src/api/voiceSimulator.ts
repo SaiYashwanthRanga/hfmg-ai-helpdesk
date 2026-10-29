@@ -19,6 +19,7 @@ import type {
 } from "../types/voiceSimulator";
 import { ApiError } from "./client";
 import { API_BASE_URL } from "./baseUrl";
+import { apiFetch } from "./http";
 import { uuid } from "../lib/uuid";
 
 const BASE = "/voice-simulator";
@@ -65,7 +66,7 @@ async function request<T>(method: string, path: string, body?: unknown, signal?:
   let status: number | null = null;
   let error: string | null = null;
   try {
-    const response = await fetch(`${API_BASE_URL}${BASE}${path}`, {
+    const response = await apiFetch(`${BASE}${path}`, {
       method,
       signal,
       headers: isForm || body === undefined ? undefined : { "Content-Type": "application/json" },
@@ -119,7 +120,7 @@ export const simulatorApi = {
    * navigation). The idle sweeper catches anything this misses.
    */
   endOnUnload: (sessionId: string) => {
-    void fetch(`${API_BASE_URL}${BASE}/end`, {
+    void apiFetch(`${BASE}/end`, {
       method: "POST",
       keepalive: true,
       headers: { "Content-Type": "application/json" },

@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import type { VoiceCallDetail, VoiceCallPage, VoiceCallState, VoiceCallSummary } from "../types/voiceCall";
 import { ApiError } from "./client";
-import { API_BASE_URL } from "./baseUrl";
+import { apiFetch } from "./http";
 
 
 async function get<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`);
+  const response = await apiFetch(path);
   if (!response.ok) {
     let detail = response.statusText;
     try {

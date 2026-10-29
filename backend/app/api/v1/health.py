@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import require_login
 from app.db.base import get_db
 from app.schemas.health import DependencyHealthReport, DependencyStatus
 from app.services.dependency_health import get_dependency_health
@@ -32,7 +33,7 @@ async def health_ready(db: AsyncSession = Depends(get_db)) -> dict[str, str]:
     return {"status": "ok"}
 
 
-@router.get("/health/dependencies", response_model=DependencyHealthReport)
+@router.get("/health/dependencies", response_model=DependencyHealthReport, dependencies=[Depends(require_login)])
 async def health_dependencies(db: AsyncSession = Depends(get_db)) -> DependencyHealthReport:
     """OpenAI/SIP/Database/Email status strip (DESIGN.md §6.1). Each
     check is cached for a short interval -- see app/services/dependency_health.py.

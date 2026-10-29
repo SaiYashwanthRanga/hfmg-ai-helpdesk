@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { SettingsStatusResponse } from "../types/settings";
 import { ApiError } from "./client";
-import { API_BASE_URL } from "./baseUrl";
+import { apiFetch } from "./http";
 
 
 /**
@@ -12,7 +12,7 @@ import { API_BASE_URL } from "./baseUrl";
  * edge. Do not add one here without Phase 3 backend auth landing first.
  */
 export async function fetchSettingsStatus(): Promise<SettingsStatusResponse> {
-  const response = await fetch(`${API_BASE_URL}/settings/status`);
+  const response = await apiFetch(`/settings/status`);
   if (!response.ok) {
     throw new ApiError(response.statusText, response.status);
   }

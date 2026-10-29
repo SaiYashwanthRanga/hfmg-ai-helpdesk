@@ -153,8 +153,8 @@ class Settings(BaseSettings):
     user_directory_csv_path: str = ""
 
     # --- AI Call Simulator (VOICE_SIMULATOR_DESIGN.md) ---
-    # Off by default. The API has no authentication, so when on, anyone who
-    # can reach it can spend OpenAI credit and create (SIMULATOR) tickets.
+    # Off by default. There are no roles, so when on, any signed-in user
+    # can spend OpenAI credit and create (SIMULATOR) tickets.
     # Refused outright when ENVIRONMENT=production -- see the validator below.
     enable_voice_simulator: bool = False
     simulator_max_audio_bytes: int = 2_000_000
@@ -189,8 +189,8 @@ class Settings(BaseSettings):
     speech_tts_cache_entries: int = 256
 
     # --- IT ticket analysis reports (Freshworks export -> AI report -> email to the IT team) ---
-    # Off by default. The API has no authentication, so when on, anyone who can reach it can spend
-    # OpenAI credit and email the IT distribution list (one email per report). Keep it on a trusted network.
+    # Off by default. There are no roles, so when on, any signed-in user can spend OpenAI credit
+    # and email the IT distribution list (one email per report).
     enable_ticket_reports: bool = False
     # Where a finished report is sent: normally the one address of the IT team's distribution list; several
     # addresses separated by commas (for testing) get one email addressed to all of them. Backend-only: the
@@ -240,13 +240,40 @@ class Settings(BaseSettings):
         if self.enable_voice_simulator and self.environment.strip().lower() in ("production", "prod"):
             raise ValueError(
                 "ENABLE_VOICE_SIMULATOR=true is not allowed when ENVIRONMENT=production. "
-                "The simulator has no authentication and spends OpenAI credit."
+                "The simulator is a QA tool that spends OpenAI credit."
             )
         return self
 
     # Shared secret the SIP voice gateway (Sorcery) sends as a Bearer token to
     # /api/v1/voice/sip/*. Empty disables those endpoints entirely.
     voice_sip_gateway_token: str = ""
+
+    # --- Dashboard login ---
+    # Every API route needs a signed-in session except /health, /health/ready, /auth/* and the
+    # SIP gateway's /voice/sip/* (which has its own Bearer token above). The email and password
+    # are checked by the HFMG org server's POST /login; AUTH_LOGIN_URL is its full address, e.g.
+    # http://172.22.6.188:177/login. While AUTH_LOGIN_URL or SESSION_SECRET is missing,
+    # nobody can sign in (the API stays closed, it never falls back to open).
+    # AUTH_REQUIRED=false turns the login off: local development only, refused in production.
+    auth_required: bool = True
+    auth_login_url: str = ""
+    # The login API itself waits up to 30 s on the org server; leave it room to answer.
+    auth_login_timeout_seconds: float = 35.0
+    # Signs the session cookie: a random string of at least 32 characters. Changing it signs everyone out.
+    session_secret: str = ""
+    session_ttl_hours: float = 12.0
+    # Send the session cookie over HTTPS only. Turn on when the dashboard is served over HTTPS.
+    session_cookie_secure: bool = False
+
+    @model_validator(mode="after")
+    def _login_never_off_in_production(self) -> "Settings":
+        """Fail startup rather than serve an unauthenticated production API."""
+        if not self.auth_required and self.environment.strip().lower() in ("production", "prod"):
+            raise ValueError(
+                "AUTH_REQUIRED=false is not allowed when ENVIRONMENT=production. "
+                "Set AUTH_LOGIN_URL and SESSION_SECRET instead."
+            )
+        return self
 
     @field_validator("openai_temperature", mode="before")
     @classmethod

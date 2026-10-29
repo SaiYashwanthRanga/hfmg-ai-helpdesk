@@ -6,20 +6,19 @@
 
 ---
 
-## 1. Read This First — The System Has No Authentication
+## 1. Read This First — Who Can Reach What
 
-Phase 1 deliberately deferred auth (`docs/archive/IMPLEMENTATION_PLAN.md`, MVP Scope Decision). **Every ticket endpoint is open to anyone who can reach it.** There is no login, no API key, no role check.
+Staff sign in to the dashboard with their HFMG email and password. The backend checks them against the org login API (`AUTH_LOGIN_URL`) and issues its own signed session cookie; every API route except the ones below needs it. There are no roles yet: anyone whose HFMG account signs in can see and act on every ticket.
 
 Voice calls arrive over SIP (Nextiva → SIPSorcery gateway), and the gateway calls the backend over the internal network, so **nothing needs to be reachable from the public internet**:
 
 | Path | Must be reachable from | Authentication |
 |---|---|---|
 | `/api/v1/voice/sip/*` | The SIP gateway host (internal network) | Bearer token (`VOICE_SIP_GATEWAY_TOKEN`) |
-| Everything else (`/api/v1/tickets`, `/api/v1/categories`, frontend) | HFMG internal network only | **None** |
+| `/api/v1/health`, `/api/v1/health/ready`, `/api/v1/auth/*` | Internal network (probes, sign-in page) | None |
+| Everything else (`/api/v1/tickets`, `/api/v1/categories`, …) | HFMG internal network only | Dashboard session (sign-in) |
 
-**This guide's reverse-proxy configuration (§6) restricts everything to the internal network. Do not skip it.** Exposing `/api/v1/tickets` to the internet would let anyone read every ticket — including caller names, phone numbers, and free-text descriptions that may reference patients.
-
-If your organization cannot accept an internally-unauthenticated app even on a trusted network, stop here and implement Phase 3 auth first.
+**This guide's reverse-proxy configuration (§6) still restricts everything to the internal network. Do not skip it.** The sign-in adds a check, it does not make the app fit for the public internet: tickets hold caller names, phone numbers, and free-text descriptions that may reference patients.
 
 ## 2. What You're Deploying
 
@@ -142,6 +141,11 @@ Complete variable reference — every variable the app reads:
 | `OPENAI_TEMPERATURE` | *(leave blank)* | Reasoning models reject it. Only set for a model that supports it |
 | `OPENAI_REASONING_EFFORT` | `minimal` (optional) | Lowest latency on reasoning models — matters on voice calls |
 | `VOICE_SIP_GATEWAY_TOKEN` | long random string | **Secret**. Must equal `Backend.GatewayToken` in the gateway. Empty disables the SIP endpoints |
+| `AUTH_LOGIN_URL` | `http://172.22.6.188:177/login` | The org server's `POST /login` (same server as `ORG_BASE`), which checks staff email + password. Unset = nobody can sign in |
+| `SESSION_SECRET` | random, 32+ characters | **Secret**. Signs the dashboard session cookie. Changing it signs everyone out |
+| `SESSION_TTL_HOURS` | `12` | How long a sign-in lasts |
+| `SESSION_COOKIE_SECURE` | `true` | Behind TLS (§6). `false` only for plain-HTTP internal hosts |
+| `AUTH_REQUIRED` | `true` (default) | `false` is refused at startup when `ENVIRONMENT=production` |
 | `VOICE_NLU_TIMEOUT_SECONDS` | `4.0` | Keep short: the caller is waiting on the line for each reply |
 | `VOICE_MAX_MISUNDERSTANDINGS` | `3` | Escalation threshold |
 | `VOICE_MAX_EMAIL_ATTEMPTS` | `2` | |

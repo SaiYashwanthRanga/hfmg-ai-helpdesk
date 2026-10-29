@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { Route, Routes } from "react-router-dom";
 import { AppShell } from "./app/AppShell";
+import { AuthProvider } from "./app/AuthProvider";
 import { PageContainer } from "./components/layout/PageContainer";
 import { AIInsightsPage } from "./pages/AIInsightsPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
@@ -24,38 +25,40 @@ const VoiceSimulatorPage = lazy(() =>
 // sub-route and the internal-only component playground.
 function App() {
   return (
-    <AppShell>
-      <PageContainer>
-        <Routes>
-          <Route path="/" element={<DashboardPage />} />
+    <AuthProvider>
+      <AppShell>
+        <PageContainer>
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
 
-          <Route path="/tickets" element={<TicketsPage />} />
-          <Route path="/tickets/new" element={<NewTicketPage />} />
-          <Route path="/tickets/:ticketId" element={<TicketDetailRedirect />} />
+            <Route path="/tickets" element={<TicketsPage />} />
+            <Route path="/tickets/new" element={<NewTicketPage />} />
+            <Route path="/tickets/:ticketId" element={<TicketDetailRedirect />} />
 
-          <Route path="/calls" element={<CallsPage />} />
-          <Route path="/calls/live/:callId" element={<LiveCallMonitor />} />
-          {/* Dev/QA tool; the page itself explains when the backend has it turned off. */}
-          <Route
-            path="/voice-simulator"
-            element={
-              <Suspense fallback={<LoadingState variant="page" />}>
-                <VoiceSimulatorPage />
-              </Suspense>
-            }
-          />
+            <Route path="/calls" element={<CallsPage />} />
+            <Route path="/calls/live/:callId" element={<LiveCallMonitor />} />
+            {/* Dev/QA tool; the page itself explains when the backend has it turned off. */}
+            <Route
+              path="/voice-simulator"
+              element={
+                <Suspense fallback={<LoadingState variant="page" />}>
+                  <VoiceSimulatorPage />
+                </Suspense>
+              }
+            />
 
-          <Route path="/analytics" element={<AnalyticsPage />} />
-          <Route path="/ai-insights" element={<AIInsightsPage />} />
-          {/* A sub-page of AI Insights, like /calls/live: the six-item nav (DESIGN.md §4) is unchanged. */}
-          <Route path="/ai-insights/ticket-analysis" element={<TicketAnalysisPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/analytics" element={<AnalyticsPage />} />
+            <Route path="/ai-insights" element={<AIInsightsPage />} />
+            {/* A sub-page of AI Insights, like /calls/live: the six-item nav (DESIGN.md §4) is unchanged. */}
+            <Route path="/ai-insights/ticket-analysis" element={<TicketAnalysisPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
 
-          {/* Internal-only, not linked from navigation — see DevComponentsPage. */}
-          <Route path="/dev/components" element={<DevComponentsPage />} />
-        </Routes>
-      </PageContainer>
-    </AppShell>
+            {/* Internal-only, not linked from navigation — see DevComponentsPage. */}
+            <Route path="/dev/components" element={<DevComponentsPage />} />
+          </Routes>
+        </PageContainer>
+      </AppShell>
+    </AuthProvider>
   );
 }
 

@@ -1,5 +1,5 @@
 import type { DependencyStatus } from "../components/ui/StatusIndicator";
-import { API_BASE_URL } from "./baseUrl";
+import { apiFetch } from "./http";
 
 export interface DependencyHealth {
   status: DependencyStatus;
@@ -33,7 +33,7 @@ interface RawDependencyHealthReport {
  * fresh check or an instant cache hit, never a redundant live call.
  */
 export async function fetchDependencyHealth(): Promise<DependencyHealthReport> {
-  const response = await fetch(`${API_BASE_URL}/health/dependencies`);
+  const response = await apiFetch(`/health/dependencies`);
   if (!response.ok) {
     // A failed health-of-health check renders as "unknown" everywhere,
     // never a fabricated "operational" — this is the one place `unknown`

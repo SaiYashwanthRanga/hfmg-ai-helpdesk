@@ -24,8 +24,9 @@ export function useAudioPlayer() {
   const ensureElement = useCallback(() => {
     if (!elementRef.current) {
       const element = new Audio();
-      // Needed to route a cross-origin stream through Web Audio (the meter).
-      element.crossOrigin = "anonymous";
+      // Needed to route a cross-origin stream through Web Audio (the meter);
+      // "use-credentials" so the request carries the dashboard session cookie.
+      element.crossOrigin = "use-credentials";
       element.preload = "auto";
       const context = getAudioContext();
       const source = context.createMediaElementSource(element);

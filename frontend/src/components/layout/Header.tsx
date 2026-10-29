@@ -1,5 +1,6 @@
-import { Bot, Menu } from "lucide-react";
+import { Bot, LogOut, Menu } from "lucide-react";
 import { Link } from "react-router-dom";
+import { useAuth } from "../../app/AuthProvider";
 import { useSidebar } from "../../app/SidebarContext";
 import { Button } from "../ui/Button";
 import { NotificationCenter } from "./NotificationCenter";
@@ -27,6 +28,7 @@ function resolveEnvironment(): Environment {
 export function Header() {
   const environment = resolveEnvironment();
   const { openMobile } = useSidebar();
+  const { session, signOut } = useAuth();
 
   return (
     <header className="sticky top-0 z-40 flex h-16 shrink-0 items-center justify-between gap-4 border-b border-stone-200/80 bg-white/95 px-4 backdrop-blur-md shadow-xs sm:px-6">
@@ -58,6 +60,16 @@ export function Header() {
           <StatusBar />
         </div>
         <NotificationCenter />
+        {session.login_required ? (
+          <div className="flex items-center gap-1 border-l border-stone-200 pl-3">
+            <span className="hidden max-w-48 truncate text-sm text-stone-600 sm:block" title={session.email}>
+              {session.name || session.email}
+            </span>
+            <Button variant="icon" aria-label="Sign out" title="Sign out" onClick={() => void signOut()}>
+              <LogOut className="size-4" aria-hidden="true" />
+            </Button>
+          </div>
+        ) : null}
       </div>
     </header>
   );

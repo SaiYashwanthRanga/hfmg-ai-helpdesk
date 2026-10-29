@@ -8,7 +8,7 @@ import type {
   TicketSource,
   TicketStatus,
 } from "../types/ticket";
-import { API_BASE_URL } from "./baseUrl";
+import { apiFetch } from "./http";
 
 
 class ApiError extends Error {
@@ -21,7 +21,7 @@ class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await apiFetch(path, {
     headers: { "Content-Type": "application/json" },
     ...init,
   });

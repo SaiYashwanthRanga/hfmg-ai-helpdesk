@@ -155,6 +155,14 @@ def _hermetic_email_defaults(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _login_off_by_default(monkeypatch):
+    """API tests predate the dashboard login and call routes without a session.
+    The login has its own tests (test_auth.py), which switch it on."""
+    monkeypatch.setattr(settings, "auth_required", False)
+    yield
+
+
+@pytest.fixture(autouse=True)
 async def _truncate_tables():
     """Empty every table between tests.
 

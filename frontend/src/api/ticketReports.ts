@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReportConfig, SendResult, TicketReportRecord } from "../types/ticketReport";
 import { ApiError } from "./client";
-import { API_BASE_URL } from "./baseUrl";
+import { apiFetch } from "./http";
 
 const BASE = "/reports";
 /** How often a running analysis is checked for progress. */
@@ -18,7 +18,7 @@ function describeError(payload: unknown, fallback: string): string {
 async function request<T>(method: string, path: string, body?: FormData): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}${BASE}${path}`, { method, body });
+    response = await apiFetch(`${BASE}${path}`, { method, body });
   } catch {
     throw new ApiError("Could not reach the server. Check the connection and try again.", 0);
   }

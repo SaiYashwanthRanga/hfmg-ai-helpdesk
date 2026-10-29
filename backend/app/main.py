@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from app.api.v1.reports import UploadSizeLimitMiddleware
 from app.api.v1.router import api_router
+from app.core.auth import login_is_configured
 from app.core.config import get_settings
 from app.services.user_directory import UserDirectoryService
 from app.simulator.routes import AudioSizeLimitMiddleware
@@ -41,6 +42,13 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     """Load the employee directory once, off the event loop. A missing or bad file leaves it
     unavailable (logged); it never stops the API from starting."""
+    if settings.auth_required and not login_is_configured():
+        logger.error(
+            "Dashboard login is required but AUTH_LOGIN_URL or SESSION_SECRET (32+ characters) is not set: "
+            "nobody can sign in. Set both, or AUTH_REQUIRED=false for local development."
+        )
+    elif not settings.auth_required:
+        logger.warning("AUTH_REQUIRED=false: the dashboard and API are open to anyone who can reach them")
     directory = UserDirectoryService()
     await directory.load(settings.user_directory_csv_path)
     app.state.user_directory = directory

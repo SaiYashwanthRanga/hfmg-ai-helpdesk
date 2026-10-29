@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import type { AIInsightsResponse } from "../types/aiInsights";
 import { ApiError } from "./client";
-import { API_BASE_URL } from "./baseUrl";
+import { apiFetch } from "./http";
 
 
 export async function fetchAiInsights(days = 30): Promise<AIInsightsResponse> {
-  const response = await fetch(`${API_BASE_URL}/ai-insights?days=${days}`);
+  const response = await apiFetch(`/ai-insights?days=${days}`);
   if (!response.ok) {
     throw new ApiError(response.statusText, response.status);
   }
