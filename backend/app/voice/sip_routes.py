@@ -60,6 +60,11 @@ class TurnRequest(BaseModel):
     # One stable ID per logical turn, reused on every retry of it (docs/TURN_ID_CONTRACT.md).
     # Absent from a gateway that predates it; such a request is processed every time it arrives.
     turn_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._:-]{1,64}$")
+    # How the gateway stopped recording: "silence", "max_length" (cut off at its limit) or "no_input",
+    # and how long the caller spoke. Both optional and never validated beyond their type: an unknown value
+    # must not fail a caller's turn. "max_length" at a short question means a noisy line (orchestrator._sounds_noisy).
+    end_reason: str | None = None
+    speech_ms: float | None = None
 
 
 class StatusRequest(BaseModel):
@@ -276,7 +281,8 @@ async def turn(
     ticket_before = session.ticket_id
     try:
         outcome = await orchestrator.handle_turn(
-            db, session, utterance=body.utterance, confidence=body.confidence, directory=directory
+            db, session, utterance=body.utterance, confidence=body.confidence, directory=directory,
+            end_reason=body.end_reason,
         )
         reply = _reply(_to_response(outcome, session), body.turn_id)
         if body.turn_id:
@@ -298,12 +304,14 @@ async def turn(
         await dispatch_ticket_tasks(db, background_tasks, done.dispatch_ticket_id)
 
     logger.info(
-        "sip call=%s turn_id=%s state=%s misunderstandings=%s stt_confidence=%s",
+        "sip call=%s turn_id=%s state=%s misunderstandings=%s stt_confidence=%s end_reason=%s speech_ms=%s",
         body.call_id,
         body.turn_id,
         done.state,
         done.misunderstandings,
         body.confidence,
+        body.end_reason,
+        body.speech_ms,
     )
     return done.response
 

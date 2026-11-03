@@ -53,6 +53,15 @@ One caller utterance per request.
 
 Send an empty `utterance` when the caller said nothing. The backend counts it as a failed turn and re-prompts or escalates.
 
+Optional fields, for noisy lines:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `end_reason` | string | Why recording stopped: `"silence"`, `"max_length"` (cut off at the gateway's length limit) or `"no_input"`. Any other value is accepted and ignored. |
+| `speech_ms` | number | How long the caller spoke, in milliseconds. Logged only. |
+
+At a short question (yes/no, a phone number, an extension), an answer cut off at `"max_length"`, or longer than `VOICE_NOISY_ANSWER_MAX_WORDS` words, is treated as background talk. It is not acted on. The caller hears "please move somewhere a little quieter" and the question is asked again. After `VOICE_MAX_NOISY_ANSWERS` noisy answers the call becomes a callback request. At an open question (the problem, its details, the read-back) a long answer is always used. Caption text that Whisper makes up from noise ("Thanks for watching!", "Subtitles by…") is removed, and an answer that is only that counts as silence.
+
 ### Response for `/start` and `/turn`
 
 ```json

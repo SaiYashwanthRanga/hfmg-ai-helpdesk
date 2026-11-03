@@ -674,7 +674,10 @@ async def test_the_summary_is_written_once_and_the_email_has_the_same_shape_with
 async def test_the_start_and_turn_contracts_are_unchanged(make_call, client, db_session, directory):
     schemas = app.openapi()["components"]["schemas"]
     assert set(schemas["StartCallRequest"]["properties"]) == {"call_id", "from_number", "to_number"}
-    assert set(schemas["TurnRequest"]["properties"]) == {"call_id", "utterance", "confidence", "turn_id"}
+    # end_reason and speech_ms are optional (a noisy line, tests/test_noisy_line.py): a gateway without them is unaffected.
+    assert set(schemas["TurnRequest"]["properties"]) == {
+        "call_id", "utterance", "confidence", "turn_id", "end_reason", "speech_ms",
+    }
     assert set(schemas["TurnResponse"]["properties"]) == {"lines", "expect_reply", "ticket_id", "stt_prompt"}
     assert set(schemas["TurnReply"]["properties"]) == {"lines", "expect_reply", "ticket_id", "stt_prompt", "turn_id"}
 

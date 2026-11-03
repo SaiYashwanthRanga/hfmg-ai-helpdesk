@@ -692,7 +692,9 @@ async def test_asking_for_a_person_at_the_first_question_gets_a_callback_as_ever
 async def test_the_gateway_contract_is_unchanged_by_the_new_step(make_call, client, db_session):
     schemas = __import__("app.main", fromlist=["app"]).app.openapi()["components"]["schemas"]
     assert set(schemas["StartCallRequest"]["properties"]) == {"call_id", "from_number", "to_number"}
-    assert set(schemas["TurnRequest"]["properties"]) == {"call_id", "utterance", "confidence", "turn_id"}
+    assert set(schemas["TurnRequest"]["properties"]) == {
+        "call_id", "utterance", "confidence", "turn_id", "end_reason", "speech_ms",
+    }
     started = await make_call("route-contract").start()
     assert set(started) == {"lines", "expect_reply", "ticket_id", "stt_prompt"}
     plain = await client.post(f"{SIP}/turn", json={"call_id": "route-contract", "utterance": "I'm a patient"}, headers=AUTH)

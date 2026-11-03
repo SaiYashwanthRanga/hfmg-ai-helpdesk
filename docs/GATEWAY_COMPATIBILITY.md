@@ -13,7 +13,7 @@ Only these fields reach it (`app/voice/sip_routes.py`):
 | Route | Fields |
 |---|---|
 | `POST /voice/sip/start` | `call_id`, `from_number`, `to_number` |
-| `POST /voice/sip/turn` | `call_id`, `utterance`, `confidence`, `turn_id` (optional) |
+| `POST /voice/sip/turn` | `call_id`, `utterance`, `confidence`, `turn_id` (optional), `end_reason` and `speech_ms` (optional, see `SIP_SETUP.md` §3) |
 | `POST /voice/sip/status` | `call_id`, `reason` |
 
 No other SIP metadata (P-Asserted-Identity, display name, an extension field) is passed or read.

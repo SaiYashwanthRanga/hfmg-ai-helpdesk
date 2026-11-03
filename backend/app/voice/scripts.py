@@ -152,6 +152,9 @@ PHONE_RETRY = [
     "Sorry, what's the best callback number, one digit at a time?",
 ]
 
+# An answer to a short question that came with a lot of background talk: said before the question is asked again.
+NOISY_LINE = "Sorry, I picked up a lot of background noise there. If you can, please move somewhere a little quieter."
+
 
 def phone_retry(digits_heard: int, attempt: int) -> str:
     """Tell the caller what was wrong instead of asking them to repeat blindly.

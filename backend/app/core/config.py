@@ -117,6 +117,12 @@ class Settings(BaseSettings):
     voice_confirm_callback: bool = True
     # Callback-number attempts before the agent carries on without one.
     voice_max_phone_attempts: int = 2
+    # A noisy line (app/voice/orchestrator.py, _sounds_noisy): an answer to a short question (yes/no, a number, an
+    # extension) longer than this many words, or one the gateway cut off at its length limit, is background talk mixed
+    # in, not an answer. It is not acted on; the caller is asked to find somewhere quieter and asked again.
+    voice_noisy_answer_max_words: int = 30
+    # Noisy answers in one call before it becomes a callback request (the first is asked again).
+    voice_max_noisy_answers: int = 2
     # Open the call by asking "are you a patient or an employee?" and route to the patient request
     # flow or the employee IT flow. Off = the older behaviour: the caller describes the problem first
     # and the type is worked out from that (CLASSIFY_CALLER_TYPE).

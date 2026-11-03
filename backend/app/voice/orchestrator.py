@@ -185,8 +185,59 @@ _AGENT_VOICE = re.compile(
 )
 
 
+#: What Whisper-family recognizers write when they hear only noise or background talk: video captions from their
+#: training data. No caller says these to a help desk; they are removed wherever they appear in an answer. A caption's
+#: tail runs to the end of its sentence, past a dot inside a word ("the Amara.org community").
+_CAPTION_TAIL = r"(?:[^.?!]|\.(?=\w))*[.?!]?"
+_RECOGNIZER_ARTIFACT = re.compile(
+    r"\b(?:thanks|thank you)(?: so much| very much)? for watching\b[.!]?"
+    rf"|\bplease (?:like and )?subscribe\b{_CAPTION_TAIL}"
+    rf"|\b(?:subtitles|captions|transcription|transcribed|translated)\s+by\b{_CAPTION_TAIL}"
+    rf"|\bamara\.org\b{_CAPTION_TAIL}"
+    r"|\bsee you in the next video\b[.!]?",
+    re.IGNORECASE,
+)
+#: Marks a transcript line that came with a lot of background talk, at a short question.
+NOISY_ANSWER = "[not used: a lot of background noise]"
+#: Questions with a short answer -- yes or no, a number, an extension -- where a long answer is background talk.
+#: Not the open questions (the problem, its details, the read-back), where a caller may rightly talk at length, and
+#: not the spelled name or email, where every letter is a word.
+_SHORT_ANSWER_STATES = (
+    VoiceCallState.CONFIRM_IDENTITY,
+    VoiceCallState.CONFIRM_EMAIL,
+    VoiceCallState.CONFIRM_CALLBACK_NUMBER,
+    VoiceCallState.CONFIRM_CATEGORY,
+    VoiceCallState.COLLECT_PHONE,
+    VoiceCallState.COLLECT_ALTERNATE_CALLBACK_NUMBER,
+    VoiceCallState.COLLECT_EXTENSION,
+)
+
+
 def _plain(text: str) -> str:
     return " ".join(re.findall(r"[a-z0-9']+", (text or "").lower()))
+
+
+def _without_recognizer_artifacts(utterance: str) -> str:
+    return " ".join(_RECOGNIZER_ARTIFACT.sub(" ", utterance).split())
+
+
+def _sounds_noisy(session: VoiceCallSession, utterance: str, end_reason: str | None) -> bool:
+    """Is this answer to a short question mostly background talk? Either the gateway cut it off at its length limit
+    (the line never went quiet), or it is far longer than any answer to the question. At an open question a long
+    answer is normal and is always used."""
+    if not utterance or session.state not in _SHORT_ANSWER_STATES:
+        return False
+    return end_reason == "max_length" or len(utterance.split()) > settings.voice_noisy_answer_max_words
+
+
+async def _noisy_answer(db: AsyncSession, session: VoiceCallSession) -> TurnOutcome:
+    """Ask the question again, after asking the caller to move somewhere quieter. Never counted as a misunderstanding:
+    the caller may have answered perfectly. A line that stays noisy becomes a callback request."""
+    noisy = session.collected.get("noisy_answers", 0) + 1
+    update_collected(session, noisy_answers=noisy)
+    if noisy >= settings.voice_max_noisy_answers:
+        return await escalate(db, session, EscalationReason.REPEATED_MISUNDERSTANDING)
+    return _reask_open_question(session, scripts.NOISY_LINE)
 
 
 def _not_caller_speech(session: VoiceCallSession, utterance: str) -> bool:
@@ -244,28 +295,45 @@ async def handle_turn(
     utterance: str,
     confidence: float | None = None,
     directory: UserDirectoryService | None = None,
+    end_reason: str | None = None,
 ) -> TurnOutcome:
     """Interpret one caller utterance and advance the conversation.
 
     `directory` is the employee directory and is used on an employee call only: to look the caller ID
     up when the call is routed to the employee flow, and to look up an identifier the caller gives
     while confirming who they are (without it that step simply treats the answer as "no"). A
-    patient or provider call never reads it."""
+    patient or provider call never reads it.
+
+    `end_reason` is how the gateway stopped recording the answer, when it says: "silence", "max_length"
+    (cut off at its length limit) or "no_input". Only "max_length" is used, as a sign of a noisy line."""
     utterance = (utterance or "").strip()
-    if _not_caller_speech(session, utterance):
-        # The recognizer returned the agent's (or its own prompt's) words, not the caller's: a silence. Kept
-        # on the transcript, marked, and never stored as an answer to anything.
+    cleaned = _without_recognizer_artifacts(utterance)
+    if cleaned != utterance:
+        logger.warning("Call %s: recognizer caption text removed from the answer in %s", session.call_id, session.state.value)
+    noisy = False
+    if _not_caller_speech(session, utterance) or (utterance and not cleaned):
+        # The recognizer returned the agent's (or its own prompt's) words, or only caption text it makes up from
+        # noise, not the caller's: a silence. Kept on the transcript, marked, and never stored as an answer to anything.
         logger.warning("Call %s: answer in %s matched the agent's or recognizer's own words; treated as silence",
                        session.call_id, session.state.value)
         record_turn(session, role="caller", text=f"{NOT_CALLER_SPEECH} {utterance}", confidence=confidence)
         utterance = ""
+    elif _sounds_noisy(session, cleaned, end_reason):
+        logger.warning("Call %s: a noisy answer in %s (%d words, end_reason=%s); asked again",
+                       session.call_id, session.state.value, len(cleaned.split()), end_reason)
+        record_turn(session, role="caller", text=f"{NOISY_ANSWER} {cleaned}", confidence=confidence)
+        noisy = True
     else:
+        utterance = cleaned
         record_turn(session, role="caller", text=utterance, confidence=confidence)
 
     if session.state in (VoiceCallState.ESCALATED, VoiceCallState.COMPLETED):
         # Replay of an already-terminal turn (gateway retry). Say goodbye again
         # rather than re-running any of the work.
         return TurnOutcome(_speak(session, reply.say_and_hangup(scripts.GOODBYE)))
+
+    if noisy:
+        return await _noisy_answer(db, session)
 
     if not utterance:
         if session.collected.get("escalation_pending"):
