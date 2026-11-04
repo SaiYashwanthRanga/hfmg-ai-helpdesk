@@ -137,7 +137,7 @@ async def test_start_returns_description_stt_prompt(client):
     response = await client.post(START_URL, json={"call_id": "sip-stt-start"}, headers=AUTH)
 
     body = response.json()
-    assert set(body) == {"lines", "expect_reply", "ticket_id", "stt_prompt"}
+    assert set(body) == {"lines", "expect_reply", "ticket_id", "stt_prompt", "short_answer"}
     assert body["stt_prompt"] == speech_context.stt_prompt("COLLECT_DESCRIPTION")
     assert "IT issue or a patient service issue" in body["stt_prompt"]
 
@@ -399,7 +399,9 @@ async def test_unrecoverable_database_failure_says_so_and_leaves_the_call_usable
 
     body = response.json()
     assert response.status_code == 200
-    assert body == {"lines": [scripts.SYSTEM_ERROR], "expect_reply": False, "ticket_id": None, "stt_prompt": None}
+    assert body == {
+        "lines": [scripts.SYSTEM_ERROR], "expect_reply": False, "ticket_id": None, "stt_prompt": None, "short_answer": False,
+    }
     assert await _tickets(db_session) == []
     call = await _reload(db_session, "sip-dbdown")
     assert call.state == VoiceCallState.COLLECT_EMAIL  # nothing from the failed turns was committed

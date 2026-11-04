@@ -18,6 +18,9 @@ Only these fields reach it (`app/voice/sip_routes.py`):
 
 No other SIP metadata (P-Asserted-Identity, display name, an extension field) is passed or read.
 
+The `/start` and `/turn` responses carry `lines`, `expect_reply`, `ticket_id`, `stt_prompt`, `short_answer` (the next
+answer is a yes or a no: the gateway's shorter start rule), and on `/turn` the echoed `turn_id` (`SIP_SETUP.md` §3).
+
 ## 1. `/status` and ticket creation: confirmed defect, fixed
 
 When the gateway reports a hangup, a call that never finished intake becomes a ticket only if the caller

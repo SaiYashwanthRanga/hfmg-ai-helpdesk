@@ -77,6 +77,7 @@ At a short question (yes/no, a phone number, an extension), an answer cut off at
 - If `expect_reply` is `true`, listen for the caller and post the transcript to `/turn`. If `false`, hang up after speaking.
 - `ticket_id` is set once a ticket exists.
 - `stt_prompt` (optional, may be `null`) describes the caller's **next** answer: the problem description, name and department, spelled letters, an email, a phone number, or yes/no. Pass it as the `prompt` of the transcription request for the utterance that follows. It is `null` when `expect_reply` is `false`, when the state has no specific hint, or when `SPEECH_STT_CONTEXT=false`. Gateways that ignore it keep working unchanged.
+- `short_answer` (boolean, on every response): `true` when the caller's next answer is a yes or a no ("Is that correct?", "Is there anything else?", "Do you have an office extension number?"). The gateway then starts listening on about 120 ms of speech instead of 200 ms, so a quick "no" is not missed. It applies to the next answer only and is `false` for open questions and when `expect_reply` is `false`. A turn replayed from before the field existed omits it, which means `false`.
 - If the backend hits an internal error it still returns `200` with a single apology line and `expect_reply: false`, so the caller never hears silence.
 
 ### `POST /status`

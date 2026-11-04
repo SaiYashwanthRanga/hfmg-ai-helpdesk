@@ -20,6 +20,7 @@ import difflib
 import logging
 import re
 import uuid
+from collections.abc import Callable
 
 from pydantic import EmailStr, TypeAdapter
 from sqlalchemy import select
@@ -118,6 +119,87 @@ def _is_employee_call(session: VoiceCallSession) -> bool:
     return (session.collected or {}).get("caller_type") == caller_routing.EMPLOYEE
 
 
+def _identity_first_call(collected: dict) -> bool:
+    """`_identity_first` from the call's collected values alone (the ticket's intake details have only those), and
+    only when the directory was actually searched for this call."""
+    return (
+        settings.voice_employee_identity_first
+        and collected.get("caller_type") == caller_routing.EMPLOYEE
+        and bool(collected.get("identified_by_routing"))
+        and (collected.get("directory") or {}).get("status") in _SEARCHED
+    )
+
+
+#: Lookup outcomes of a directory that could be searched (by caller ID, or -- without one -- only by name).
+_SEARCHED = (
+    LookupStatus.MATCHED.value, LookupStatus.NOT_FOUND.value, LookupStatus.AMBIGUOUS.value, "no_caller_id",
+)
+
+
+def _identity_first(session: VoiceCallSession) -> bool:
+    """An employee who said so at the opening question, whose caller ID the directory has, is identified (name, then
+    email) before the problem is asked (VOICE_EMPLOYEE_IDENTITY_FIRST); one it does not have gives the problem first.
+    A call whose type was worked out from the problem already has the problem."""
+    return (
+        settings.voice_employee_identity_first
+        and _is_employee_call(session)
+        and bool((session.collected or {}).get("identified_by_routing"))
+    )
+
+
+# --- the problem said instead of a name (identity first) ------------------------------------------------------------
+#
+# Asked "Am I speaking with ...?", some callers just say what is wrong: "my Outlook won't open". The problem is noted
+# (never lost, never asked for again) and a callback request is filed from it at once instead of asking again: IT
+# calls back on the caller ID, which is how the directory found them.
+
+#: On the ticket: why it has no caller name.
+NAMELESS_CALLBACK_NOTE = "CALLBACK REQUESTED - the caller described the problem without giving their name."
+
+
+def _problem_before_identity(session: VoiceCallSession, utterance: str) -> bool:
+    """Is this answer to a who-are-you question (identity first, problem not yet given) a problem?"""
+    return (
+        _identity_first(session)
+        and not session.collected.get("caller_name")
+        and not session.collected.get("description")
+        and caller_routing.states_it_problem(utterance)
+    )
+
+
+async def _note_problem(
+    db: AsyncSession, session: VoiceCallSession, utterance: str, *, words_if_unread: bool
+) -> TurnOutcome | None:
+    """Keep the problem said at an identity question. Returns the escalation when the caller asked for a person in it,
+    else None. If the model cannot read it: with `words_if_unread` (a callback is about to be filed from it) the
+    caller's own words are the description; otherwise nothing is kept and the problem question is asked as usual."""
+    result = await nlu.interpret_description(utterance)
+    if _wants_human(utterance, result):
+        if not result.failed:
+            _record_description(session, result)
+        return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
+    if not result.failed:
+        _record_description(session, result)
+    elif words_if_unread:
+        update_collected(session, description=" ".join(utterance.split())[:1000], problem_words=utterance.strip()[:500])
+    return None
+
+
+async def _nameless_callback(db: AsyncSession, session: VoiceCallSession) -> TurnOutcome:
+    """File a callback request for a caller who gave the problem but no name, and end the call."""
+    collected = session.collected
+    phone = collected.get("phone_number") or (session.from_number if caller_id_is_usable(session.from_number) else None)
+    ticket = await _create_ticket(db, session, escalation_note=NAMELESS_CALLBACK_NOTE, raise_priority=False)
+    _record_ticket(session, ticket)
+    session.state = VoiceCallState.COMPLETED
+    opener = (
+        scripts.NAMELESS_CALLBACK.format(phone=scripts.spoken_phone_number(phone)) if phone
+        else scripts.NAMELESS_CALLBACK_NO_NUMBER
+    )
+    read_back = scripts.ESCALATION_READ_BACK.format(ticket_number=scripts.spoken_ticket_number(ticket.ticket_number))
+    return TurnOutcome(_speak(session, reply.say_and_hangup(opener, read_back, scripts.GOODBYE)), ticket.id)
+
+
 def _look_up_employee(session: VoiceCallSession, directory: UserDirectoryService | None) -> None:
     """The call has just been routed to the employee flow: look the caller ID up in the employee directory, once.
 
@@ -126,7 +208,11 @@ def _look_up_employee(session: VoiceCallSession, directory: UserDirectoryService
     already (a caller who switches flows and back, or a call that began before lookups moved here). A hint for the
     conversation must never end it: a lookup that fails leaves the directory "unavailable" for this call and the
     normal name question applies. Only the outcome's status, or the kind of failure, is logged."""
-    if directory is None or session.collected.get("directory") is not None or not caller_id_is_usable(session.from_number):
+    if directory is None or session.collected.get("directory") is not None:
+        return
+    if not caller_id_is_usable(session.from_number):
+        if _identity_first(session) and directory.available:
+            update_collected(session, directory={"status": "no_caller_id"})  # nothing to look up; searched by name later
         return
     try:
         result = directory.find_by_phone(session.from_number)
@@ -602,6 +688,9 @@ async def _route_caller(
     session.state = VoiceCallState.COLLECT_DESCRIPTION
     if caller_routing.states_it_problem(utterance):
         return await _handle_description(db, session, utterance, directory)
+    if _identity_first(session):
+        # Who is calling first (the directory was just looked up); the problem is asked once that is settled.
+        return await _next_step(db, session, acknowledgement=acknowledgement or scripts.EMPLOYEE_IDENTITY_ACK)
     ask = scripts.PROVIDER_ASK if caller_type == caller_routing.PROVIDER else scripts.EMPLOYEE_ASK
     return TurnOutcome(_speak(session, _ask(session, _with(acknowledgement, ask))))
 
@@ -1091,11 +1180,24 @@ async def _handle_identity_confirmation(
     if nlu.mentions_escalation(utterance):
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
 
-    identifier = _identifier_in(utterance)
+    said_yes = False
+    answers_otherwise = _rejects_proposal(utterance) or _identifier_in(utterance) is not None
+    if not answers_otherwise and _problem_before_identity(session, utterance):
+        # "Yes, and my Outlook won't open": a yes and the problem. Only the problem: a callback request. A no or an
+        # identifier is answered as usual and the problem asked later ("No, this isn't me" is not a problem).
+        words = re.findall(r"[a-z']+", utterance.lower())
+        said_yes = bool(words) and words[0] in nlu._YES
+        escalated = await _note_problem(db, session, utterance, words_if_unread=not said_yes)
+        if escalated is not None:
+            return escalated
+        if not said_yes:
+            return await _nameless_callback(db, session)
+
+    identifier = None if said_yes else _identifier_in(utterance)
     if identifier is not None:
         return await _identity_from_identifier(db, session, identifier, directory)
 
-    verdict = nlu.quick_yes_no(utterance, strict=True)
+    verdict = True if said_yes else nlu.quick_yes_no(utterance, strict=True)
     if verdict is None and _rejects_proposal(utterance):
         verdict = False
     if verdict is True:
@@ -1229,13 +1331,13 @@ async def _identity_from_identifier(
 def _should_ask_last_name(session: VoiceCallSession) -> bool:
     c = session.collected
     directory = c.get("directory") or {}
-    return (
-        _is_employee_call(session)
-        and bool(directory.get("by_last_name"))
-        and not directory.get("rejected")
-        and not c.get("identity_confirmed")
-        and not _asked(session, "last_name")
-    )
+    if not _is_employee_call(session) or c.get("identity_confirmed") or _asked(session, "last_name"):
+        return False
+    if _identity_first(session):
+        # Anyone the caller ID did not settle -- not found, a shared number, a room's line, no caller ID, or "that's not
+        # me" -- is searched for by name, once, whenever the directory can be searched.
+        return directory.get("status") in _SEARCHED
+    return bool(directory.get("by_last_name")) and not directory.get("rejected")
 
 
 def _ask_last_name(session: VoiceCallSession, *, acknowledgement: str | None = None) -> TurnOutcome:
@@ -1293,6 +1395,10 @@ async def _handle_last_name(
     candidates = list(directory.find_by_last_name(last))
     if len(words) > 1:  # "Maria Example": the first name was given too, so it narrows the list
         candidates = directory_identity.with_first_name(candidates, words[0])
+        if not candidates:
+            # One unfamiliar name heard as two words ("Nata Karani" for Natekereni): looked up as one.
+            last = "".join(words)
+            candidates = list(directory.find_by_last_name(last))
     proposed = _propose_by_last_name(session, candidates, heard=last)
     if proposed is not None:
         return proposed
@@ -2112,6 +2218,23 @@ async def _next_step(
             prompt = f"{acknowledgement} {prompt}"
         return TurnOutcome(_speak(session, _ask(session, prompt)))
 
+    # --- identity first (an employee routed at the opening question). The caller ID found them in the directory: "Am I
+    # speaking with ...?", the email on file, then the problem. Not found (or not them): the problem first, and who is
+    # calling at the end, by the usual steps (the last name, looked up by sound). ---
+    if _identity_first(session) and not collected.get("description"):
+        if not collected.get("caller_name"):
+            proposed = _pending_identity_name(session)
+            if proposed:
+                return _ask_identity(session, proposed, acknowledgement=acknowledgement)
+        elif not _asked(session, "email") and _directory_email_offer(session):
+            _mark_asked(session, "email")
+            return _ask_for_email(session, acknowledgement=acknowledgement)
+        first_name = _greeting_name(session)
+        return ask(
+            VoiceCallState.COLLECT_DESCRIPTION,
+            scripts.EMPLOYEE_PROBLEM_ASK.format(first_name=first_name) if first_name else scripts.EMPLOYEE_PROBLEM_ASK_PLAIN,
+        )
+
     # --- steps only for internal IT calls ---
     if not patient:
         if _urgent_from_the_start(collected) and not _asked(session, "details"):
@@ -2142,17 +2265,7 @@ async def _next_step(
 
     # --- name (both flows) ---
     if not collected.get("caller_name"):
-        if patient:
-            return ask(VoiceCallState.COLLECT_NAME, scripts.PATIENT_NAME_ASK)
-        proposed = _pending_identity_name(session)
-        if proposed:
-            # A directory entry matched the caller ID: ask, never assume. Employee IT calls only,
-            # and only here, where the name is about to be asked for anyway.
-            return _ask_identity(session, proposed, acknowledgement=acknowledgement)
-        if _should_ask_last_name(session):
-            return _ask_last_name(session, acknowledgement=acknowledgement)
-        _mark_asked(session, "department")  # asked together with the name
-        return ask(VoiceCallState.COLLECT_NAME, scripts.pick(scripts.NAME_ASK_OPTIONS, len(session.turns or [])))
+        return _ask_who_is_calling(session, ask, acknowledgement)
 
     # An urgent problem: after the essential questions, only the name and the callback number (no department,
     # extension, email or read-back), so the ticket reaches IT fast.
@@ -2192,6 +2305,23 @@ async def _next_step(
         return _ask_for_email(session, acknowledgement=acknowledgement)
 
     return await _finish_collection(db, session, preamble=acknowledgement)
+
+
+def _ask_who_is_calling(
+    session: VoiceCallSession, ask: Callable[[VoiceCallState, str], TurnOutcome], acknowledgement: str | None
+) -> TurnOutcome:
+    """The question that finds out who is calling: a patient's name; for an employee, the directory match ("Am I
+    speaking with ...?"), else the last name, else the name and department."""
+    if _is_patient_call(session):
+        return ask(VoiceCallState.COLLECT_NAME, scripts.PATIENT_NAME_ASK)
+    proposed = _pending_identity_name(session)
+    if proposed:
+        # A directory entry matched the caller ID: ask, never assume. Employee IT calls only.
+        return _ask_identity(session, proposed, acknowledgement=acknowledgement)
+    if _should_ask_last_name(session):
+        return _ask_last_name(session, acknowledgement=acknowledgement)
+    _mark_asked(session, "department")  # asked together with the name
+    return ask(VoiceCallState.COLLECT_NAME, scripts.pick(scripts.NAME_ASK_OPTIONS, len(session.turns or [])))
 
 
 def _name_confirmation(session: VoiceCallSession, acknowledgement: str | None = None) -> TurnOutcome | None:
@@ -3331,6 +3461,9 @@ async def _finish_collection(
     checked here, once, before anything else.
     """
     collected = session.collected
+    if _identity_first(session) and not collected.get("description"):
+        # Identity first: who is calling and their email were settled before the problem, which comes next.
+        return await _next_step(db, session, acknowledgement=preamble)
     if _callback_number_pending(session):
         return _ask_callback_confirmation(session, preamble=preamble)
     if _is_patient_call(session) or _is_provider_call(session):
@@ -3964,7 +4097,11 @@ def _intake_details(collected: dict) -> str:
         ("Action required", _provider_action_line(collected) if provider else None),
         ("Department", department),
         # The caller said yes to a directory entry. That is all it is: not authentication.
-        ("Identity", "directory entry confirmed by the caller; not authenticated" if confirmed else None),
+        ("Identity", "directory entry confirmed by the caller; not authenticated" if confirmed else (
+            # Identity first: the directory was searched (caller ID, then the name said) and the caller is not in it.
+            "not found in the directory (name as given by the caller)"
+            if _identity_first_call(collected) and collected.get("caller_name") else None
+        )),
         ("Extension", _extension_detail(collected, confirmed, who)),
         ("Location", who.get("location") if confirmed else None),
         ("Teams", ", ".join(who.get("teams") or [])[:300] if confirmed else None),

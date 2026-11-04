@@ -17,7 +17,9 @@ The common-name lists are deliberately short and Anglo/Hispanic-heavy: they mean
 that is real but not on the list simply gets one confirmation.
 """
 
+import functools
 import re
+import unicodedata
 
 COMMON_FIRST = frozenset(
     """
@@ -72,6 +74,54 @@ def parts(name: str | None) -> list[str]:
 def letters(word: str | None) -> str:
     """A name part reduced to its lowercase letters (any alphabet): "O'Brien" and "OBrien" are one name."""
     return re.sub(r"[\W\d_]+", "", (word or "").casefold())
+
+
+#: Spellings that sound alike, rewritten to one form before names are compared by sound. A recognizer writes an
+#: unfamiliar name as it sounds: "Yashvant" for Yashwanth, "Riley" for Reilly, "Natakarani" for Natekereni.
+_SOUNDS_ALIKE = (("ph", "f"), ("th", "t"), ("dh", "d"), ("bh", "b"), ("kh", "k"), ("gh", "g"), ("ck", "k"),
+                 ("w", "v"), ("z", "s"), ("q", "k"), ("x", "ks"))
+
+
+@functools.lru_cache(maxsize=8192)
+def sound_key(word: str | None) -> str:
+    """A name part as it sounds: accents dropped, sound-alike spellings made one, a silent h after a consonant
+    dropped, doubled letters made single, and every run of vowels after the first letter made one "a". Two spellings
+    of one spoken name get the same key; the first letter is kept as written."""
+    plain = "".join(c for c in unicodedata.normalize("NFKD", letters(word)) if not unicodedata.combining(c))
+    for spelled, sound in _SOUNDS_ALIKE:
+        plain = plain.replace(spelled, sound)
+    plain = re.sub(r"c(?=[eiy])", "s", plain).replace("c", "k")
+    plain = re.sub(r"(?<=[^aeiouy])h", "", plain)
+    plain = re.sub(r"(.)\1+", r"\1", plain)
+    return plain[:1] + re.sub(r"[aeiouy]+", "a", plain[1:])
+
+
+#: How alike two name parts are (name_similarity): the same letters, one letter off, the same sound, or only close.
+EXACT, ONE_LETTER, SAME_SOUND = 1.0, 0.97, 0.95
+#: Below this a name part is not taken for another. Fuzzy scores are at most 0.9, so only a near sound passes.
+SIMILAR_ENOUGH = 0.75
+
+
+def name_similarity(heard: str | None, listed: str | None) -> float:
+    """How alike a name part the caller said is to one on file, 0 to 1. Short names (under four letters) must be
+    exact: "Li" and "Lee" are different people. Otherwise one letter off (not the first: "Dana" is not "Lana"), the
+    same sound (sound_key: "Catherine" is "Katherine"), or a close sound (edit distance between the sound keys, scaled,
+    and never above 0.9) count; the first sound must agree."""
+    a, b = letters(heard), letters(listed)
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return EXACT
+    if min(len(a), len(b)) < 4:
+        return 0.0
+    if a[0] == b[0] and edit_distance(a, b) <= 1:
+        return ONE_LETTER
+    ka, kb = sound_key(a), sound_key(b)
+    if ka == kb:
+        return SAME_SOUND
+    if ka[:1] != kb[:1]:
+        return 0.0
+    return round(0.9 * (1 - edit_distance(ka, kb) / max(len(ka), len(kb))), 3)
 
 
 def edit_distance(a: str, b: str) -> int:

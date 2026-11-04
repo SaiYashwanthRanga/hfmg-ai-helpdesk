@@ -57,8 +57,8 @@ _STATE_HINTS: dict[str, str] = {
     ),
     # The employee's last name (or, when several share it, a first name or an extension), said or spelled.
     "LAST_NAME": (
-        "The caller says their last name, or spells it one letter at a time, or says a first name or an office "
-        "extension. Names may be unusual or from any language: write them as spoken, do not translate them or "
+        "The caller says their first or last name, or spells it one letter at a time, or says their full name or an "
+        "office extension. Names may be unusual or from any language: write them as spoken, do not translate them or "
         "change them into common words. Write spelled letters separately."
     ),
     "COLLECT_PHONE": "The caller says a ten-digit US phone number, for example: 845-555-0142.",
@@ -158,6 +158,28 @@ def recognition_mode(state: str | None, collected: dict | None) -> str | None:
     if state == "COLLECT_DETAILS" and collected.get("pending_question"):
         return f"CLARIFY_{str(collected['pending_question']).upper()}"
     return state
+
+
+#: Questions whose answer starts with a yes or a no ("Is that correct?", "Is there anything else?", "Do you have an
+#: office extension number?"). A correction may follow the no; only how the answer starts matters here. Not the
+#: spelling steps, "which part of the email was wrong?", or the issue questions (their wording varies).
+_YES_NO_MODES = frozenset({
+    "CONFIRM_IDENTITY", "CONFIRM_EMAIL", "CONFIRM_NAME", "CONFIRM_CALLBACK_NUMBER", "CONFIRM_SUMMARY",
+    "CONFIRM_CATEGORY", "ANYTHING_ELSE", "COLLECT_EXTENSION", "CLARIFY_BLOCKED", "CLARIFY_SCOPE",
+    "CLARIFY_PATIENT_CARE",
+})
+
+
+def expects_yes_no(state: str | None, collected: dict | None = None) -> bool:
+    """Is the caller's next answer a yes or a no? The SIP gateway then starts listening on a shorter burst of speech,
+    so a quick "no" is not missed (`short_answer`). Not the open follow-ups asked in the same state: "What should I
+    change?" after a no to the read-back, and "What's the extension number?" (or a re-ask) after the first question."""
+    collected = collected or {}
+    if state == "CONFIRM_SUMMARY" and collected.get("summary_awaiting_change"):
+        return False
+    if state == "COLLECT_EXTENSION" and (collected.get("extension_number_asked") or collected.get("extension_retried")):
+        return False
+    return recognition_mode(state, collected) in _YES_NO_MODES
 
 
 def stt_prompt(state: str | None, collected: dict | None = None) -> str | None:

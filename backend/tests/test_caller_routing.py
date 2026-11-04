@@ -696,9 +696,9 @@ async def test_the_gateway_contract_is_unchanged_by_the_new_step(make_call, clie
         "call_id", "utterance", "confidence", "turn_id", "end_reason", "speech_ms",
     }
     started = await make_call("route-contract").start()
-    assert set(started) == {"lines", "expect_reply", "ticket_id", "stt_prompt"}
+    assert set(started) == {"lines", "expect_reply", "ticket_id", "stt_prompt", "short_answer"}
     plain = await client.post(f"{SIP}/turn", json={"call_id": "route-contract", "utterance": "I'm a patient"}, headers=AUTH)
-    assert plain.status_code == 200 and set(plain.json()) == {"lines", "expect_reply", "ticket_id", "stt_prompt"}
+    assert plain.status_code == 200 and set(plain.json()) == {"lines", "expect_reply", "ticket_id", "stt_prompt", "short_answer"}
 
 
 @pytest.mark.parametrize("state", ["IDENTIFY_CALLER", "PATIENT_INTENT", "PATIENT_DETAILS"])

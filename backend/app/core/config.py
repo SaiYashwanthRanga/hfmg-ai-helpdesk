@@ -127,6 +127,10 @@ class Settings(BaseSettings):
     # flow or the employee IT flow. Off = the older behaviour: the caller describes the problem first
     # and the type is worked out from that (CLASSIFY_CALLER_TYPE).
     voice_ask_caller_type: bool = True
+    # With VOICE_ASK_CALLER_TYPE: an employee is identified first (the directory match "Am I speaking with ...?", the
+    # last name, or the name question), then asked for the problem. A caller who answers who-are-you with the problem
+    # instead gets a callback request filed from it (CALL_FLOW.md 2.2). Off = the problem first, then the name.
+    voice_employee_identity_first: bool = True
     # With VOICE_ASK_CALLER_TYPE: also offer "provider" ("patient, employee, or provider?"). A provider's call is a
     # callback request: problem, name, a confirmed callback number, then a High ticket under the Providers category
     # emailed to HELPDESK_EMAIL. No transfer is attempted (CALL_FLOW.md 2.5).

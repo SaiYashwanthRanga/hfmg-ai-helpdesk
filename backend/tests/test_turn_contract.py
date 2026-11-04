@@ -26,7 +26,7 @@ pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 settings = get_settings()
 
-LEGACY_KEYS = {"lines", "expect_reply", "ticket_id", "stt_prompt"}
+LEGACY_KEYS = {"lines", "expect_reply", "ticket_id", "stt_prompt", "short_answer"}
 
 
 def _guid() -> str:
@@ -92,7 +92,7 @@ async def test_an_escalated_turn_and_the_plain_error_line_also_echo_the_turn_id(
     error_line = await _turn(client, "contract-error-line", error_id)
     assert error_line.json() == {
         "lines": [scripts.SYSTEM_ERROR], "expect_reply": False, "ticket_id": None, "stt_prompt": None,
-        "turn_id": error_id,
+        "short_answer": False, "turn_id": error_id,
     }
     monkeypatch.setattr(ticket_service, "create_ticket", real)
 
@@ -183,7 +183,7 @@ async def test_a_request_without_a_turn_id_gets_exactly_the_old_body(client, db_
     assert set(response.json()) == LEGACY_KEYS  # no turn_id key at all
     assert REPLAYED not in response.headers
     unknown = await _turn(client, "contract-legacy-unknown", None)
-    assert unknown.json() == {"lines": [scripts.SYSTEM_ERROR], "expect_reply": False, "ticket_id": None, "stt_prompt": None}
+    assert unknown.json() == {"lines": [scripts.SYSTEM_ERROR], "expect_reply": False, "ticket_id": None, "stt_prompt": None, "short_answer": False}
 
 
 @pytest.mark.parametrize(

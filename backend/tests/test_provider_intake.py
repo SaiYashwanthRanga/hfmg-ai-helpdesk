@@ -500,7 +500,7 @@ async def test_a_provider_call_never_transfers_or_dials(make_call, db_session, m
     outcomes += [await call.turn("eight four five, five five five, zero one two three"), await call.answer(True)]
 
     # The gateway contract has nothing to carry a transfer or a number to dial, and none was sent.
-    assert set(TurnResponse.model_fields) == {"lines", "expect_reply", "ticket_id", "stt_prompt"}
+    assert set(TurnResponse.model_fields) == {"lines", "expect_reply", "ticket_id", "stt_prompt", "short_answer"}
     for outcome in outcomes:
         assert set(outcome) <= set(TurnResponse.model_fields)
         assert not any(word in _text(outcome).lower() for word in ("transfer", "dial", "connect you", "hold on"))

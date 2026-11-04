@@ -15,6 +15,14 @@ IDENTIFY_CLARIFY = "Sorry, I didn't catch that. Are you a patient, or an employe
 IDENTIFY_AFTER_HELLO = "Hello. Are you a patient, or an employee?"
 IDENTIFY_FALLBACK = "No problem. Please tell me briefly how I can help you today."
 EMPLOYEE_ASK = "Thanks. Please briefly tell me what IT problem you're having."
+# Identity first (VOICE_EMPLOYEE_IDENTITY_FIRST): an employee the caller ID found confirms their name and email
+# straight after "I'm an employee", then gives the problem; one it did not find gives the problem first.
+EMPLOYEE_IDENTITY_ACK = "Thanks."
+EMPLOYEE_PROBLEM_ASK = "Thanks, {first_name}. Please briefly tell me what IT problem you're having."
+EMPLOYEE_PROBLEM_ASK_PLAIN = "Please briefly tell me what IT problem you're having."
+# An employee who answered "Am I speaking with ...?" with their problem: it is noted and a callback request is filed.
+NAMELESS_CALLBACK = "No problem, I've noted that. I'll have a member of our IT team call you back at {phone}."
+NAMELESS_CALLBACK_NO_NUMBER = "No problem, I've noted that, and I'll log a request for our IT team to follow up."
 TYPE_CORRECTED = "Okay, thanks for letting me know."
 
 # The same opening when providers are offered too (VOICE_PROVIDER_FLOW). A provider is asked an open question and

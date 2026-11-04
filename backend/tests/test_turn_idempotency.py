@@ -290,7 +290,7 @@ async def test_a_turn_that_could_not_be_saved_leaves_no_record_and_can_be_retrie
 
     assert failed.json() == {
         "lines": [scripts.SYSTEM_ERROR], "expect_reply": False, "ticket_id": None, "stt_prompt": None,
-        "turn_id": "turn-1",
+        "short_answer": False, "turn_id": "turn-1",
     }
     assert await _recorded(db_session) == [] and await _tickets(db_session) == []
     assert (await _reload(db_session, "idem-unsaved")).state == VoiceCallState.COLLECT_EMAIL

@@ -218,7 +218,8 @@ _WORDS_RE = re.compile(r"[a-z']+")
 _YES = {"yes", "yeah", "yep", "yup", "yea", "ya", "correct", "right", "sure", "absolutely", "definitely", "exactly", "affirmative", "mhm", "uh-huh"}
 _NO = {"no", "nope", "nah", "wrong", "incorrect", "negative"}
 _UNSURE = ("not sure", "don't know", "dont know", "maybe", "no idea", "i guess")
-_NEGATED_YES = ("not correct", "not right", "isn't right", "isn't correct", "that's wrong", "not it")
+_NEGATED_YES = ("not correct", "not right", "isn't right", "isn't correct", "that's wrong", "not it", "not really",
+                "not at all")
 _DIGIT_WORDS = {
     "zero": "0", "oh": "0", "o": "0", "one": "1", "two": "2", "three": "3", "four": "4",
     "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
@@ -251,6 +252,11 @@ def _record_rule(schema_name: str, started: float, user: str, output: dict) -> N
 
 #: "Yes, but the department is IT" is a correction, not a yes.
 _CONTRAST = {"but", "however", "except", "although", "though", "actually", "just", "change", "instead", "also"}
+#: Agreement and refusal as sounds, the way recognizers write them ("Uh-huh.", "Mm-hmm.", "Uh-uh."). Split at the
+#: hyphen they never matched a word list, and went to the model. A spaced "uh uh" is a hesitation, not a no.
+#: "Okay" is not here on purpose: "okay" to "anything else?" is not a yes, so the model reads it with the question.
+_YES_SOUND = re.compile(r"\buh[- ]?huh\b|\bm+[- ]?hm+\b")
+_NO_SOUND = re.compile(r"\b(?:nuh[- ]?uh|uh-uh)\b")
 
 
 def quick_yes_no(utterance: str, *, strict: bool = False) -> bool | None:
@@ -263,6 +269,7 @@ def quick_yes_no(utterance: str, *, strict: bool = False) -> bool | None:
     text = (utterance or "").lower()
     if not text.strip() or mentions_escalation(text) or any(p in text for p in _UNSURE):
         return None
+    text = _YES_SOUND.sub(" yes ", _NO_SOUND.sub(" no ", text))
     words = _WORDS_RE.findall(text)
     if not words or len(words) > (5 if strict else 8):
         return None

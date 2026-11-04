@@ -79,6 +79,10 @@ class TurnResponse(BaseModel):
     # Transcription prompt for the caller's next answer (app/speech/context.py).
     # Null when no reply is expected or the state has no specific hint.
     stt_prompt: str | None = None
+    # True when the caller's next answer is a yes or a no (app/speech/context.py, expects_yes_no): the gateway then
+    # starts listening on a shorter burst of speech, so a quick "no" is not missed. Set on every response, for the next
+    # answer only; false when no reply is expected.
+    short_answer: bool = False
 
 
 def _stt_prompt(session: VoiceCallSession, expect_reply: bool) -> str | None:
@@ -87,12 +91,17 @@ def _stt_prompt(session: VoiceCallSession, expect_reply: bool) -> str | None:
     return speech_context.stt_prompt(session.state.value, session.collected)
 
 
+def _short_answer(session: VoiceCallSession, expect_reply: bool) -> bool:
+    return expect_reply and speech_context.expects_yes_no(session.state.value, session.collected)
+
+
 def _to_response(outcome: orchestrator.TurnOutcome, session: VoiceCallSession) -> TurnResponse:
     return TurnResponse(
         lines=outcome.lines,
         expect_reply=outcome.expect_reply,
         ticket_id=str(outcome.ticket_id) if outcome.ticket_id else None,
         stt_prompt=_stt_prompt(session, outcome.expect_reply),
+        short_answer=_short_answer(session, outcome.expect_reply),
     )
 
 
@@ -110,7 +119,10 @@ def _reply(response: TurnResponse, turn_id: str | None) -> TurnReply:
 
 
 def _error_response(turn_id: str | None = None) -> TurnReply:
-    return _reply(TurnResponse(lines=[scripts.SYSTEM_ERROR], expect_reply=False, ticket_id=None, stt_prompt=None), turn_id)
+    return _reply(
+        TurnResponse(lines=[scripts.SYSTEM_ERROR], expect_reply=False, ticket_id=None, stt_prompt=None, short_answer=False),
+        turn_id,
+    )
 
 
 @dataclass
@@ -236,6 +248,7 @@ async def start_call(
             lines=[greeting] if only_greeted else [],
             expect_reply=True,
             stt_prompt=_stt_prompt(session, True),
+            short_answer=_short_answer(session, True),
         )
 
     try:

@@ -65,7 +65,7 @@ MERGED_HEADER = [
 
 def merged_row(label="Test Person", *, kind="person", display="", phone="", ext="", email=None, status="Active",
                team="Service", location="Test Clinic", credentials="", title="", provider="N", department="",
-               site="", mailbox="", method="", confidence="", record_source=None) -> list[str]:
+               site="", mailbox="", method="", confidence="", record_source=None, signature_phones="") -> list[str]:
     """One row of the merged directory. `record_source` adds that column (a newer build writes it)."""
     email = f"{label.lower().replace(' ', '.')}@example.test" if email is None else email
     cells = {
@@ -73,7 +73,7 @@ def merged_row(label="Test Person", *, kind="person", display="", phone="", ext=
         "Status": status, "Deactivated Date": "", "Location": location, "Voice-Enabled": "Y", "Account Type": kind,
         "Display Name": display, "Credentials": credentials, "Job Title": title, "Is Provider": provider,
         "Department": department, "Site": site, "Mailbox Email": mailbox, "Match Method": method,
-        "Match Confidence": confidence,
+        "Match Confidence": confidence, "Signature Phones": signature_phones,
     }
     values = [cells.get(column, "") for column in MERGED_HEADER]
     return values if record_source is None else [*values, record_source]

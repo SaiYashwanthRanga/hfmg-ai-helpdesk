@@ -106,6 +106,9 @@ def _voice_flow_defaults(monkeypatch):
     Likewise the opening "are you a patient or an employee?" question: these tests start at the
     problem description. It has its own tests (test_caller_routing.py), which switch it on."""
     monkeypatch.setattr(settings, "voice_ask_caller_type", False)
+    # With the opening question on, an employee is identified before the problem. The tests that switch the opening
+    # question on were written for problem-first; identity-first has its own tests (test_employee_identity_first.py).
+    monkeypatch.setattr(settings, "voice_employee_identity_first", False)
     monkeypatch.setattr(settings, "voice_confirm_name", False)
     monkeypatch.setattr(settings, "voice_confirm_summary", False)
     monkeypatch.setattr(settings, "voice_confirm_callback", False)

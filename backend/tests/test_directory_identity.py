@@ -163,7 +163,10 @@ async def test_nothing_is_looked_up_at_start_and_a_unique_match_is_stored_once_t
 
     started = await call.start()
 
-    assert started == {"lines": [scripts.GREETING], "expect_reply": True, "ticket_id": None, "stt_prompt": started["stt_prompt"]}
+    assert started == {
+        "lines": [scripts.GREETING], "expect_reply": True, "ticket_id": None, "stt_prompt": started["stt_prompt"],
+        "short_answer": False,
+    }
     session = await _session(db_session, "dir-start")
     assert session.state == VoiceCallState.COLLECT_DESCRIPTION  # nothing asked yet, nothing confirmed
     assert "directory" not in session.collected  # who is calling is not known yet, so nobody is looked up
@@ -678,14 +681,14 @@ async def test_the_start_and_turn_contracts_are_unchanged(make_call, client, db_
     assert set(schemas["TurnRequest"]["properties"]) == {
         "call_id", "utterance", "confidence", "turn_id", "end_reason", "speech_ms",
     }
-    assert set(schemas["TurnResponse"]["properties"]) == {"lines", "expect_reply", "ticket_id", "stt_prompt"}
-    assert set(schemas["TurnReply"]["properties"]) == {"lines", "expect_reply", "ticket_id", "stt_prompt", "turn_id"}
+    assert set(schemas["TurnResponse"]["properties"]) == {"lines", "expect_reply", "ticket_id", "stt_prompt", "short_answer"}
+    assert set(schemas["TurnReply"]["properties"]) == {"lines", "expect_reply", "ticket_id", "stt_prompt", "short_answer", "turn_id"}
 
     for from_number in (MARIA, UNKNOWN, ""):  # matched, not found, none: the same four keys every time
         started = await make_call(f"dir-schema{from_number[-3:]}", from_number).start()
-        assert set(started) == {"lines", "expect_reply", "ticket_id", "stt_prompt"}
+        assert set(started) == {"lines", "expect_reply", "ticket_id", "stt_prompt", "short_answer"}
     plain = await client.post(f"{SIP}/turn", json={"call_id": "dir-schema201", "utterance": "hello"}, headers=AUTH)
-    assert plain.status_code == 200 and set(plain.json()) == {"lines", "expect_reply", "ticket_id", "stt_prompt"}
+    assert plain.status_code == 200 and set(plain.json()) == {"lines", "expect_reply", "ticket_id", "stt_prompt", "short_answer"}
 
 
 async def test_start_still_accepts_a_request_without_a_caller_number(client, _call_fixture, directory):

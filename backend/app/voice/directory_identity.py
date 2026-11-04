@@ -207,6 +207,9 @@ def compact_lookup(result: LookupResult | None) -> dict:
     data: dict = {"status": result.status.value}
     if result.reason:
         data["reason"] = result.reason
+    matched_on = getattr(result, "matched_on", None)
+    if matched_on:
+        data["matched_on"] = matched_on  # a number from an email signature, not the phone system's
     if result.status is LookupStatus.AMBIGUOUS:
         data["candidate_count"] = result.candidate_count
     if result.matched and result.entry is not None:

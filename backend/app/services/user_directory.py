@@ -16,7 +16,7 @@ import asyncio
 import csv
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 
@@ -34,6 +34,10 @@ _TEAM, _LOCATION, _DEACTIVATED = "Team", "Location", "Deactivated Date"
 _ACCOUNT_TYPE, _RECORD_SOURCE, _MAILBOX_ONLY = "Account Type", "Record Source", "mailbox_only"
 #: The merged directory's account type of a record that is a person (shared lines, services, tests and the like are not).
 _PERSON = "person"
+#: The numbers people wrote in their email signatures (merged directory, "; "-separated). Mostly office and fax lines,
+#: so they are kept apart from "Phone Number": searched only when the phone system has no record with that number, and
+#: never a number that is any record's own (see find_by_phone). One shared by several records names nobody.
+_SIGNATURE_PHONES = "Signature Phones"
 #: One word of a person's real name: letters (any alphabet), then letters, apostrophes, hyphens or periods.
 _REAL_NAME_WORD = re.compile(r"^[^\W\d_](?:[^\W\d_]|['’.\-])*$")
 #: A trailing word that is not part of the family name: "John Smith Jr." is a Smith.
@@ -78,6 +82,7 @@ class LookupResult:
     entry: DirectoryEntry | None = None  # only when matched
     candidate_count: int = 0  # only when ambiguous; the candidates themselves are never returned
     reason: str | None = None  # why not matched, as a short code
+    matched_on: str | None = None  # "signature_phone" when found by a number from an email signature
 
     @property
     def matched(self) -> bool:
@@ -215,6 +220,7 @@ class _Snapshot:
     by_extension: dict[str, tuple[int, ...]]
     people: tuple[tuple[str, int], ...]  # (letters of one word of the name, position), for each live, real person
     report: DirectoryLoadReport
+    by_signature_phone: dict[str, tuple[int, ...]] | None = None  # numbers that are no record's own "Phone Number"
 
 
 def clean_display_name(raw: str | None) -> str | None:
@@ -299,6 +305,8 @@ def _index(keyed: dict[str, list[int]]) -> dict[str, tuple[int, ...]]:
 
 def load_snapshot(path: Path) -> _Snapshot:
     """Read and validate the file. Blocking: call it off the event loop."""
+    if path.suffix.lower() == ".xlsx":
+        return _parse(_SheetReader(_sheet_rows(path)), path)
     try:
         handle = path.open(encoding="utf-8-sig", newline="")
     except FileNotFoundError:
@@ -311,6 +319,85 @@ def load_snapshot(path: Path) -> _Snapshot:
             return _parse(csv.reader(handle, strict=True), path)
         except UnicodeDecodeError:
             raise DirectoryLoadError("encoding", f"directory file is not valid UTF-8: {path}") from None
+
+
+# --- the agent's own sheet (HFMG.xlsx) -----------------------------------------------------------------------------
+#
+# A simple sheet kept by the help desk: Full Name, Extension, Email, Phone Number, one row per person or line, several
+# numbers in a cell separated by "; " (the phone system's and the ones in the person's email signature together) and
+# several extensions by ", ". It says nothing about what a row is, so a row is a person only when it has an email and
+# a name that is safe to say (no digits: "Exam Room 3" and "Front Desk 2 (Site - Team)" are lines, not people). Every
+# row is taken as current: someone who has left must be removed from the sheet. It is read into the same rows as the
+# merged directory, so every rule for naming a caller applies unchanged.
+
+_SHEET_COLUMNS = ("Full Name", "Extension", "Email", "Phone Number")
+_SHEET_AS_DIRECTORY = ("Name", "Email", "Phone Number", "Extension", "Status", _ACCOUNT_TYPE, "Display Name", "Mailbox Email")
+
+
+class _SheetReader:
+    """A worksheet's rows read like csv.reader: lists of strings, `line_num` the sheet row."""
+
+    def __init__(self, rows):
+        self._rows = iter(rows)
+        self.line_num = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> list[str]:
+        row = next(self._rows)
+        self.line_num += 1
+        return row
+
+
+def _sheet_text(value) -> str:
+    """A cell as text. A number Excel stored for an extension or phone (1234.0) is written without the ".0"."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return str(value).strip()
+
+
+def _sheet_rows(path: Path):
+    """The first worksheet's rows as text, the agent's sheet turned into directory rows; any other layout (a sheet
+    with the directory's own columns) as it is."""
+    from openpyxl import load_workbook  # only needed for a sheet
+    from openpyxl.utils.exceptions import InvalidFileException
+    from zipfile import BadZipFile
+
+    try:
+        workbook = load_workbook(path, read_only=True, data_only=True)
+    except FileNotFoundError:
+        raise DirectoryLoadError("file_not_found", f"directory file not found: {path}") from None
+    except (OSError, BadZipFile, InvalidFileException, KeyError, ValueError) as exc:
+        raise DirectoryLoadError("unreadable", f"directory file cannot be read: {path} ({type(exc).__name__})") from None
+    try:
+        rows = [[_sheet_text(value) for value in row] for row in workbook.worksheets[0].iter_rows(values_only=True)]
+    finally:
+        workbook.close()
+    if not rows:
+        return []
+    column = {" ".join(cell.lower().split()): i for i, cell in enumerate(rows[0])}
+    if not all(name.lower() in column for name in _SHEET_COLUMNS):
+        width = len(rows[0])
+        return [(row + [""] * width)[:width] for row in rows]
+
+    def cell(row: list[str], name: str) -> str:
+        position = column[name.lower()]
+        return row[position] if position < len(row) else ""
+
+    converted = [list(_SHEET_AS_DIRECTORY)]
+    for row in rows[1:]:
+        if not any(row):
+            continue  # a blank row
+        name, email = cell(row, "Full Name"), cell(row, "Email")
+        person = bool(normalize_email(email)) and clean_display_name(name) is not None
+        converted.append([
+            name, email, cell(row, "Phone Number"), cell(row, "Extension"), "Active" if name else "",
+            _PERSON if person else "shared_line", name if person else "", email,
+        ])
+    return converted
 
 
 def _parse(reader, path: Path) -> _Snapshot:
@@ -331,6 +418,7 @@ def _parse(reader, path: Path) -> _Snapshot:
     by_phone: dict[str, list[int]] = {}
     by_email: dict[str, list[int]] = {}
     by_extension: dict[str, list[int]] = {}
+    by_signature_phone: dict[str, list[int]] = {}
     rejected: list[tuple[int, str]] = []
     counts = dict(
         total=0, missing_phone=0, missing_email=0, missing_extension=0, missing_status=0,
@@ -359,7 +447,11 @@ def _parse(reader, path: Path) -> _Snapshot:
             continue
 
         raw_phone, raw_email, raw_ext, status = cell(row, "Phone Number"), cell(row, "Email"), cell(row, "Extension"), cell(row, "Status")
-        phone, email, extension = normalize_phone(raw_phone), normalize_email(raw_email), normalize_extension(raw_ext)
+        # A cell may hold several numbers ("; ") or extensions (", "): each finds the record; the first is its own.
+        phones = [p for p in (normalize_phone(part) for part in raw_phone.split(";")) if p]
+        extensions = [e for e in (normalize_extension(part) for part in re.split(r"[;,]", raw_ext)) if e]
+        phone, email = (phones[0] if phones else None), normalize_email(raw_email)
+        extension = extensions[0] if extensions else None
         counts["missing_phone"] += not raw_phone
         counts["missing_email"] += not raw_email
         counts["missing_extension"] += not raw_ext
@@ -385,9 +477,18 @@ def _parse(reader, path: Path) -> _Snapshot:
                 **(_merged_fields(cell, row, phone, mailbox_email) if merged else {}),
             )
         )
-        for key, index in ((phone, by_phone), (email, by_email), (extension, by_extension), (mailbox_email, by_email)):
+        keys = [*((p, by_phone) for p in phones), (email, by_email), *((e, by_extension) for e in extensions),
+                (mailbox_email, by_email)]
+        for key, index in keys:
             if key and position not in index.get(key, ()):  # one record is listed once, even if both addresses match
                 index.setdefault(key, []).append(position)
+        for raw in cell(row, _SIGNATURE_PHONES).split(";"):
+            signature = normalize_phone(raw)
+            if signature and position not in by_signature_phone.get(signature, ()):
+                by_signature_phone.setdefault(signature, []).append(position)
+
+    # A signature number that is some record's own number belongs to that record (an office or shared line).
+    by_signature_phone = {key: positions for key, positions in by_signature_phone.items() if key not in by_phone}
 
     if not records:
         raise DirectoryLoadError("empty", f"directory file has no usable records: {path}")
@@ -411,7 +512,10 @@ def _parse(reader, path: Path) -> _Snapshot:
         ambiguous_phone_numbers=amb_phone, ambiguous_emails=amb_email, ambiguous_extensions=amb_ext,
     )
     people = tuple((key, i) for i, record in enumerate(records) for key in _name_keys(record))
-    return _Snapshot(tuple(records), _index(by_phone), _index(by_email), _index(by_extension), people, report)
+    return _Snapshot(
+        tuple(records), _index(by_phone), _index(by_email), _index(by_extension), people, report,
+        _index(by_signature_phone),
+    )
 
 
 # --- the service ----------------------------------------------------------------------
@@ -475,11 +579,17 @@ class UserDirectoryService:
             return LookupResult(LookupStatus.UNAVAILABLE, reason=self._unavailable_reason)
         if key is None:
             return LookupResult(LookupStatus.NOT_FOUND, reason=invalid_reason)
-        positions = getattr(snapshot, index_name).get(key, ())
+        positions = (getattr(snapshot, index_name) or {}).get(key, ())
         return _resolve([snapshot.records[i] for i in positions])
 
     def find_by_phone(self, phone: str | None) -> LookupResult:
-        return self._lookup("by_phone", normalize_phone(phone), "invalid_phone")
+        """By the phone system's "Phone Number"; only when no record has that number, by the numbers people wrote in
+        their email signatures. A signature match says so (`matched_on`)."""
+        result = self._lookup("by_phone", normalize_phone(phone), "invalid_phone")
+        if result.status is not LookupStatus.NOT_FOUND or result.reason != "no_match":
+            return result
+        signature = self._lookup("by_signature_phone", normalize_phone(phone), "invalid_phone")
+        return replace(signature, matched_on="signature_phone") if signature.status is not LookupStatus.NOT_FOUND else result
 
     def find_by_email(self, email: str | None) -> LookupResult:
         return self._lookup("by_email", normalize_email(email), "invalid_email")
@@ -496,14 +606,28 @@ class UserDirectoryService:
         safe to say) are ever returned: never a shared line, service, test or call park. Matching is
         case-insensitive and as tolerant of a recognizer's slip as names are everywhere else (names.same_name_part);
         a name that matches exactly is not mixed up with near misses. What comes back is a list of people the
-        caller may be asked about, not an answer to who is calling."""
+        caller may be asked about, not an answer to who is calling.
+
+        Near misses are found by sound too (names.name_similarity): "Yashvant" finds Yashwanth, "Riley" Reilly. Only
+        the best kind of match is returned: exact, else one letter off or the same sound, else the closest sounds
+        (within 0.05 of the best, so a near tie is a question for the caller, never a pick)."""
         snapshot = self._snapshot
         heard = names.letters(last_name)
         if snapshot is None or not heard:
             return ()
         exact = [i for key, i in snapshot.people if key == heard]
-        positions = exact or [i for key, i in snapshot.people if names.same_name_part(heard, key)]
-        return tuple(snapshot.records[i] for i in sorted(set(positions)))
+        if exact:
+            return tuple(snapshot.records[i] for i in sorted(set(exact)))
+        scores: dict[int, float] = {}
+        for key, i in snapshot.people:
+            score = names.name_similarity(heard, key)
+            if score >= names.SIMILAR_ENOUGH and score > scores.get(i, 0.0):
+                scores[i] = score
+        if not scores:
+            return ()
+        best = max(scores.values())
+        floor = names.SAME_SOUND if best >= names.SAME_SOUND else best - 0.05
+        return tuple(snapshot.records[i] for i in sorted(i for i, score in scores.items() if score >= floor))
 
     def find_by_identifier(self, identifier: str | None) -> LookupResult:
         """Look up by whatever the caller gave: an email address, a phone number (including a

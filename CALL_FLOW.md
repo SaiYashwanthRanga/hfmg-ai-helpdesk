@@ -135,7 +135,7 @@ never asked again, and cannot be shared between calls.
 
 | Caller | What happens |
 |---|---|
-| **Employee** | Straight into the existing IT flow, unchanged: problem, when it started, name and department, directory confirmation, email, ticket, summary, notification. If the answer already holds the problem ("I'm an employee, my printer is jammed") it is used, not asked for again |
+| **Employee** | With `VOICE_EMPLOYEE_IDENTITY_FIRST` (default), see 2.2 *The agent's sheet*. **The caller ID finds one person:** "Am I speaking with X?", then "I have *email* on file for you. Is that still the best email for updates?", then the problem and the rest of the IT flow. **Anyone else** (not found, a shared number, a room's line, no caller ID, or "that's not me"): the problem first, then "What's your last name?", searched by sound ("Yashvant" finds Yashwanth): one person, "Are you X?" and the email on file; two close names, "full name, or your extension?"; nobody, the name as given, and the ticket says `Identity: not found in the directory (name as given by the caller)`. "Am I speaking with X?" answered **with the problem instead**: it is noted and a **callback request** filed at once (ticket note `CALLBACK REQUESTED - the caller described the problem without giving their name.`, emailed to the helpdesk like every ticket). "Yes, and my Outlook won't open" answers both. Setting off: the older order, problem first. If the first answer already holds the problem ("I'm an employee, my printer is jammed") it is used, not asked for again |
 | **Patient** | `PATIENT_INTENT` → one optional `PATIENT_DETAILS` question → name → callback number (confirmed) → a **patient support request** in the patient categories. No IT questions, no IT language model, no IT intake details, no IT ticket |
 | **Provider** (only with `VOICE_PROVIDER_FLOW=true`, which adds "or a provider" to the question) | A callback request: the problem, the provider's name, the system (only if not already said) and a **confirmed callback number**, then a High ticket under **Providers**, emailed to the IT inbox. No transfer, no diagnostic questions. See 2.5 |
 
@@ -567,9 +567,31 @@ mailbox address, and an **Account Type** for every record (`person`, `likely_per
 `shared_or_service`, `system_account`, `test`, `test_or_unassigned`, `external_or_student`). A plain `users.csv`
 export still loads and behaves as it did.
 
+**The agent's sheet (`HFMG.xlsx`).** `USER_DIRECTORY_CSV_PATH=data/HFMG.xlsx` points the agent at a simple sheet the
+help desk keeps: **Full Name, Extension, Email, Phone Number**, one row per person or line. A cell may hold several
+numbers separated by `;` (the phone system's and the signature numbers together) or several extensions separated by `,`;
+each finds the row. The sheet does not say what a row is, so a row is a **person** only when it has an email and a name
+that is safe to say (two to four words, no digits); every other row (an exam room, a front desk) is a **line**, found by
+its number but never named. A number on more than one row names nobody. The sheet has no status column: every row is
+taken as current, so **someone who has left must be removed from the sheet**. Departments are not in it and are still
+asked. The sheet is read when the backend starts: after updating it, copy it to `backend\data\` on the server and restart.
+The merged CSV below still loads the same way if the setting points at it.
+
+**The name search, by sound.** The last name the caller says is matched against every word of every person's name:
+exact first; else one letter off (the first letter must agree) or the same sound (`names.sound_key`: v/w, th/t, ph/f,
+ck/k, doubled letters, a silent h and vowel runs are made one, so "Yashvant" is Yashwanth, "Riley" is Reilly, "Natakarani"
+is Natekereni); else the closest sounds. Names under four letters must be exact. Only the best kind of match is offered,
+and a near tie is a question for the caller, never a pick. A name heard as two words ("Nata Karani") is also tried as one.
+
+**Signature phone numbers.** The merged file's `Signature Phones` (the numbers people wrote in their email
+signatures, `;`-separated) find a caller too, but never compete with the phone system: they are searched only when no
+record has the caller ID as its `Phone Number`, a signature number that is any record's own number belongs to that
+record, and one written by several people (an office line) names nobody. A signature match is still only a proposal,
+and the call's lookup records `matched_on: signature_phone`.
+
 | Lookup by | Where |
 |---|---|
-| Phone number (the caller ID) | When the call is routed to the employee flow |
+| Phone number (the caller ID; the phone system's number, else a signature number) | When the call is routed to the employee flow |
 | Extension, email address (the phone system's or the mailbox's), phone number | An identifier the caller gives instead of saying yes to the proposal |
 | Extension | The office-extension answer, to describe it on the ticket |
 
