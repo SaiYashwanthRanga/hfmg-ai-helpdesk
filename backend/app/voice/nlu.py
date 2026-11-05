@@ -287,6 +287,33 @@ def quick_yes_no(utterance: str, *, strict: bool = False) -> bool | None:
 
 _GOODBYE = {"bye", "goodbye", "byebye", "bye-bye"}
 
+#: "That's it", "that's all", "nothing else", "I'm good": done, said without a yes or a no. Seen at "Is there anything
+#: else?": "That's it. Thank you." was taken for a new problem, and the call filed the same printer twice.
+_NOTHING_MORE = re.compile(
+    r"\b(?:that(?:'s| is|'ll be| will be) (?:it|all|everything)|nothing (?:else|more)|"
+    r"i'?m (?:good|all set|done|fine)|i am (?:good|all set|done|fine)|(?:all|we'?re|we are) (?:set|good|done))\b"
+)
+#: "That's all, can I talk to a person?" is not a goodbye.
+_ASKS_FOR_SOMEONE = re.compile(r"\b(?:talk|speak|person|someone|somebody|human|agent|technician|transfer)\b|\?")
+#: "Close enough", "almost": a yes that admits the read-back is not exact. Taken as a yes (a busy provider is not asked
+#: to spell), and noted on the ticket.
+_HEDGED = re.compile(
+    r"\b(?:close enough|near enough|good enough|pretty close|almost|nearly|sort of|kind of|more or less|roughly)\b"
+)
+
+
+def nothing_more(utterance: str) -> bool:
+    """The caller has nothing more to add: a short "that's it" or "that's all", with no "but" or "also" after it."""
+    text = (utterance or "").lower()
+    words = _WORDS_RE.findall(text)
+    return (0 < len(words) <= 8 and bool(_NOTHING_MORE.search(text)) and not _CONTRAST.intersection(words)
+            and not mentions_escalation(text) and not _ASKS_FOR_SOMEONE.search(text))
+
+
+def hedged(utterance: str) -> bool:
+    """A half yes to a read-back ("that's close enough"): the caller accepts it, though it may not be exact."""
+    return bool(_HEDGED.search((utterance or "").lower()))
+
 
 def is_goodbye(utterance: str) -> bool:
     """The caller is leaving: "Thank you. Bye bye." (Seen at the email question,

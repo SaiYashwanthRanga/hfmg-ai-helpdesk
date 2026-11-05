@@ -147,6 +147,12 @@ def _identity_first(session: VoiceCallSession) -> bool:
     )
 
 
+def _quick_intake(session: VoiceCallSession) -> bool:
+    """An employee's call with VOICE_QUICK_INTAKE: the problem, when it started, the name and email, the read-back. A
+    patient's request and a provider's callback request have their own short flows and are not changed by it."""
+    return settings.voice_quick_intake and not _is_patient_call(session) and not _is_provider_call(session)
+
+
 # --- the problem said instead of a name (identity first) ------------------------------------------------------------
 #
 # Asked "Am I speaking with ...?", some callers just say what is wrong: "my Outlook won't open". The problem is noted
@@ -455,6 +461,8 @@ async def handle_turn(
             return await _handle_extension(db, session, "", directory)  # optional: never a misunderstanding
         if session.state == VoiceCallState.COLLECT_DIAGNOSTICS:
             return await _handle_diagnostics(db, session, "")  # unanswered, not a misunderstanding
+        if session.state in (VoiceCallState.COLLECT_EMAIL, VoiceCallState.CONFIRM_EMAIL):
+            return await _email_silence(db, session)  # optional: never a callback request
         if session.state == VoiceCallState.COLLECT_DESCRIPTION and session.collected.get("problem_partial"):
             return await _handle_description(db, session, "", directory)  # silence after "go on": take what was said
         return await _handle_failure(db, session)
@@ -900,6 +908,7 @@ async def _handle_description(
         if classification.patient_category:
             update_collected(session, patient_category=classification.patient_category)
 
+    _look_up_the_name_said(session, directory)
     ack = _patient_ack(session) if _is_patient_call(session) else _acknowledgement(session)
     return await _next_step(db, session, acknowledgement=ack)
 
@@ -1391,14 +1400,7 @@ async def _handle_last_name(
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
     if not words:
         return await _end_last_name(db, session)
-    last = words[-1]
-    candidates = list(directory.find_by_last_name(last))
-    if len(words) > 1:  # "Maria Example": the first name was given too, so it narrows the list
-        candidates = directory_identity.with_first_name(candidates, words[0])
-        if not candidates:
-            # One unfamiliar name heard as two words ("Nata Karani" for Natekereni): looked up as one.
-            last = "".join(words)
-            candidates = list(directory.find_by_last_name(last))
+    candidates, last = _people_named(directory, words)
     proposed = _propose_by_last_name(session, candidates, heard=last)
     if proposed is not None:
         return proposed
@@ -1410,11 +1412,55 @@ async def _handle_last_name(
     return await _end_last_name(db, session)
 
 
+def _people_named(directory: UserDirectoryService, words: list[str]) -> tuple[list[DirectoryEntry], str]:
+    """Who the words of a name find in the directory, and the name that found them."""
+    last = words[-1]
+    candidates = list(directory.find_by_last_name(last))
+    if len(words) > 1:  # "Maria Example": the first name was given too, so it narrows the list
+        candidates = directory_identity.with_first_name(candidates, words[0])
+        if not candidates:
+            # One unfamiliar name heard as two words ("Nata Karani" for Natekereni): looked up as one.
+            last = "".join(words)
+            candidates = list(directory.find_by_last_name(last))
+    return candidates, last
+
+
+def _look_up_the_name_said(session: VoiceCallSession, directory: UserDirectoryService | None) -> None:
+    """Quick intake: "This is Dana Sample, my Outlook keeps crashing." A name said with the problem is looked up like any
+    other, and whoever is found is confirmed with the caller; without this the directory was never searched, so there was
+    no "Are you ...?" and no email on file to offer. Only a name the directory does not have is kept as said."""
+    c = session.collected
+    name = c.get("caller_name")
+    if directory is None or not name or not _quick_intake(session) or c.get("identity_confirmed"):
+        return
+    forget = {"caller_name": None, "name_confidence": None, "name_confirm_pending": False, "name_spell_first": False}
+    if _pending_identity_name(session):  # the caller ID found someone: they are asked about, and "no" asks for the name
+        update_collected(session, **forget)
+        return
+    words = [word for word in name.split() if names.plausible(word)]
+    if not words or not _should_ask_last_name(session):
+        return
+    candidates, last = _people_named(directory, words)
+    if _note_person_found(session, candidates, heard=last):
+        _mark_asked(session, "last_name")  # a "no" goes to the name question, not back to this search
+        update_collected(session, **forget)
+    elif len(candidates) > 1:  # "This is Pat": several people, so the usual last name question settles who
+        update_collected(session, **forget)
+
+
 def _propose_by_last_name(
     session: VoiceCallSession, candidates: list[DirectoryEntry], *, heard: str | None = None
 ) -> TurnOutcome | None:
     """Ask "Are you <name>?" when exactly one person is left (one entry, or one person's several phone lines), else
     None. Only the name and the rows it came from are kept until the caller says yes."""
+    name = _note_person_found(session, candidates, heard=heard)
+    return _ask_identity(session, name) if name else None
+
+
+def _note_person_found(
+    session: VoiceCallSession, candidates: list[DirectoryEntry], *, heard: str | None = None
+) -> str | None:
+    """The name to ask about when exactly one person is left, kept as the call's proposal, else None."""
     if len(candidates) != 1 and not directory_identity.one_person(candidates):
         return None
     entry = candidates[0]
@@ -1434,7 +1480,7 @@ def _propose_by_last_name(
         },
         last_name_step=None, last_name_heard=None, last_name_rows=None,
     )
-    return _ask_identity(session, name)
+    return name
 
 
 def _fill_pending_entry(session: VoiceCallSession, directory: UserDirectoryService | None) -> bool:
@@ -1488,6 +1534,11 @@ async def _handle_name_confirmation(db: AsyncSession, session: VoiceCallSession,
         return await _take_spelled_name_part(db, session, utterance, step)
     if collected.get("name_reconfirm"):
         return await _handle_name_reconfirmation(db, session, utterance)
+    if nlu.hedged(utterance) and not nlu.looks_spelled(utterance):
+        # "That's close enough" (seen on a real call, a provider between patients): taken as a yes and the call moves
+        # on -- no spelling asked. The ticket notes the name may be slightly off.
+        update_collected(session, name_close_enough=True)
+        return await _name_confirmed(db, session)
     if _affirms_name(collected["caller_name"], utterance):
         return await _name_confirmed(db, session)
 
@@ -1518,6 +1569,9 @@ async def _handle_name_confirmation(db: AsyncSession, session: VoiceCallSession,
 
 async def _handle_name_reconfirmation(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
     """The corrected name was read back. Yes -> done. No again -> another try, then accept."""
+    if nlu.hedged(utterance) and not nlu.looks_spelled(utterance):  # "close enough": a yes, noted on the ticket
+        update_collected(session, name_close_enough=True)
+        return await _name_confirmed(db, session)
     if _affirms_name(session.collected["caller_name"], utterance):
         return await _name_confirmed(db, session)
     if nlu.looks_spelled(utterance):
@@ -1832,6 +1886,8 @@ def _callback_number_pending(session: VoiceCallSession) -> bool:
     collected = session.collected
     # A provider's number is always confirmed: the IT team calls it back, and nobody else is on the line.
     confirm_on = settings.voice_confirm_callback or _is_patient_call(session) or _is_provider_call(session)
+    if _quick_intake(session):
+        confirm_on = False  # the number is read in the summary, and corrected there like everything else
     return bool(
         confirm_on
         and collected.get("phone_number")
@@ -2128,7 +2184,7 @@ async def _handle_clarification(db: AsyncSession, session: VoiceCallSession, utt
 
 def _details_question(session: VoiceCallSession) -> str:
     need_started = not session.collected.get("started")
-    need_blocked = _blocked_needed(session.collected)
+    need_blocked = _blocked_needed(session.collected) and not _quick_intake(session)
     if _is_provider_call(session):
         # For a provider, "can you work" means "can you see patients": that is what IT needs to know.
         if need_started and need_blocked:
@@ -2211,6 +2267,7 @@ async def _next_step(
         return await _next_provider_step(db, session, acknowledgement=acknowledgement)
     collected = session.collected
     patient = _is_patient_call(session)
+    quick = _quick_intake(session)
 
     def ask(state: VoiceCallState, prompt: str) -> TurnOutcome:
         session.state = state
@@ -2239,16 +2296,17 @@ async def _next_step(
     if not patient:
         if _urgent_from_the_start(collected) and not _asked(session, "details"):
             _mark_asked(session, "details")  # urgent: straight to what IT needs to act; when it started can wait
-        if (not collected.get("started") or _blocked_needed(collected)) and not _asked(session, "details"):
+        impact_asked = _blocked_needed(collected) and not quick
+        if (not collected.get("started") or impact_asked) and not _asked(session, "details"):
             _mark_asked(session, "details")
-            if settings.voice_strict_extraction and _blocked_needed(collected):
+            if settings.voice_strict_extraction and impact_asked:
                 _mark_clarify_ask(session, "blocked", counts_toward_cap=False)
                 if collected.get("started"):
                     update_collected(session, pending_question="blocked")
                     return ask(VoiceCallState.COLLECT_DETAILS, _clarification_prompt(session, "blocked"))
             return ask(VoiceCallState.COLLECT_DETAILS, _details_question(session))
 
-        clarification = _next_clarification(session)
+        clarification = None if quick else _next_clarification(session)
         if clarification:
             _mark_clarify_ask(session, clarification)
             update_collected(session, pending_question=clarification)
@@ -2256,7 +2314,8 @@ async def _next_step(
 
         # The issue before the paperwork: the few questions IT needs for this kind of problem come before
         # name, extension and email, so the technical details are never held up by them.
-        if settings.voice_diagnostic_questions and collected.get("description"):
+        # Quick intake asks none of them, but what the caller said is still read for the priority and IT's next step.
+        if (settings.voice_diagnostic_questions or quick) and collected.get("description"):
             prompt, notice = _diagnostics_next(session)
             if notice:
                 acknowledgement = f"{acknowledgement} {notice}" if acknowledgement else notice
@@ -2269,10 +2328,11 @@ async def _next_step(
 
     # An urgent problem: after the essential questions, only the name and the callback number (no department,
     # extension, email or read-back), so the ticket reaches IT fast.
-    urgent = not patient and diagnostics.urgent_reason(collected.get("diagnostics")) is not None
+    # Quick intake is short already: urgent or not, the name and email are taken and the caller hears the read-back.
+    urgent = not patient and not quick and diagnostics.urgent_reason(collected.get("diagnostics")) is not None
 
     # --- department (IT only) ---
-    if not patient and not urgent and not collected.get("department") and not _asked(session, "department"):
+    if not patient and not urgent and not quick and not collected.get("department") and not _asked(session, "department"):
         _mark_asked(session, "department")
         first_name = _greeting_name(session)
         return ask(
@@ -2295,7 +2355,7 @@ async def _next_step(
         verified = _verified_extension(session)
         if verified:
             update_collected(session, extension=verified, extension_source="directory")
-        elif settings.voice_ask_extension and not _asked(session, "extension"):
+        elif settings.voice_ask_extension and not quick and not _asked(session, "extension"):
             _mark_asked(session, "extension")
             return ask(VoiceCallState.COLLECT_EXTENSION, scripts.EXTENSION_ASK)
 
@@ -2321,6 +2381,8 @@ def _ask_who_is_calling(
     if _should_ask_last_name(session):
         return _ask_last_name(session, acknowledgement=acknowledgement)
     _mark_asked(session, "department")  # asked together with the name
+    if _quick_intake(session):
+        return ask(VoiceCallState.COLLECT_NAME, scripts.NAME_ONLY_ASK)
     return ask(VoiceCallState.COLLECT_NAME, scripts.pick(scripts.NAME_ASK_OPTIONS, len(session.turns or [])))
 
 
@@ -2449,14 +2511,15 @@ def _diagnostics_next(session: VoiceCallSession) -> tuple[str | None, str | None
             update_collected(session, category="Network")
     if state.get("done"):
         return None, None
-    found = diagnostics.next_prompt(state, blocked=c.get("work_blocked"))
+    quick = _quick_intake(session)
+    found = None if quick else diagnostics.next_prompt(state, blocked=c.get("work_blocked"))
     notice = None
     if diagnostics.urgent_reason(state) and not state.get("urgent_told"):
         # Said once, as soon as it is known -- before the essential question, not after the questions.
         notice = diagnostics.urgent_notice(state)
         state = {**state, "urgent_told": True}
     if found is None:
-        update_collected(session, diagnostics={**state, "done": True, "pending": None})
+        update_collected(session, diagnostics={**state, "done": True, "pending": None, "no_questions": quick})
         _apply_priority_rules(session)
         return None, notice
     key, prompt = found
@@ -3109,6 +3172,17 @@ async def _email_failed(db: AsyncSession, session: VoiceCallSession, prompt: str
     return _ask_email(session, prompt)
 
 
+async def _email_silence(db: AsyncSession, session: VoiceCallSession) -> TurnOutcome:
+    """No answer at the email question or its read-back. Email is optional: the question is asked once more (only the
+    question, not what was said before it), then the email is left off and the call carries on. Never counted toward a
+    callback request. Seen on a real call: two silent answers at the email question ended the call as a callback."""
+    silences = session.collected.get("email_silences", 0) + 1
+    update_collected(session, email_silences=silences)
+    if silences >= 2:
+        return await _skip_email(db, session, preamble=scripts.EMAIL_GIVE_UP, by="agent")
+    return TurnOutcome(_speak(session, _ask(session, f"{diagnostics.CLARIFY} {_open_question(session)}")))
+
+
 def _replace_closest_segment(local: str, segment: str) -> str:
     """"ranga.sis1" corrected with "sai" -> "ranga.sai": a one-segment correction replaces the segment it is
     closest to, and nothing else."""
@@ -3363,9 +3437,20 @@ async def _apply_email_section(db: AsyncSession, session: VoiceCallSession, part
     return _read_back_email(session, email)  # the whole address is read back again
 
 
+#: "What was the email?", "which address?", "can you repeat it?": the caller did not follow the address read to them.
+#: Seen on a real call: "What was the email?" was taken for a no, and the address on file was dropped.
+_EMAIL_ASKED_AGAIN = re.compile(
+    r"\b(?:what|which)(?:'s| is| was)?\s+(?:(?:the|that|my)\s+)?(?:e-?mail|address)\b"
+    r"|\bwhat was that\b|\bwhat did you say\b|\brepeat\b|\b(?:one more time|once more)\b|^\W*sorry\W+what\W*$",
+    re.IGNORECASE,
+)
+#: Times the address on file is read again before the answer is treated as any other.
+MAX_EMAIL_REPEATS = 2
+
+
 async def _handle_directory_email_answer(db: AsyncSession, session: VoiceCallSession, utterance: str) -> TurnOutcome:
-    """The caller was offered the address on file for them. Yes uses it; anything else forgets it and
-    asks the usual question (or takes a new address if they said one in the same breath)."""
+    """The caller was offered the address on file for them. Yes uses it; asked to repeat it, it is read again; anything
+    else forgets it and asks the usual question (or takes a new address if they said one in the same breath)."""
     collected = session.collected
     local, domain = nlu.split_spoken_email(utterance)
     if local and domain:
@@ -3373,9 +3458,15 @@ async def _handle_directory_email_answer(db: AsyncSession, session: VoiceCallSes
         session.state = VoiceCallState.COLLECT_EMAIL
         return await _handle_email(db, session, utterance)
     result = await nlu.interpret_yes_no("Is that still the best email?", utterance)
-    if _wants_human(utterance, result):
+    if _wants_human(utterance, result):  # first: "repeat that, or let me talk to a person" is a request for a person
         return await escalate(db, session, EscalationReason.CALLER_REQUESTED)
     candidate = collected.get("email_candidate")
+    repeats = collected.get("email_repeats", 0)
+    asked_again = _EMAIL_ASKED_AGAIN.search(utterance) or diagnostics.is_confused(None, utterance)
+    if candidate and asked_again and repeats < MAX_EMAIL_REPEATS:
+        update_collected(session, email_repeats=repeats + 1)
+        prompt = scripts.EMAIL_DIRECTORY_CONFIRM.format(email=scripts.spoken_email(candidate))
+        return TurnOutcome(_speak(session, _ask(session, f"Sure. {prompt}")))
     if result.yes_no is True and candidate:
         update_collected(
             session, email=candidate, email_confirmed=True, email_candidate=None, email_source="directory_confirmed"
@@ -3388,12 +3479,18 @@ async def _handle_directory_email_answer(db: AsyncSession, session: VoiceCallSes
 # --- the read-back before creating a ticket -------------------------------------
 
 
+#: The longest problem description read back whole.
+_SUMMARY_PROBLEM_CHARS = 200
+
+
 def _summary_text(session: VoiceCallSession, *, updated: bool = False) -> str:
     """What the agent reads back: who, what, since when, priority and why.
 
     Built only from validated fields and fixed sentences, never model prose, so
     it cannot say something the priority rules did not decide. Short: it is
-    heard, not read, and the caller can interrupt it.
+    heard, not read, and the caller can interrupt it. The one exception is quick
+    intake: the problem is the description that will be filed, so that the caller
+    can correct what the ticket will actually say.
     """
     c = session.collected
     first_name = _greeting_name(session)
@@ -3407,7 +3504,11 @@ def _summary_text(session: VoiceCallSession, *, updated: bool = False) -> str:
         sentences = [scripts.SUMMARY_INTRO_NO_NAME]
 
     department, issue = c.get("department"), c.get("short_issue")
-    if department and issue:
+    quick = _quick_intake(session)
+    problem = _problem_as_heard(c.get("description")) if quick else None
+    if problem:
+        sentences.append(scripts.SUMMARY_PROBLEM.format(problem=problem))
+    elif department and issue:
         sentences.append(f"You're in {department}, and you're having trouble with {issue}.")
     elif issue:
         sentences.append(f"You're having trouble with {issue}.")
@@ -3432,10 +3533,10 @@ def _summary_text(session: VoiceCallSession, *, updated: bool = False) -> str:
         sentences.append(f"Since you can still work, I'll log it as {word} priority.")
     elif assessment.needs_triage:
         sentences.append(scripts.SUMMARY_FLAGGED_FOR_REVIEW)
-    elif "work_impact" in assessment.unverified:
+    elif "work_impact" in assessment.unverified and not quick:
         sentences.append(scripts.SUMMARY_WORK_IMPACT_UNKNOWN)
 
-    if c.get("phone_spoken") and c.get("phone_number") and not c.get("callback_confirmed"):
+    if (c.get("phone_spoken") or quick) and c.get("phone_number") and not c.get("callback_confirmed"):
         # (Once the callback number has been confirmed it has been heard already.)
         sentences.append(f"I'll reach you at {scripts.spoken_phone_number(c['phone_number'])}.")
 
@@ -3444,6 +3545,18 @@ def _summary_text(session: VoiceCallSession, *, updated: bool = False) -> str:
 
     sentences.append(scripts.pick(scripts.SUMMARY_CONFIRM_OPTIONS, n))
     return " ".join(sentences)
+
+
+def _problem_as_heard(description: str | None) -> str | None:
+    """The description to read back: all of it, or its first sentence when it is too long to follow by ear. None when
+    even that is too long (the read-back then names the issue in a few words)."""
+    text = " ".join((description or "").split())
+    if len(text) > _SUMMARY_PROBLEM_CHARS:
+        first = _SENTENCE.match(text)
+        text = first.group(0).strip(" ;") if first else ""
+    if not text or len(text) > _SUMMARY_PROBLEM_CHARS:
+        return None
+    return text if text[-1] in ".?!" else f"{text}."
 
 
 async def _finish_collection(
@@ -3470,7 +3583,11 @@ async def _finish_collection(
         # No ticket read-back: a patient's request is simple, and a provider's callback request is filed as soon as
         # the callback number is confirmed.
         return await _create_ticket_and_read_back(db, session, preamble=preamble)
-    if diagnostics.urgent_reason(collected.get("diagnostics")) is not None and not collected.get("summary_confirmed"):
+    if (
+        not _quick_intake(session)
+        and diagnostics.urgent_reason(collected.get("diagnostics")) is not None
+        and not collected.get("summary_confirmed")
+    ):
         update_collected(session, summary_urgent_skip=True)  # urgent: filed straight away, without the read-back
         return await _create_ticket_and_read_back(db, session, preamble=preamble)
     if settings.voice_confirm_summary and not collected.get("summary_confirmed"):
@@ -3598,6 +3715,8 @@ def _apply_corrections(session: VoiceCallSession, changes: dict) -> None:
         update_collected(session, description=changes["description"])
     if changes.get("category"):
         update_collected(session, category=changes["category"], category_confidence="high")
+    if (changes.get("description") or changes.get("category")) and _quick_intake(session):
+        _read_corrected_problem(session)
     if changes.get("started"):
         update_collected(session, started=changes["started"])
     if "work_blocked" in changes:
@@ -3619,10 +3738,29 @@ def _apply_corrections(session: VoiceCallSession, changes: dict) -> None:
     _apply_priority_rules(session)
 
 
+def _read_corrected_problem(session: VoiceCallSession) -> None:
+    """Quick intake: the problem was corrected at the read-back, so IT's next step is worked out again from the corrected
+    version alone, not the words it replaced. Anything urgent already noticed stays noticed."""
+    c = session.collected
+    earlier = c.get("diagnostics")
+    if not earlier:
+        return
+    state = diagnostics.begin(c.get("category"), c.get("description"), c.get("affected_scope"))
+    flags = sorted({*state["flags"], *(earlier.get("flags") or [])})
+    update_collected(session, diagnostics={**state, "flags": flags, "done": True, "pending": None, "no_questions": True})
+
+
 async def _confirm_summary(
     db: AsyncSession, session: VoiceCallSession, *, preamble: str | None = None
 ) -> TurnOutcome:
     update_collected(session, summary_confirmed=True, summary_awaiting_change=False)
+    c = session.collected
+    if _quick_intake(session) and c.get("phone_number") and not c.get("callback_confirmed"):
+        # Quick intake reads the number in the summary: a yes to that is a yes to the number. Filed without one (the
+        # corrections ran out), the ticket says it was not confirmed.
+        said_yes = not c.get("summary_unresolved")
+        update_collected(session, callback_confirmed=True, callback_number=c["phone_number"] if said_yes else None,
+                         callback_fallback=not said_yes)
     return await _create_ticket_and_read_back(db, session, preamble=preamble)
 
 
@@ -3782,6 +3920,10 @@ async def _same_or_new_issue(db: AsyncSession, session: VoiceCallSession, uttera
     pending = c.get("same_or_new")
     if pending:
         update_collected(session, same_or_new=None)
+        if not _NEW.search(utterance) and (nlu.nothing_more(utterance) or nlu.quick_yes_no(utterance) is False):
+            # "No, that's all": neither -- they were saying goodbye. Never a second ticket from a closing line.
+            session.state = VoiceCallState.COMPLETED
+            return TurnOutcome(_speak(session, reply.say_and_hangup(scripts.GOODBYE)))
         if _SAME.search(utterance) and not _NEW.search(utterance):
             ticket = await db.get(Ticket, session.ticket_id) if session.ticket_id else None
             if ticket is not None:
@@ -3807,7 +3949,7 @@ async def _start_next_issue(db: AsyncSession, session: VoiceCallSession, *, desc
     """Another issue on the same call: clear the issue slots but keep who the caller is, and don't ask for department
     or email again. `describe`: the new problem, already said -- taken as its description, not asked for again."""
     keep = (
-        "caller_name", "name_confidence", "name_confirmed_as", "name_unverified", "department",
+        "caller_name", "name_confidence", "name_confirmed_as", "name_unverified", "name_close_enough", "department",
         "department_verified", "phone_number", "phone_spoken", "phone_skipped", "email", "email_confirmed",
         "callback_confirmed", "callback_number", "callback_fallback",
         "ticket_ids", "caller_type", "patient_category",
@@ -3838,6 +3980,9 @@ async def _handle_anything_else(
     same_or_new = await _same_or_new_issue(db, session, utterance)
     if same_or_new is not None:
         return same_or_new
+    if nlu.nothing_more(utterance):  # "That's it. Thank you.": a no, not a new problem
+        session.state = VoiceCallState.COMPLETED
+        return TurnOutcome(_speak(session, reply.say_and_hangup(scripts.GOODBYE)))
     result = await nlu.interpret_yes_no("Is there anything else I can help you with?", utterance)
 
     if _wants_human(utterance, result):
@@ -4115,6 +4260,8 @@ def _intake_details(collected: dict) -> str:
         ("Callback number", "not captured (the caller could not give one)" if collected.get("phone_skipped") and not provider else None),
         ("Callback number", "not confirmed by the caller; using the number on file" if collected.get("callback_fallback") and not provider else None),
         ("Name", "spelling could not be verified with the caller" if collected.get("name_unverified") else None),
+        ("Name", "the caller said the spelling read back was close enough; it may be slightly off"
+         if collected.get("name_close_enough") else None),
         ("Read-back", "caller said the summary was not fully correct; details unverified" if collected.get("summary_unresolved") else None),
         ("Read-back", "not done: the caller ended the call first" if collected.get("summary_skipped") else None),
         ("Read-back", "not done: urgent, filed straight away" if collected.get("summary_urgent_skip") else None),

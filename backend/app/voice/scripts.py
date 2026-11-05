@@ -108,6 +108,9 @@ DETAILS_ASK_OPTIONS = (
 DETAILS_ASK = DETAILS_ASK_OPTIONS[1]
 DETAILS_ASK_STARTED = "When did this start?"
 
+# Read-back, quick intake: what the ticket will say, for the caller to correct.
+SUMMARY_PROBLEM = "Here's the problem as I heard it: {problem}"
+
 # Read-back, strict extraction: be honest about what was not settled.
 SUMMARY_WORK_IMPACT_UNKNOWN = "I couldn't confirm how much this affects your work."
 SUMMARY_FLAGGED_FOR_REVIEW = "I couldn't confirm the impact, so I'll flag it for a person to review."
@@ -146,6 +149,7 @@ NAME_ASK_OPTIONS = (
     "May I have your name and department?",
 )
 NAME_ASK = NAME_ASK_OPTIONS[1]
+NAME_ONLY_ASK = "Who am I speaking with? Please say your first and last name."
 NAME_ASK_NO_ISSUE = NAME_ASK
 DEPARTMENT_ASK = "Thanks, {first_name}. And which department are you with?"
 DEPARTMENT_ASK_NO_NAME = "Which department are you with?"

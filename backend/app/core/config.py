@@ -142,6 +142,11 @@ class Settings(BaseSettings):
     # Employee calls: after the problem is described, ask the few questions IT needs for that kind of problem
     # (app/voice/diagnostics.py), before name and contact details. No troubleshooting steps are suggested.
     voice_diagnostic_questions: bool = True
+    # Employee calls: take the problem, ask only when it started, then the name and email as usual, and read it all back
+    # for the caller to correct before filing. No "can you work", diagnostic, department, extension or separate callback
+    # question: what the caller said is still read for the priority and IT's next step (CALL_FLOW.md 2.2a).
+    # Off = the longer flow, with the three settings above deciding its questions.
+    voice_quick_intake: bool = True
     # The SIP gateway's HTTP timeout for one /turn attempt (its setting, mirrored here so a
     # mismatch is caught at startup instead of showing up as calls that hang up).
     voice_gateway_attempt_timeout_seconds: float = 8.0

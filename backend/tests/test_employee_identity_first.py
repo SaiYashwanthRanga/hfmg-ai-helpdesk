@@ -192,6 +192,63 @@ async def test_a_known_caller_who_declines_the_email_spells_it_then_gives_the_pr
     assert (await _session(db_session, call.call_id)).state == VoiceCallState.COLLECT_EMAIL
 
 
+@pytest.mark.parametrize("asked", [
+    "What was the email?", "What's the email?", "Which address?", "Can you repeat that?", "Sorry, what?", "What did you say?",
+])
+async def test_asked_what_the_email_was_it_is_read_again_and_kept(make_call, client, db_session, asked):
+    call = make_call("hfmg-email-again", DANA)
+    await call.start()
+    await call.turn("I'm an employee.")
+    await call.turn("Yes.")
+
+    out = await call.turn(asked)
+
+    assert scripts.EMAIL_DIRECTORY_CONFIRM.format(email=scripts.spoken_email("dana.sample@hfmg.net")) in _said(out)
+    assert (await _session(db_session, call.call_id)).state == VoiceCallState.CONFIRM_EMAIL
+    assert _said(await call.turn("Yes.")) == scripts.EMPLOYEE_PROBLEM_ASK.format(first_name="Dana")
+    assert (await _session(db_session, call.call_id)).collected["email"] == "dana.sample@hfmg.net"
+
+
+async def test_the_email_is_read_again_twice_then_the_usual_question_is_asked(make_call, db_session):
+    call = make_call("hfmg-email-again-limit", DANA)
+    await call.start()
+    await call.turn("I'm an employee.")
+    await call.turn("Yes.")
+    await call.turn("What was the email?")
+    await call.turn("What was the email?")
+    call._say(interpret_yes_no=nlu.TurnResult(unable_to_determine=True))
+
+    await call.turn("What was the email?")
+
+    assert (await _session(db_session, call.call_id)).state == VoiceCallState.COLLECT_EMAIL
+
+
+@pytest.mark.parametrize("said", ["That's not my email.", "I don't use that address."])
+async def test_turning_the_email_down_is_not_asking_to_hear_it_again(make_call, db_session, said):
+    call = make_call("hfmg-email-not-mine", DANA)
+    await call.start()
+    await call.turn("I'm an employee.")
+    await call.turn("Yes.")
+    call._say(interpret_yes_no=nlu.TurnResult(yes_no=False, unable_to_determine=False))
+
+    await call.turn(said)
+
+    assert (await _session(db_session, call.call_id)).state == VoiceCallState.COLLECT_EMAIL
+
+
+async def test_asking_for_a_person_at_the_email_is_not_asking_to_hear_it_again(make_call, db_session):
+    call = make_call("hfmg-email-person", DANA)
+    await call.start()
+    await call.turn("I'm an employee.")
+    await call.turn("Yes.")
+    call._say(interpret_yes_no=nlu.TurnResult(escalation_requested=True, unable_to_determine=False))
+
+    out = await call.turn("Can you repeat that, or just let me talk to a person?")
+
+    assert scripts.spoken_email("dana.sample@hfmg.net") not in _said(out)
+    assert (await _session(db_session, call.call_id)).state != VoiceCallState.CONFIRM_EMAIL
+
+
 async def test_yes_with_the_problem_keeps_both(make_call, db_session):
     call = make_call("hfmg-yes-problem", DANA)
     await call.start()

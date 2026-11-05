@@ -1492,7 +1492,7 @@ def ticket_lines(
     if values.get("issue_corrected"):
         lines.append(("Issue corrected", f"the caller said the first questions ({values.get('issue_corrected_from')}) "
                                          f"were wrong: \"{values['issue_corrected']}\""))
-    elif description:
+    elif description and not state.get("no_questions"):
         expected = choose(category, description, provider=bool(state.get("provider")))
         if expected is not playbook:
             lines.append(("Issue type check", f"the questions asked were for {playbook.label}, but the description "
@@ -1543,7 +1543,7 @@ def ticket_lines(
     reason = urgent_reason(state)
     if reason:
         lines.append(("Escalation", f"flagged urgent: {reason}"))
-    if missing:
+    if missing and not state.get("no_questions"):  # never asked, so not worth listing as missing
         lines.append(("Not established", ", ".join(missing)))
     lines.append(("Suggested next step", playbook.next_action(values)))
     return lines

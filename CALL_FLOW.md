@@ -351,6 +351,31 @@ being asked for again. The call is not a patient request any more: it follows th
 - **Too late**: once a request has been filed for the call, "actually, I'm an employee" no longer changes the type of
   that call, and it also does not apply later in the flow, after the first question.
 
+### 2.2a Quick intake (`VOICE_QUICK_INTAKE`, on by default)
+
+An employee's call asks only for what the ticket cannot do without; the caller corrects anything wrong at the read-back.
+
+1. "Are you a patient, an employee, or a provider?", and the caller ID is looked up in the directory, as in 2.3.
+2. The problem. Found by caller ID: name and email first, as in 2.3. Otherwise the problem comes first.
+3. "When did this start?", only if the caller has not said.
+4. The name and email, as in 2.2 and 2.3. Whoever the directory finds is confirmed with the caller: "Are you X?", then
+   "I have *email* on file for you. Is that still the best email for updates?". A name said with the problem ("This is
+   X, my Outlook is down") is searched and confirmed the same way. Nobody found: the name only (no department), then the
+   email question, which the caller can skip. An address on file that does not look like the person's own is never
+   offered (see 2.2), so they get the same email question.
+5. The read-back: the problem as it will be filed, when it started, the priority if High or Critical, and the callback
+   number. A yes files the ticket and confirms the number. A correction changes it, and the read-back is said again.
+
+**Not asked:** whether they can work, who else is affected, patient impact, the 2.4 question sets, department, office
+extension, and a separate callback-number question. A callback number is asked for only when there is none to read back.
+
+**Still read from what the caller said:** the category, the priority and IT's suggested next step, and anything urgent
+(a security incident, lost data, everyone affected), which still raises the priority. An urgent call also gets the name,
+email and read-back: unlike the 2.4 flow, it is not filed straight away. Facts said in passing still count.
+
+Patient requests and provider callback requests have their own flows and are not changed. `VOICE_QUICK_INTAKE=false`
+restores the longer flow, with its own settings deciding which questions it asks.
+
 ### 2.4 Employee issue questions (`VOICE_DIAGNOSTIC_QUESTIONS`)
 
 The agent is an **intake** agent, not a troubleshooter. After an employee has described the problem (and said

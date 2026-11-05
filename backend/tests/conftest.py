@@ -116,6 +116,8 @@ def _voice_flow_defaults(monkeypatch):
     monkeypatch.setattr(settings, "voice_ask_extension", False)
     # The diagnostic questions have their own tests (test_diagnostics.py), which switch them on.
     monkeypatch.setattr(settings, "voice_diagnostic_questions", False)
+    # These tests cover the longer flow's questions; quick intake has its own tests (test_quick_intake.py).
+    monkeypatch.setattr(settings, "voice_quick_intake", False)
     # Tests run as a deployment with HFMG's department list configured; the unconfigured case has its own test.
     from app.voice.departments import DEFAULT_DEPARTMENTS
     monkeypatch.setattr(settings, "voice_departments", ",".join(DEFAULT_DEPARTMENTS))
