@@ -161,6 +161,22 @@ async def get_calls_by_day(db: AsyncSession, *, days: int) -> list[dict]:
     return items
 
 
+async def get_tickets_by_day(db: AsyncSession, *, days: int) -> list[dict]:
+    """Tickets created per day, zero-filled like get_calls_by_day."""
+    day_column = func.date(Ticket.created_at)
+    stmt = (
+        select(day_column, func.count())
+        .where(Ticket.created_at >= _since(days), _REAL_TICKET)
+        .group_by(day_column)
+    )
+    rows = {d: count for d, count in (await db.execute(stmt)).all()}
+    today = date.today()
+    return [
+        {"date": today - timedelta(days=offset), "count": rows.get(today - timedelta(days=offset), 0)}
+        for offset in range(days - 1, -1, -1)
+    ]
+
+
 async def get_escalation_rate(db: AsyncSession, *, days: int) -> dict:
     since = _since(days)
     terminal_stmt = (

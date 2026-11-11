@@ -18,7 +18,7 @@ export function RecentCallsPanel() {
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Phone className="size-4 text-emerald-800" />
-          <h2 className="text-sm font-semibold text-stone-900">Recent Calls</h2>
+          <h2 className="!m-0 !text-sm font-semibold text-stone-900">Recent Calls</h2>
         </div>
 
         <Link

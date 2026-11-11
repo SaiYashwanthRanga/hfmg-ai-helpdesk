@@ -1,27 +1,41 @@
 import { ArrowRight, FileUp } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useAiInsightsQuery } from "../api/aiInsights";
-import { ApiError } from "../api/client";
-import { CategoryBreakdownCard } from "../components/aiInsights/CategoryBreakdownCard";
-import { RecommendationsCard } from "../components/aiInsights/RecommendationsCard";
-import { RepeatedProblemsCard } from "../components/aiInsights/RepeatedProblemsCard";
-import { RiskAlertsCard } from "../components/aiInsights/RiskAlertsCard";
-import { TrendingIssuesCard } from "../components/aiInsights/TrendingIssuesCard";
-import { ErrorState } from "../components/ui/ErrorState";
-import { LoadingState } from "../components/ui/LoadingState";
+import { AIBriefing } from "../components/aiInsights/AIBriefing";
+import { CategoryMovement } from "../components/aiInsights/CategoryMovement";
+import { RecommendationsList } from "../components/aiInsights/RecommendationsList";
+import { ThemeList } from "../components/aiInsights/ThemeList";
+import { DateRangeSelect } from "../components/analytics/DateRangeSelect";
 
 /**
- * AI Insights (WIREFRAMES.md §8/§11). Single GET /ai-insights payload —
- * only Category Breakdown returns real data; every other section renders
- * the backend's own disclosed blocked_reason, never fabricated content
- * (see REMAINING_PRODUCT_DECISIONS.md for what would unblock each).
+ * AI Insights: one GET /ai-insights/analysis reading of the chosen period.
+ * The model groups tickets into recurring problems, flags what needs
+ * attention and suggests actions; every statement links to the tickets it
+ * rests on, and every number is counted by the server, not the model.
  */
 export function AIInsightsPage() {
-  const { data, isLoading, isError, error, refetch } = useAiInsightsQuery();
+  const [days, setDays] = useState(30);
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-2xl font-bold text-foreground">AI Insights</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="!mb-0 font-display text-2xl font-semibold tracking-tight text-stone-900">AI Insights</h1>
+          <p className="mt-1 max-w-[62ch] text-sm text-stone-600">
+            What the AI makes of your tickets. Open any ticket number to check the evidence.
+          </p>
+        </div>
+        <DateRangeSelect days={days} onChange={setDays} />
+      </div>
+
+      <AIBriefing days={days} />
+
+      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+        <ThemeList days={days} />
+        <RecommendationsList days={days} />
+      </div>
+
+      <CategoryMovement days={days} />
 
       <Link
         to="/ai-insights/ticket-analysis"
@@ -36,27 +50,6 @@ export function AIInsightsPage() {
         </span>
         <ArrowRight className="size-4 shrink-0 text-stone-500" aria-hidden="true" />
       </Link>
-
-      {isLoading ? (
-        <LoadingState variant="page" />
-      ) : isError ? (
-        <ErrorState
-          severity="degraded"
-          title="AI Insights is not yet available"
-          description={error instanceof ApiError ? error.message : "Something went wrong. Please try again."}
-          retry={() => refetch()}
-        />
-      ) : data ? (
-        <div className="flex flex-col gap-6">
-          <CategoryBreakdownCard items={data.category_breakdown.items} />
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <TrendingIssuesCard blockedReason={data.trending_issues.blocked_reason} />
-            <RepeatedProblemsCard blockedReason={data.repeated_problems.blocked_reason} />
-            <RiskAlertsCard blockedReason={data.high_risk_alerts.blocked_reason} />
-            <RecommendationsCard blockedReason={data.recommendations.blocked_reason} />
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

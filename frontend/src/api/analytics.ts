@@ -27,6 +27,7 @@ export const analyticsApi = {
   getTicketsByCategory: (days = 30) => get<{ items: CategoryBreakdownItem[] }>(`/analytics/tickets-by-category?days=${days}`),
   getTicketsByPriority: (days = 30) => get<{ items: PriorityBreakdownItem[] }>(`/analytics/tickets-by-priority?days=${days}`),
   getTicketsBySource: (days = 30) => get<{ items: SourceBreakdownItem[] }>(`/analytics/tickets-by-source?days=${days}`),
+  getTicketsByDay: (days = 30) => get<{ items: CallsByDayItem[] }>(`/analytics/tickets-by-day?days=${days}`),
   getCallsByDay: (days = 30) => get<{ items: CallsByDayItem[] }>(`/analytics/calls-by-day?days=${days}`),
   getEscalationRate: (days = 30) => get<EscalationRateResponse>(`/analytics/escalation-rate?days=${days}`),
   getAiSummaryUsage: (days = 30) => get<{ items: AiSummaryUsageItem[] }>(`/analytics/ai-summary-usage?days=${days}`),
@@ -53,6 +54,10 @@ export function useTicketsByPriorityQuery(days: number) {
 
 export function useTicketsBySourceQuery(days: number) {
   return useQuery({ queryKey: ["analytics", "tickets-by-source", days], queryFn: () => analyticsApi.getTicketsBySource(days) });
+}
+
+export function useTicketsByDayQuery(days: number) {
+  return useQuery({ queryKey: ["analytics", "tickets-by-day", days], queryFn: () => analyticsApi.getTicketsByDay(days) });
 }
 
 export function useCallsByDayQuery(days: number) {

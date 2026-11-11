@@ -74,6 +74,13 @@ async def calls_by_day(days: int = DaysWindow, db: AsyncSession = Depends(get_db
     return CallsByDayResponse(items=items)
 
 
+@router.get("/tickets-by-day", response_model=CallsByDayResponse)
+async def tickets_by_day(days: int = DaysWindow, db: AsyncSession = Depends(get_db)) -> CallsByDayResponse:
+    """Same date/count series shape as /calls-by-day."""
+    items = await analytics_service.get_tickets_by_day(db, days=days)
+    return CallsByDayResponse(items=items)
+
+
 @router.get("/escalation-rate", response_model=EscalationRateResponse)
 async def escalation_rate(days: int = DaysWindow, db: AsyncSession = Depends(get_db)) -> EscalationRateResponse:
     data = await analytics_service.get_escalation_rate(db, days=days)

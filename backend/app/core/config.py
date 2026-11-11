@@ -233,6 +233,14 @@ class Settings(BaseSettings):
     # Uploaded data is deleted this many days after it was uploaded (checked on each upload).
     ticket_report_retention_days: int = 30
 
+    # --- AI Insights (the model's reading of recent tickets: themes, attention, recommendations) ---
+    # One model request per window, kept in memory for the cache time; needs an LLM provider key.
+    enable_ai_insights: bool = True
+    # At most this many of the window's most recent tickets are read by the model; the rest are counted only.
+    ai_insights_max_tickets: int = 50
+    ai_insights_timeout_seconds: float = 60.0
+    ai_insights_cache_minutes: int = 30
+
     # LLM_PROVIDER=fake only (load tests, demos): simulated model latency.
     fake_llm_latency_ms: int = 300
 

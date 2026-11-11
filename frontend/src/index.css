@@ -88,6 +88,23 @@ body {
   outline-offset: 2px;
 }
 
+/* The AI briefing resolving into focus when a new reading arrives (AIBriefing.tsx). */
+@keyframes briefing-in {
+  from {
+    opacity: 0;
+    filter: blur(6px);
+    transform: translateY(6px);
+  }
+}
+
+.briefing-in {
+  animation: briefing-in 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+::selection {
+  background-color: rgba(6, 78, 59, 0.18);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

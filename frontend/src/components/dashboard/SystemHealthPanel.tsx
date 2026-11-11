@@ -98,7 +98,7 @@ export function SystemHealthPanel() {
     <Card className="p-5">
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold text-stone-900">System Health</h2>
+          <h2 className="!m-0 !text-sm font-semibold text-stone-900">System Health</h2>
           <span className="text-xs text-stone-400">• Live Dependency Status</span>
         </div>
 
