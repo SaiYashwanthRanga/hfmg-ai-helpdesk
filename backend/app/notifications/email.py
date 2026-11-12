@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 
 from app.core.config import get_settings
 from app.db.models import CallerType, Ticket
@@ -28,6 +29,22 @@ def _known(value: str | None, placeholders: set[str]) -> str | None:
 
 
 NOT_PROVIDED = "Not provided"
+
+_EMAIL_SHAPE = re.compile(r"[\w.+'-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def _caller_copy(email: str | None, recipients: list[str]) -> list[str]:
+    """The caller's own address as the one Cc on the helpdesk email, so they can see it was sent.
+
+    `ticket.email` only holds an address the caller confirmed (said and read back, or offered from the directory and
+    accepted) or typed on the web form, never a guess. Anything that is not a single plain address is left out, so a
+    stray value can never add recipients, and so is an address the helpdesk email already goes to."""
+    address = (email or "").strip()
+    if not _EMAIL_SHAPE.fullmatch(address):
+        return []
+    if address.lower() in {recipient.lower() for recipient in recipients}:
+        return []
+    return [address]
 
 #: Shown first, in the subject and the body, on a provider's callback request: it is the one email that asks the IT
 #: team to phone someone back, and the provider reached the help desk because no one was free to answer.
@@ -162,6 +179,11 @@ async def send_ticket_notification(ticket: Ticket, event: str) -> None:
             **(_provider_fields(ticket, callback) if provider_callback else {}),
         )
 
+        # The caller is copied on every ticket email (new ticket and each status change): they see that the help desk
+        # was told and follow the updates, and the IT team can reply-all to work with them directly. Left out of the
+        # call when there is no one to copy, so the email is sent exactly as before.
+        extra = {"cc": copies} if (copies := _caller_copy(ticket.email, recipients)) else {}
+
         max_attempts = settings.notification_max_attempts  # 0 = until sent
         attempt = 0
         while True:
@@ -171,14 +193,16 @@ async def send_ticket_notification(ticket: Ticket, event: str) -> None:
                 from_email=settings.email_from,
                 subject=subject,
                 body=body,
+                **extra,
             )
             if sent:
-                # The count, never the addresses: a quick check that every configured recipient was included.
+                # The counts, never the addresses: a quick check that every configured recipient was included.
                 logger.info(
-                    "Sent %s notification for %s to %d recipient(s) (attempt %d)",
+                    "Sent %s notification for %s to %d recipient(s), %d copied (attempt %d)",
                     event,
                     ticket.ticket_number,
                     len(recipients),
+                    len(extra.get("cc", ())),
                     attempt,
                 )
                 break

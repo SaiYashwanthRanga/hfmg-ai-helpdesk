@@ -30,6 +30,7 @@ class IEmailProvider(Protocol):
         timeout: float | None = None,
         max_retries: int | None = None,
         html_body: str | None = None,  # an HTML version of `body`; without it the plain text is all that is sent
+        cc: Sequence[str] | None = None,  # copied on the same email; an address already in `to` is not repeated
     ) -> bool:
         """Send one email. Returns True on success, False otherwise.
 

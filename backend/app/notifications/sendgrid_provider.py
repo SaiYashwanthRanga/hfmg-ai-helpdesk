@@ -51,6 +51,7 @@ class SendGridProvider:
         timeout: float | None = None,
         max_retries: int | None = None,
         html_body: str | None = None,
+        cc: Sequence[str] | None = None,
     ) -> bool:
         if not self.is_configured:
             logger.warning("SENDGRID_API_KEY is not set; cannot send email")
@@ -59,9 +60,17 @@ class SendGridProvider:
         request_timeout = timeout if timeout is not None else settings.sendgrid_timeout_seconds
         attempts = (max_retries if max_retries is not None else settings.sendgrid_max_retries) + 1
 
+        recipients = [to] if isinstance(to, str) else list(to)
+        # SendGrid rejects the same address in "to" and "cc", so a copy to someone already addressed is dropped.
+        addressed = {address.lower() for address in recipients}
+        copies = [address for address in (cc or []) if address.lower() not in addressed]
+        personalization: dict = {"to": [{"email": address} for address in recipients]}
+        if copies:
+            personalization["cc"] = [{"email": address} for address in copies]
+
         payload = {
-            # One entry per address: one personalization, so it is one email to all of them.
-            "personalizations": [{"to": [{"email": address} for address in ([to] if isinstance(to, str) else to)]}],
+            # One personalization, so it is one email to every address (to and cc).
+            "personalizations": [personalization],
             "from": {"email": from_email},
             "subject": subject,
             # text/plain first, then text/html: SendGrid requires that order, and a client picks the richer one.
